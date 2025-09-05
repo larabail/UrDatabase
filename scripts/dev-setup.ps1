@@ -3,7 +3,7 @@ param(
   [string]$DbSource = ""
 )
 
-$AppDir = Join-Path $env:APPDATA "MovieDb"
+$AppDir = Join-Path $env:APPDATA "UrDatabase"
 New-Item -ItemType Directory -Force -Path $AppDir | Out-Null
 
 if ($DbSource -and (Test-Path $DbSource)) {

@@ -1,7 +1,7 @@
 # Setup (Detailed)
 
 ## 1) Create GitHub repository
-- Name: **movie-db** (Private)
+- Name: **urdatabase** (Private)
 - Default branch: **main**
 - Add no starter files.
 
@@ -20,16 +20,16 @@ git push -u origin main
 - Or **.NET 8 SDK**: `dotnet --version` should print 8.x
 
 ## 4) Configure app
-- Create folder `%APPDATA%\MovieDb\`
-- Copy your `movies.db` there (or create using `/src/MovieDb.App/Data/schema.sql`)
-- Copy `src/MovieDb.App/appsettings.example.json` → `src/MovieDb.App/appsettings.json` and edit:
+- Create folder `%APPDATA%\UrDatabase\`
+- Copy your `movies.db` there (or create using `/src/UrDatabase.App/Data/schema.sql`)
+- Copy `src/UrDatabase.App/appsettings.example.json` → `src/UrDatabase.App/appsettings.json` and edit:
   - `WatchFolders`: list of absolute paths (e.g., `D:\Movies\New`)
   - `TmdbApiKey`: your TMDb API key (optional)
   - `PosterCacheDir`: local folder for downloaded posters
 
 ## 5) Build
 ```bash
-cd src/MovieDb.App
+cd src/UrDatabase.App
 dotnet restore
 dotnet build
 dotnet run

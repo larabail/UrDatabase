@@ -5,7 +5,7 @@ using System.Windows;
 using Dapper;
 using Microsoft.Data.Sqlite;
 
-namespace MovieDb.Views
+namespace UrDatabase.Views
 {
     public partial class MainWindow : Window
     {
@@ -33,7 +33,7 @@ namespace MovieDb.Views
 
         private static string ResolveDbPath()
         {
-            var baseDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "MovieDb");
+            var baseDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "UrDatabase");
             Directory.CreateDirectory(baseDir);
             return Path.Combine(baseDir, "movies.db");
         }

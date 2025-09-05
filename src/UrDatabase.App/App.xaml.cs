@@ -1,6 +1,6 @@
 using System.Windows;
 
-namespace MovieDb
+namespace UrDatabase
 {
     public partial class App : Application
     {

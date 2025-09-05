@@ -1,7 +1,7 @@
-<Window x:Class="MovieDb.Views.MainWindow"
+<Window x:Class="UrDatabase.Views.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Movie DB" Height="600" Width="900">
+        Title="UrDatabase" Height="600" Width="900">
     <DockPanel>
         <TextBox Name="SearchBox" Margin="8" DockPanel.Dock="Top" />
         <ListView Name="MovieList" Margin="8">

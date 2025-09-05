@@ -1,4 +1,4 @@
-# Movie DB (Windows, WPF, SQLite)
+# UrDatabase (Windows, WPF, SQLite)
 
 Personal movie database app for Windows. Offline-first with SQLite, fast file operations, and optional metadata fetch (TMDb/OMDb).
 
@@ -12,11 +12,10 @@ Personal movie database app for Windows. Offline-first with SQLite, fast file op
 
 ## Quick start
 1) **Install prerequisites**
-   - [Git](https://git-scm.com/)
-   - [Visual Studio 2022+] with `.NET desktop development` *or* [.NET 8 SDK](https://dotnet.microsoft.com/en-us/download)
+   - Git
+   - Visual Studio 2022+ with `.NET desktop development` *or* .NET 8 SDK
 2) **Create the repo on GitHub**
-   - Web: New repo → name `movie-db` (private), add no files.
-   - CLI (optional): `gh repo create movie-db --private --source . --remote origin`
+   - Name `urdatabase` (private), add no files.
 3) **Initialize locally**
 ```bash
 git init
@@ -27,13 +26,12 @@ git remote add origin <YOUR_GITHUB_REMOTE_URL>
 git push -u origin main
 ```
 4) **App config**
-   - Copy your SQLite DB to: `%APPDATA%\MovieDb\movies.db` (create the folder).
-   - Or generate one from `/src/MovieDb.App/Data/schema.sql` using your importer.
-   - Copy `src/MovieDb.App/appsettings.example.json` → `appsettings.json` and edit values.
+   - Copy your SQLite DB to: `%APPDATA%\UrDatabase\movies.db` (create the folder).
+   - Or generate one from `/src/UrDatabase.App/Data/schema.sql` using your importer.
+   - Copy `src/UrDatabase.App/appsettings.example.json` → `appsettings.json` and edit values.
 5) **Build & run**
-   - Open `src/MovieDb.App/MovieDb.App.csproj` in Visual Studio **or**:
 ```bash
-cd src/MovieDb.App
+cd src/UrDatabase.App
 dotnet build
 dotnet run
 ```
@@ -42,14 +40,14 @@ dotnet run
 
 ## Folder layout
 ```
-movie-db/
+urdatabase/
   src/
-    MovieDb.App/         # WPF app
-      Data/schema.sql    # SQLite schema
+    UrDatabase.App/       # WPF app
+      Data/schema.sql     # SQLite schema
       appsettings.example.json
-  docs/                  # setup & design notes
-  scripts/               # local helper scripts
-  .github/               # CI and issue templates
+  docs/                   # setup & design notes
+  scripts/                # local helper scripts
+  .github/                # CI and issue templates
 ```
 
 ## Roadmap
@@ -58,5 +56,3 @@ movie-db/
 - [ ] Search UI (FTS)
 - [ ] Move/rename UI (atomic on same drive)
 - [ ] Optional embedded player (LibVLC)
-```
-

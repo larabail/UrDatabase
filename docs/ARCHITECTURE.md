@@ -11,15 +11,15 @@
   - `MetadataService`: calls TMDb/OMDb, caches results to DB + poster cache dir
 
 ## Database
-See `src/MovieDb.App/Data/schema.sql`. Includes FTS5 for fast search.
+See `src/UrDatabase.App/Data/schema.sql`. Includes FTS5 for fast search.
 
 ## Config
 `appsettings.json`:
 ```json
 {
-  "DatabasePath": "%APPDATA%\\MovieDb\\movies.db",
+  "DatabasePath": "%APPDATA%\\UrDatabase\\movies.db",
   "WatchFolders": ["D:\\Movies\\New", "E:\\Videos\\Movies\\NEW"],
   "TmdbApiKey": "",
-  "PosterCacheDir": "%APPDATA%\\MovieDb\\posters"
+  "PosterCacheDir": "%APPDATA%\\UrDatabase\\posters"
 }
 ```
