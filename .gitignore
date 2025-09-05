@@ -1,0 +1,36 @@
+# OS
+.DS_Store
+Thumbs.db
+
+# Build outputs
+bin/
+obj/
+[Bb]uild/
+artifacts/
+
+# User-specific
+*.user
+*.suo
+*.userprefs
+*.rsuser
+*.DotSettings.user
+
+# Rider / VSCode / VS
+.idea/
+.vscode/
+*.local.json
+
+# Packages
+*.nupkg
+packages/
+
+# Logs
+*.log
+
+# SQLite & data
+*.db
+/data/
+/input/
+
+# Images (do not store posters in repo)
+posters/
