@@ -1,5 +1,4 @@
 <Project Sdk="Microsoft.NET.Sdk">
-
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
     <TargetFramework>net8.0-windows</TargetFramework>
@@ -10,6 +9,7 @@
     <RootNamespace>UrDatabase</RootNamespace>
   </PropertyGroup>
   <ItemGroup>
+    <!-- Keep packages; not strictly needed for Hello World, but harmless -->
     <PackageReference Include="Microsoft.Data.Sqlite" Version="8.0.7" />
     <PackageReference Include="Dapper" Version="2.1.28" />
     <PackageReference Include="CommunityToolkit.Mvvm" Version="8.2.2" />
