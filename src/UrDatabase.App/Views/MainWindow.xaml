@@ -1,6 +1,7 @@
 <Window x:Class="UrDatabase.Views.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:ctrls="clr-namespace:UrDatabase.Controls"
         Title="UrDatabase"
         Width="1400"
         Height="900"
@@ -9,7 +10,7 @@
     <Window.Resources>
         <!-- Simple dark styles with explicit keys (no implicit lookup) -->
         <Style x:Key="DarkButton"
-                TargetType="Button">
+               TargetType="Button">
             <Setter Property="Foreground"
                     Value="#EAEAEA"/>
             <Setter Property="Background"
@@ -26,7 +27,7 @@
                     Value="Hand"/>
         </Style>
         <Style x:Key="DarkText"
-                TargetType="TextBlock">
+               TargetType="TextBlock">
             <Setter Property="Foreground"
                     Value="#EAEAEA"/>
         </Style>
@@ -43,16 +44,16 @@
 
                 <StackPanel>
                     <TextBlock Text="Search"
-                            Style="{StaticResource DarkText}"
-                            Margin="0,0,0,6"/>
+                               Style="{StaticResource DarkText}"
+                               Margin="0,0,0,6"/>
                     <TextBox Width="400"
-                            x:Name="SearchBox"
-                            TextChanged="SearchBox_TextChanged"/>
+                             x:Name="SearchBox"
+                             TextChanged="SearchBox_TextChanged"/>
                 </StackPanel>
 
                 <StackPanel Grid.Column="1"
-                        Orientation="Horizontal"
-                        VerticalAlignment="Top">
+                            Orientation="Horizontal"
+                            VerticalAlignment="Top">
                     <Button Style="{StaticResource DarkButton}"
                             Content="Scan Folders"
                             Click="ScanButton_Click"/>
@@ -64,7 +65,7 @@
 
             <!-- Genre “chips” as plain buttons (no converters) -->
             <ScrollViewer HorizontalScrollBarVisibility="Auto"
-                    VerticalScrollBarVisibility="Disabled">
+                          VerticalScrollBarVisibility="Disabled">
                 <ItemsControl ItemsSource="{Binding Genres}">
                     <ItemsControl.ItemsPanel>
                         <ItemsPanelTemplate>
@@ -88,7 +89,7 @@
 
                 <!-- SEARCH RESULTS (flat, no genres) -->
                 <StackPanel x:Name="SearchPanel"
-                        Visibility="Collapsed">
+                            Visibility="Collapsed">
                     <ItemsControl ItemsSource="{Binding FlatResults}">
                         <ItemsControl.ItemsPanel>
                             <ItemsPanelTemplate>
@@ -97,18 +98,16 @@
                         </ItemsControl.ItemsPanel>
                         <ItemsControl.ItemTemplate>
                             <DataTemplate>
-                                <StackPanel Margin="6,0,6,12"
-                                        Width="120">
-                                    <!-- If you use PosterCard, keep it; else keep the placeholder Border -->
-                                    <!-- <ctrls:PosterCard SourcePath="{Binding PosterPath}" Width="120" Height="175"/> -->
-                                    <Border CornerRadius="18"
-                                            Background="#1E1E1E"
-                                            Height="175"/>
+                                <StackPanel Margin="6,0,6,0"
+                                            Width="120">
+                                    <ctrls:PosterCard SourcePath="{Binding PosterPath}"
+                                                      Width="120"
+                                                      Height="175"/>
                                     <TextBlock Text="{Binding Title}"
-                                            Foreground="#EAEAEA"
+                                               Foreground="#EAEAEA"
                                                TextWrapping="Wrap"
-                                            Margin="2,6,2,0"
-                                            FontSize="12"/>
+                                               Margin="2,6,2,0"
+                                               FontSize="12"/>
                                 </StackPanel>
                             </DataTemplate>
                         </ItemsControl.ItemTemplate>
@@ -117,18 +116,18 @@
 
                 <!-- GROUPED BY GENRE (shown only when not searching) -->
                 <StackPanel x:Name="GroupPanel"
-                        Visibility="Visible">
+                            Visibility="Visible">
                     <ItemsControl ItemsSource="{Binding VisibleGroups}">
                         <ItemsControl.ItemTemplate>
                             <DataTemplate>
                                 <StackPanel Margin="0,8,0,22">
                                     <TextBlock Text="{Binding Name}"
-                                            Foreground="#EAEAEA"
+                                               Foreground="#EAEAEA"
                                                FontSize="18"
-                                            FontWeight="SemiBold"
-                                            Margin="6,0,0,8"/>
+                                               FontWeight="SemiBold"
+                                               Margin="6,0,0,8"/>
                                     <ScrollViewer HorizontalScrollBarVisibility="Auto"
-                                            VerticalScrollBarVisibility="Disabled">
+                                                  VerticalScrollBarVisibility="Disabled">
                                         <ItemsControl ItemsSource="{Binding Items}">
                                             <ItemsControl.ItemsPanel>
                                                 <ItemsPanelTemplate>
@@ -137,17 +136,16 @@
                                             </ItemsControl.ItemsPanel>
                                             <ItemsControl.ItemTemplate>
                                                 <DataTemplate>
-                                                    <StackPanel Margin="6,0,6,0"
-                                                            Width="120">
-                                                        <!-- <ctrls:PosterCard SourcePath="{Binding PosterPath}" Width="120" Height="175"/> -->
-                                                        <Border CornerRadius="18"
-                                                                Background="#1E1E1E"
+                                                    <StackPanel Margin="6,0,6,12"
+                                                                Width="120">
+                                                        <ctrls:PosterCard SourcePath="{Binding PosterPath}"
+                                                                Width="120"
                                                                 Height="175"/>
                                                         <TextBlock Text="{Binding Title}"
-                                                                Foreground="#EAEAEA"
+                                                                   Foreground="#EAEAEA"
                                                                    TextWrapping="Wrap"
-                                                                Margin="2,6,2,0"
-                                                                FontSize="12"/>
+                                                                   Margin="2,6,2,0"
+                                                                   FontSize="12"/>
                                                     </StackPanel>
                                                 </DataTemplate>
                                             </ItemsControl.ItemTemplate>

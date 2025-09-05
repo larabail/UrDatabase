@@ -6,6 +6,9 @@ namespace UrDatabase.Services
 {
     public class AppConfig
     {
+        public bool DownloadPosters { get; set; } = false;   // false = use TMDb URL; true = cache to disk
+        public string TmdbImageSize { get; set; } = "w342";  // common sizes: w185, w342, w500, original
+
         public string DatabasePath { get; set; } = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "UrDatabase", "movies.db");
         public string[] WatchFolders { get; set; } = Array.Empty<string>();
         public string TmdbApiKey { get; set; } = "";

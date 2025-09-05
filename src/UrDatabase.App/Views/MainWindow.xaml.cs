@@ -23,12 +23,19 @@ namespace UrDatabase.Views
 
         private List<UiMovie> _allMovies = new();
 
+        private PosterAutoLoader? _posterLoader;
+        private readonly System.Threading.CancellationTokenSource _cts = new();
+
+
         public MainWindow()
         {
             InitializeComponent();
 
             try { _config = AppConfig.Load(); } catch { _config = new AppConfig(); }
             _dbPath = _config.DatabasePath;
+
+            _posterLoader = new PosterAutoLoader(_config, _dbPath, maxConcurrency: 4);
+            this.Closed += (_, __) => { _cts.Cancel(); _posterLoader?.Dispose(); };
 
             DataContext = this;
 
@@ -65,6 +72,9 @@ ORDER BY rank";
             }
 
             _allMovies = conn.Query<UiMovie>(sql, param).ToList();
+            var hasPosters = _allMovies.Count(x => !string.IsNullOrWhiteSpace(x.PosterPath));
+            Title = $"UrDatabase — Posters present: {hasPosters}/{_allMovies.Count}";
+            WarmPosters(_allMovies);
         }
 
         private void BuildGenres()
@@ -83,6 +93,21 @@ ORDER BY rank";
                 Genres.Add(g);
         }
 
+        private void WarmPosters(System.Collections.Generic.IEnumerable<UiMovie> movies)
+        {
+            if (_posterLoader is null) return;
+            foreach (var m in movies)
+            {
+                if (!string.IsNullOrWhiteSpace(m.PosterPath)) continue;
+                _ = _posterLoader.EnsurePosterAsync(
+                        movieId: m.Id,
+                        title: m.Title,
+                        year: m.Year,
+                        onFetched: path => Dispatcher.Invoke(() => m.PosterPath = path),
+                        ct: _cts.Token);
+            }
+        }
+
 
         private void RebuildGroups()
         {
@@ -91,15 +116,14 @@ ORDER BY rank";
             // Which genre buckets do we want to show?
             IEnumerable<string> buckets;
             if (string.Equals(SelectedGenre, "All", StringComparison.OrdinalIgnoreCase) || string.IsNullOrWhiteSpace(SelectedGenre))
-                buckets = Genres.Where(g => !string.Equals(g, "All", StringComparison.OrdinalIgnoreCase));
+                buckets = Genres.Where(x => !string.Equals(x, "All", StringComparison.OrdinalIgnoreCase));
             else
                 buckets = new[] { SelectedGenre! };
 
-            foreach (var g in buckets)
+            foreach (var genre in buckets)
             {
                 var items = _allMovies
-                    .Where(m => m.HasGenre(g))
-                    // optional sorting within a row:
+                    .Where(m => m.HasGenre(genre))
                     .OrderByDescending(m => m.Year ?? 0)
                     .ThenBy(m => m.Title)
                     .ToList();
@@ -108,12 +132,15 @@ ORDER BY rank";
 
                 VisibleGroups.Add(new GenreGroup
                 {
-                    Name = $"{g} ({items.Count} items)",
+                    Name = $"{genre} ({items.Count} items)",
                     Items = new System.Collections.ObjectModel.ObservableCollection<UiMovie>(items)
                 });
             }
-        }
 
+            // Warm posters for all visible groups (once)
+            foreach (var group in VisibleGroups)
+                WarmPosters(group.Items);
+        }
 
         private void ScanButton_Click(object sender, RoutedEventArgs e)
         {
@@ -148,20 +175,25 @@ ORDER BY rank";
             }
 
             // searching → flat view
-            LoadMovies(q); // this fills _allMovies from DB
+            // searching → flat view
+            LoadMovies(q); // fills _allMovies from DB
             FlatResults.Clear();
 
             // ensure no duplicates (by Id)
             foreach (var m in _allMovies
-                    .GroupBy(m => m.Id)
+                    .GroupBy(x => x.Id)
                     .Select(g => g.First())
-                    .OrderByDescending(m => m.Year ?? 0)
-                    .ThenBy(m => m.Title))
+                    .OrderByDescending(x => x.Year ?? 0)
+                    .ThenBy(x => x.Title))
             {
                 FlatResults.Add(m);
             }
 
+            // warm posters for the flat list once
+            WarmPosters(FlatResults);
+
             SetSearching(true);
+
         }
 
 
