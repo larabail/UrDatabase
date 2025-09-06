@@ -144,12 +144,13 @@
                         <ItemsControl.ItemTemplate>
                             <DataTemplate>
                                 <StackPanel Margin="6,0,6,12"
-                                            Width="120">
+                                            Width="120"
+                                            MouseLeftButtonUp="MovieCard_Click">
                                     <ctrls:PosterCard SourcePath="{Binding PosterPath}"
                                                       Width="120"
                                                       Height="175"/>
                                     <TextBlock Text="{Binding Title}"
-                                               Style="{StaticResource DarkText}"
+                                               Foreground="#EAEAEA"
                                                TextWrapping="Wrap"
                                                Margin="2,6,2,0"
                                                FontSize="12"/>
@@ -181,13 +182,14 @@
                                             </ItemsControl.ItemsPanel>
                                             <ItemsControl.ItemTemplate>
                                                 <DataTemplate>
-                                                    <StackPanel Margin="6,0,6,0"
-                                                                Width="120">
+                                                    <StackPanel Margin="6,0,6,12"
+                                                                Width="120"
+                                                                MouseLeftButtonUp="MovieCard_Click">
                                                         <ctrls:PosterCard SourcePath="{Binding PosterPath}"
                                                                           Width="120"
                                                                           Height="175"/>
                                                         <TextBlock Text="{Binding Title}"
-                                                                   Style="{StaticResource DarkText}"
+                                                                   Foreground="#EAEAEA"
                                                                    TextWrapping="Wrap"
                                                                    Margin="2,6,2,0"
                                                                    FontSize="12"/>
@@ -219,15 +221,16 @@
                         <ItemsControl.ItemTemplate>
                             <DataTemplate>
                                 <StackPanel Margin="6,0,6,12"
-                                            Width="120">
+                                        Width="120"
+                                        MouseLeftButtonUp="MovieCard_Click">
                                     <ctrls:PosterCard SourcePath="{Binding PosterPath}"
-                                                      Width="120"
-                                                      Height="175"/>
+                                            Width="120"
+                                            Height="175"/>
                                     <TextBlock Text="{Binding Title}"
-                                               Style="{StaticResource DarkText}"
+                                            Foreground="#EAEAEA"
                                                TextWrapping="Wrap"
-                                               Margin="2,6,2,0"
-                                               FontSize="12"/>
+                                            Margin="2,6,2,0"
+                                            FontSize="12"/>
                                 </StackPanel>
                             </DataTemplate>
                         </ItemsControl.ItemTemplate>

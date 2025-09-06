@@ -10,6 +10,9 @@ using Dapper;
 using Microsoft.Data.Sqlite;
 using UrDatabase.Models;
 using UrDatabase.Services;
+using System.Threading;
+using System.Threading.Tasks;
+using System.Diagnostics;
 
 namespace UrDatabase.Views
 {
@@ -302,5 +305,76 @@ ORDER BY rank";
             GroupPanel.Visibility = Visibility.Collapsed;
             SingleGenrePanel.Visibility = Visibility.Visible;
         }
+
+        private async void MovieCard_Click(object sender, System.Windows.Input.MouseButtonEventArgs e)
+        {
+            if ((sender as FrameworkElement)?.DataContext is not UiMovie m) return;
+
+            try
+            {
+                using var tmdb = new TmdbService(
+                    apiKey: _config.TmdbApiKey ?? "",
+                    posterCacheDir: _config.PosterCacheDir ?? "",
+                    imageSize: _config.TmdbImageSize ?? "w780",       // nicer backdrop size
+                    downloadPosters: false);
+
+                var cts = new CancellationTokenSource(TimeSpan.FromSeconds(12));
+                var details = await tmdb.GetDetailsByTitleAsync(m.Title, m.Year, cts.Token);
+
+                var vm = new MovieDetailsVm
+                {
+                    LocalId = m.Id,
+                    Title = m.Title,
+                    Year = m.Year,
+                    PosterPath = m.PosterPath,
+                    Overview = details?.Overview ?? "",
+                    Runtime = details?.Runtime,
+                    ImdbRating = details?.VoteAverage, // for now show TMDb vote_average
+                    Genres = details is null ? m.Genres ?? "" : string.Join(", ", details.Genres?.ConvertAll(g => g.Name) ?? new()),
+                    BackdropUrl = string.IsNullOrWhiteSpace(details?.BackdropPath) ? null
+                        : tmdb.BuildImageUrlPublic(details!.BackdropPath!)
+                };
+
+                // Try to find a playable file for this movie (simple heuristics)
+                vm.FilePath = FindLocalFileForMovie(m);
+
+                var dlg = new MovieDetailsWindow(vm) { Owner = this };
+                dlg.ShowDialog();
+            }
+            catch (System.Exception ex)
+            {
+                MessageBox.Show($"Could not load details:\n{ex.Message}", "UrDatabase",
+                    MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+        }
+
+        // naive resolver; improve later when you have a files↔movies link
+        private string? FindLocalFileForMovie(UiMovie m)
+        {
+            try
+            {
+                using var conn = Database.Open(_dbPath);
+
+                // 1) If you already have a link (e.g., files.movie_id), use it:
+                // var p = conn.ExecuteScalar<string>("SELECT file_path FROM files WHERE movie_id=@id LIMIT 1", new { id = m.Id });
+
+                // 2) Fallback: heuristic filename search by title
+                var files = conn.Query<string>("SELECT file_path FROM files").ToList();
+                var title = m.Title.ToLowerInvariant();
+                string? best = null;
+                foreach (var f in files)
+                {
+                    var name = System.IO.Path.GetFileNameWithoutExtension(f)?.ToLowerInvariant() ?? "";
+                    if (name.Contains(title))
+                    {
+                        best = f;
+                        break;
+                    }
+                }
+                return best;
+            }
+            catch { return null; }
+        }
+
     }
 }

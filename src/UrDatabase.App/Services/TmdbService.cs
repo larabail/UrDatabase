@@ -25,13 +25,6 @@ namespace UrDatabase.Services
             DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
         };
 
-        // helper used by PosterAutoLoader when not downloading
-        internal string BuildImageUrlPublic(string posterPath) => BuildImageUrl(posterPath);
-
-        // helper used by PosterAutoLoader to download one file when DownloadPosters=true
-        internal async Task<string?> DownloadForPublic(string url, string fileName, CancellationToken ct)
-            => await DownloadAsync(url, fileName, ct);
-
         public TmdbService(string apiKey, string posterCacheDir, string imageSize, bool downloadPosters, HttpMessageHandler? handler = null)
         {
             _apiKey = apiKey ?? "";
@@ -151,5 +144,40 @@ namespace UrDatabase.Services
             [JsonPropertyName("id")] public int Id { get; set; }
             [JsonPropertyName("poster_path")] public string? PosterPath { get; set; }
         }
+        public sealed class TmdbDetails
+        {
+            public int Id { get; set; }
+            public string? Title { get; set; }
+            public string? Overview { get; set; }
+            public string? BackdropPath { get; set; }
+            public int? Runtime { get; set; }
+            public double? VoteAverage { get; set; }
+            public List<TmdbGenre> Genres { get; set; } = new();
+        }
+
+        public sealed class TmdbGenre
+        {
+            public int Id { get; set; }
+            public string Name { get; set; } = "";
+        }
+
+        // Public helpers we already expose
+        internal string BuildImageUrlPublic(string posterPath) => BuildImageUrl(posterPath);
+        internal async Task<string?> DownloadForPublic(string url, string fileName, CancellationToken ct) => await DownloadAsync(url, fileName, ct);
+
+        // New: fetch full details (we’ll first Search to get tmdbId, then call details)
+        public async Task<TmdbDetails?> GetDetailsByTitleAsync(string title, int? year, CancellationToken ct)
+        {
+            var (id, _) = await SearchPosterAsync(title, year, ct);
+            if (id is null) return null;
+
+            var url = $"https://api.themoviedb.org/3/movie/{id}?api_key={Uri.EscapeDataString(_apiKey)}&language=en-US";
+            using var resp = await _http.GetAsync(url, ct);
+            if (!resp.IsSuccessStatusCode) return null;
+            await using var s = await resp.Content.ReadAsStreamAsync(ct);
+            var details = await JsonSerializer.DeserializeAsync<TmdbDetails>(s, _json, ct);
+            return details;
+        }
+
     }
 }
