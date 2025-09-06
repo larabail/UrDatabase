@@ -5,6 +5,7 @@ using System.IO;
 using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using Dapper;
 using Microsoft.Data.Sqlite;
 using UrDatabase.Models;
@@ -15,6 +16,8 @@ namespace UrDatabase.Views
     public partial class MainWindow : Window
     {
         private AppConfig _config = new AppConfig();
+        public ObservableCollection<UiMovie> SingleGenreItems { get; } = new();
+
         private string _dbPath = "";
 
         public ObservableCollection<string> Genres { get; } = new();
@@ -42,7 +45,7 @@ namespace UrDatabase.Views
             LoadMovies();
             BuildGenres();
             RebuildGroups();
-            SetSearching(false);
+            ShowAllGenres();
         }
 
         private void LoadMovies(string? query = null)
@@ -191,21 +194,80 @@ ORDER BY rank";
 
             // warm posters for the flat list once
             WarmPosters(FlatResults);
-
-            SetSearching(true);
-
+            ShowSearch();
         }
-
 
         private void GenreChip_Click(object sender, RoutedEventArgs e)
         {
-            if (sender is Button b && b.Content is string g)
+            if (sender is ToggleButton tb && tb.Content is string genreLabel)
             {
-                SelectedGenre = g;
-                RebuildGroups();
+                // Update the selected genre value
+                SelectedGenre = genreLabel;
+
+                // --- Toggle visual state: set only this chip to checked ---
+                // Find the ItemsControl that hosts the chips
+                var itemsControl = FindAncestor<ItemsControl>(tb);
+                if (itemsControl != null)
+                {
+                    foreach (var container in FindVisualChildren<ContentPresenter>(itemsControl))
+                    {
+                        var btn = FindDescendant<ToggleButton>(container);
+                        if (btn != null)
+                            btn.IsChecked = object.Equals(btn.Content as string, SelectedGenre);
+                    }
+                }
+
+                // --- Switch content panel and (re)populate data ---
+                if (string.Equals(SelectedGenre, "All", StringComparison.OrdinalIgnoreCase))
+                {
+                    RebuildGroups();
+                    ShowAllGenres();
+                }
+                else
+                {
+                    SingleGenreItems.Clear();
+                    foreach (var m in _allMovies
+                                .Where(m => m.HasGenre(SelectedGenre))
+                                .OrderByDescending(m => m.Year ?? 0)
+                                .ThenBy(m => m.Title))
+                        SingleGenreItems.Add(m);
+
+                    WarmPosters(SingleGenreItems);
+                    ShowSingleGenre();
+                }
             }
         }
 
+        // ---------- visual tree helpers ----------
+        private static TAncestor? FindAncestor<TAncestor>(DependencyObject? child) where TAncestor : DependencyObject
+        {
+            while (child != null)
+            {
+                child = System.Windows.Media.VisualTreeHelper.GetParent(child);
+                if (child is TAncestor a) return a;
+            }
+            return null;
+        }
+
+        private static IEnumerable<TChild> FindVisualChildren<TChild>(DependencyObject depObj) where TChild : DependencyObject
+        {
+            if (depObj == null) yield break;
+            int count = System.Windows.Media.VisualTreeHelper.GetChildrenCount(depObj);
+            for (int i = 0; i < count; i++)
+            {
+                var child = System.Windows.Media.VisualTreeHelper.GetChild(depObj, i);
+                if (child is TChild c) yield return c;
+                foreach (var c2 in FindVisualChildren<TChild>(child))
+                    yield return c2;
+            }
+        }
+
+        private static TDesc? FindDescendant<TDesc>(DependencyObject root) where TDesc : DependencyObject
+        {
+            foreach (var c in FindVisualChildren<TDesc>(root))
+                return c;
+            return null;
+        }
 
         private void Settings_Click(object sender, RoutedEventArgs e)
         {
@@ -220,5 +282,25 @@ ORDER BY rank";
             SearchPanel.Visibility = searching ? Visibility.Visible : Visibility.Collapsed;
         }
 
+        private void ShowSearch()
+        {
+            SearchPanel.Visibility = Visibility.Visible;
+            GroupPanel.Visibility = Visibility.Collapsed;
+            SingleGenrePanel.Visibility = Visibility.Collapsed;
+        }
+
+        private void ShowAllGenres()
+        {
+            SearchPanel.Visibility = Visibility.Collapsed;
+            GroupPanel.Visibility = Visibility.Visible;
+            SingleGenrePanel.Visibility = Visibility.Collapsed;
+        }
+
+        private void ShowSingleGenre()
+        {
+            SearchPanel.Visibility = Visibility.Collapsed;
+            GroupPanel.Visibility = Visibility.Collapsed;
+            SingleGenrePanel.Visibility = Visibility.Visible;
+        }
     }
 }
