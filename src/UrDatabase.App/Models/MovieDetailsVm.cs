@@ -13,6 +13,8 @@ namespace UrDatabase.Models
         public double? ImdbRating { get; set; }      // we’ll map TMDb vote_average here for now
         public string? PosterPath { get; set; }      // local or URL (you already have this)
         public string? BackdropUrl { get; set; }     // URL for big backdrop
-        public string? FilePath { get; set; }        // first playable file we can find
+        public string? FilePath { get; set; }        // first playable file we can 
+        public List<string> TopCast { get; set; } = new();     // “Actor (Role)”
+        public List<string> KeyCrew { get; set; } = new();     // “Director: Name”
     }
 }

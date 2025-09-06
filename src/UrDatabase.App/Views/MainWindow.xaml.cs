@@ -315,11 +315,33 @@ ORDER BY rank";
                 using var tmdb = new TmdbService(
                     apiKey: _config.TmdbApiKey ?? "",
                     posterCacheDir: _config.PosterCacheDir ?? "",
-                    imageSize: _config.TmdbImageSize ?? "w780",       // nicer backdrop size
+                    imageSize: _config.TmdbImageSize ?? "w780",
                     downloadPosters: false);
 
                 var cts = new CancellationTokenSource(TimeSpan.FromSeconds(12));
                 var details = await tmdb.GetDetailsByTitleAsync(m.Title, m.Year, cts.Token);
+
+                List<string> cast = new();
+                List<string> crew = new();
+
+                if (details?.Id is int tmdbId)
+                {
+                    var credits = await tmdb.GetCreditsByIdAsync(tmdbId, cts.Token);
+                    if (credits != null)
+                    {
+                        // top 10 cast
+                        foreach (var c in credits.Cast.Take(10))
+                        {
+                            if (!string.IsNullOrWhiteSpace(c.Name))
+                                cast.Add(string.IsNullOrWhiteSpace(c.Character) ? c.Name : $"{c.Name} ({c.Character})");
+                        }
+                        // key crew: Director(s), Writer(s), Cinematography
+                        foreach (var d in credits.Crew.Where(x => string.Equals(x.Job, "Director", StringComparison.OrdinalIgnoreCase)).Take(3))
+                            crew.Add($"Director: {d.Name}");
+                        foreach (var w in credits.Crew.Where(x => x.Job != null && x.Job.Contains("Writer", StringComparison.OrdinalIgnoreCase)).Take(3))
+                            crew.Add($"Writer: {w.Name}");
+                    }
+                }
 
                 var vm = new MovieDetailsVm
                 {
@@ -329,19 +351,20 @@ ORDER BY rank";
                     PosterPath = m.PosterPath,
                     Overview = details?.Overview ?? "",
                     Runtime = details?.Runtime,
-                    ImdbRating = details?.VoteAverage, // for now show TMDb vote_average
-                    Genres = details is null ? m.Genres ?? "" : string.Join(", ", details.Genres?.ConvertAll(g => g.Name) ?? new()),
+                    ImdbRating = details?.VoteAverage, // shows as ★ 7.3 etc.
+                    Genres = details is null ? m.Genres ?? "" : string.Join(", ", details.Genres?.Select(g => g.Name) ?? Array.Empty<string>()),
                     BackdropUrl = string.IsNullOrWhiteSpace(details?.BackdropPath) ? null
-                        : tmdb.BuildImageUrlPublic(details!.BackdropPath!)
+                                  : tmdb.BuildImageUrlPublic(details!.BackdropPath!)
                 };
+                vm.TopCast = cast;
+                vm.KeyCrew = crew;
 
-                // Try to find a playable file for this movie (simple heuristics)
                 vm.FilePath = FindLocalFileForMovie(m);
 
                 var dlg = new MovieDetailsWindow(vm) { Owner = this };
                 dlg.ShowDialog();
             }
-            catch (System.Exception ex)
+            catch (Exception ex)
             {
                 MessageBox.Show($"Could not load details:\n{ex.Message}", "UrDatabase",
                     MessageBoxButton.OK, MessageBoxImage.Error);

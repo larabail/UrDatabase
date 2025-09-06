@@ -25,6 +25,15 @@ namespace UrDatabase.Services
             DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
         };
 
+        public sealed class TmdbCredits
+        {
+            public List<TmdbCast> Cast { get; set; } = new();
+            public List<TmdbCrew> Crew { get; set; } = new();
+        }
+
+        public sealed class TmdbCast { public string Name { get; set; } = ""; public string? Character { get; set; } }
+        public sealed class TmdbCrew { public string Name { get; set; } = ""; public string? Job { get; set; } }
+
         public TmdbService(string apiKey, string posterCacheDir, string imageSize, bool downloadPosters, HttpMessageHandler? handler = null)
         {
             _apiKey = apiKey ?? "";
@@ -176,7 +185,19 @@ namespace UrDatabase.Services
             if (!resp.IsSuccessStatusCode) return null;
             await using var s = await resp.Content.ReadAsStreamAsync(ct);
             var details = await JsonSerializer.DeserializeAsync<TmdbDetails>(s, _json, ct);
+            if (details != null) details.Id = id.Value; // make sure Id is set from search
             return details;
+        }
+
+
+        public async Task<TmdbCredits?> GetCreditsByIdAsync(int tmdbId, CancellationToken ct)
+        {
+            var url = $"https://api.themoviedb.org/3/movie/{tmdbId}/credits?api_key={Uri.EscapeDataString(_apiKey)}&language=en-US";
+            using var resp = await _http.GetAsync(url, ct);
+            if (!resp.IsSuccessStatusCode) return null;
+            await using var s = await resp.Content.ReadAsStreamAsync(ct);
+            var credits = await JsonSerializer.DeserializeAsync<TmdbCredits>(s, _json, ct);
+            return credits;
         }
 
     }

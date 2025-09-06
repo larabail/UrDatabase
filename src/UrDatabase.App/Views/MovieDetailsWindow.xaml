@@ -10,17 +10,17 @@
         <!-- Backdrop -->
         <Grid>
             <Image Source="{Binding BackdropUrl}"
-                    Stretch="UniformToFill"
-                    Opacity="0.35"/>
+                   Stretch="UniformToFill"
+                   Opacity="0.35"/>
             <!-- gradient to darken bottom -->
             <Rectangle>
                 <Rectangle.Fill>
                     <LinearGradientBrush StartPoint="0,0"
-                            EndPoint="0,1">
+                                         EndPoint="0,1">
                         <GradientStop Color="#00000000"
-                                Offset="0"/>
+                                      Offset="0"/>
                         <GradientStop Color="#CC000000"
-                                Offset="1"/>
+                                      Offset="1"/>
                     </LinearGradientBrush>
                 </Rectangle.Fill>
             </Rectangle>
@@ -42,8 +42,8 @@
                     Width="250"
                     Height="375">
                 <Image Stretch="UniformToFill"
-                        Source="{Binding PosterPath}"
-                        ClipToBounds="True"/>
+                       Source="{Binding PosterPath}"
+                       ClipToBounds="True"/>
             </Border>
 
             <!-- Text + actions -->
@@ -81,15 +81,73 @@
                 <TextBlock Foreground="#CFCFCF"
                         Text="{Binding Genres}"
                         Margin="0,0,0,8"/>
-                <ScrollViewer Height="220"
-                        VerticalScrollBarVisibility="Auto">
+
+                <ScrollViewer Height="180"
+                        VerticalScrollBarVisibility="Auto"
+                        Margin="0,0,0,8">
                     <TextBlock Text="{Binding Overview}"
                             Foreground="#EAEAEA"
                             TextWrapping="Wrap"/>
                 </ScrollViewer>
 
+                <!-- Cast -->
+                <TextBlock Text="Cast"
+                        Foreground="#EAEAEA"
+                        FontWeight="SemiBold"
+                        Margin="0,4,0,6"/>
+                <ScrollViewer HorizontalScrollBarVisibility="Auto"
+                        VerticalScrollBarVisibility="Disabled"
+                        Margin="0,0,0,8">
+                    <ItemsControl ItemsSource="{Binding TopCast}">
+                        <ItemsControl.ItemsPanel>
+                            <ItemsPanelTemplate>
+                                <StackPanel Orientation="Horizontal"/>
+                            </ItemsPanelTemplate>
+                        </ItemsControl.ItemsPanel>
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Border Background="#242424"
+                                        CornerRadius="16"
+                                        Padding="10,4"
+                                        Margin="0,0,8,0">
+                                    <TextBlock Foreground="#EAEAEA"
+                                            Text="{Binding}"/>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </ScrollViewer>
+
+                <!-- Crew -->
+                <TextBlock Text="Crew"
+                        Foreground="#EAEAEA"
+                        FontWeight="SemiBold"
+                        Margin="0,4,0,6"/>
+                <ScrollViewer HorizontalScrollBarVisibility="Auto"
+                        VerticalScrollBarVisibility="Disabled"
+                        Margin="0,0,0,12">
+                    <ItemsControl ItemsSource="{Binding KeyCrew}">
+                        <ItemsControl.ItemsPanel>
+                            <ItemsPanelTemplate>
+                                <StackPanel Orientation="Horizontal"/>
+                            </ItemsPanelTemplate>
+                        </ItemsControl.ItemsPanel>
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Border Background="#242424"
+                                        CornerRadius="16"
+                                        Padding="10,4"
+                                        Margin="0,0,8,0">
+                                    <TextBlock Foreground="#EAEAEA"
+                                            Text="{Binding}"/>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </ScrollViewer>
+
                 <StackPanel Orientation="Horizontal"
-                        Margin="0,16,0,0">
+                        Margin="0,6,0,0">
                     <Button x:Name="PlayBtn"
                             Content="▶ Play"
                             Width="140"
@@ -98,6 +156,11 @@
                             Background="#0A84FF"
                             Foreground="White"
                             Click="PlayBtn_Click"/>
+                    <Button Content="Link File…"
+                            Width="120"
+                            Height="36"
+                            Margin="0,0,12,0"
+                            Click="LinkFile_Click"/>
                     <Button Content="Close"
                             Width="100"
                             Height="36"
