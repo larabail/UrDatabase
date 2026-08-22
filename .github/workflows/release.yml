@@ -1,0 +1,379 @@
+name: Release
+
+# Publishes UrDatabase every time `main` gains a new version.
+#
+# The trigger is a plain push to `main` rather than a tag, because the version
+# lives in `Directory.Build.props` and is reviewed as part of the pull request
+# that changes the app. Tagging by hand afterwards is a second, silent step
+# that gets forgotten, and when it is forgotten there is nothing to notice: the
+# code is merged and simply never reaches anybody.
+#
+# The cost of that choice is that this workflow runs on every merge, including
+# the many that change only docs, workflows or the downloads site. So the first
+# thing it does is work out whether there is anything to release, and end
+# quietly when there is not. It must succeed in that case: a red X on a merge
+# that was never going to publish anything is how a pipeline gets ignored.
+on:
+  push:
+    branches: [main]
+  # Available by hand for the case where a release was deleted, or where the
+  # tag was pushed but the publish failed halfway. Re-running against a version
+  # whose tag already exists is a no-op, so this is safe to press.
+  workflow_dispatch:
+
+# `contents: write` to push the tag and create the release; `deployments: write`
+# to record the deployment. Nothing wider: this token can reach the whole
+# repository and there is no reason for it to be able to do more than the two
+# things below.
+permissions:
+  contents: write
+  deployments: write
+
+# Two merges landing close together would otherwise race to tag, and the loser
+# would fail on a tag the winner had just pushed. Not cancel-in-progress: a run
+# that has already created a tag and started uploading assets must be allowed
+# to finish, or the release is left half-published with a tag pointing at it.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+env:
+  DOTNET_VERSION: '8.0.x'
+  DOTNET_NOLOGO: 'true'
+  DOTNET_CLI_TELEMETRY_OPTOUT: 'true'
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: 'true'
+
+jobs:
+  release:
+    name: Publish release
+    # macOS for the same reason the pull request's build job uses it: the .NET
+    # SDK ad-hoc signs the macOS launcher only on a macOS host, and an unsigned
+    # arm64 binary is killed by the kernel on every Apple silicon Mac. Getting
+    # this wrong would publish a permanently broken flagship download.
+    #
+    # The whole release runs here rather than only the packaging, so the tag,
+    # the release and the deployment stay in one job with one ordering. macOS
+    # runners are free on public repositories and a release is not a
+    # latency-sensitive thing. On a private repository they bill at ten times
+    # the Linux rate, which is worth knowing before anybody flips this
+    # repository back to private.
+    runs-on: macos-14
+    timeout-minutes: 45
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Tags are needed to answer "has this version already gone out?", and
+          # a shallow clone has none of them.
+          fetch-depth: 0
+
+      - id: version
+        uses: ./.github/actions/read-version
+
+      # Whether there is anything to do, decided before any build starts.
+      #
+      # Two ways there is not:
+      #
+      #   * No version in the tree at all. That is the state of `main` until
+      #     Directory.Build.props lands, and every merge in the meantime would
+      #     otherwise fail on a file that is somebody else's to add.
+      #   * The tag already exists, which is the ordinary case: a merge that
+      #     changed only documentation leaves the version where it was.
+      #
+      # Checked against the remote rather than against the local clone, because
+      # the local one is a snapshot from the moment this run started and
+      # another run may have tagged since.
+      - name: Decide whether to publish
+        id: gate
+        env:
+          PRESENT: ${{ steps.version.outputs.present }}
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          set -euo pipefail
+
+          if [ "$PRESENT" != 'true' ]; then
+            echo 'publish=false' >> "$GITHUB_OUTPUT"
+            cat >> "$GITHUB_STEP_SUMMARY" <<'NOVERSION'
+          ### Nothing released
+
+          `Directory.Build.props` does not set a `<Version>`, so there is no
+          version to tag. Add one at the repository root and the next merge
+          publishes it.
+          NOVERSION
+            exit 0
+          fi
+
+          if git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null 2>&1; then
+            echo 'publish=false' >> "$GITHUB_OUTPUT"
+            echo "$TAG is already tagged, so this merge publishes nothing."
+            cat >> "$GITHUB_STEP_SUMMARY" <<TAGGED
+          ### Nothing released
+
+          The tag \`$TAG\` already exists, so this merge did not change the
+          version and there is nothing new to publish. That is the ordinary
+          outcome for a merge that only touched docs, workflows or the
+          downloads site.
+
+          To release, raise \`<Version>\` in \`Directory.Build.props\`.
+          TAGGED
+            exit 0
+          fi
+
+          echo 'publish=true' >> "$GITHUB_OUTPUT"
+          echo "$TAG does not exist yet. Publishing."
+
+      - uses: actions/setup-dotnet@v4
+        if: steps.gate.outputs.publish == 'true'
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: Cache NuGet packages
+        if: steps.gate.outputs.publish == 'true'
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('**/*.csproj', 'Directory.Build.props', 'Directory.Packages.props') }}
+          restore-keys: nuget-${{ runner.os }}-
+
+      # The tests ran on the pull request, but `main` can hold a combination
+      # neither branch tested: two pull requests that pass separately and
+      # conflict semantically once merged. Publishing that to a download page
+      # is worse than a slow release.
+      - name: Test
+        if: steps.gate.outputs.publish == 'true'
+        run: dotnet test UrDatabase.sln --configuration Release
+
+      # A release that ships without the keys still works as an application; it
+      # just shows no posters, no synopses and no ratings, which to a new user
+      # is indistinguishable from the application being broken. Not made fatal
+      # -- refusing to publish because a repository setting is empty turns a
+      # cosmetic problem into a blocked release -- but loud, and recorded on
+      # the run so the cause is obvious when the first bug report arrives.
+      - name: Warn if this release would have no metadata
+        if: steps.gate.outputs.publish == 'true'
+        env:
+          TMDB_API_KEY: ${{ secrets.TMDB_API_KEY }}
+          OMDB_API_KEY: ${{ secrets.OMDB_API_KEY }}
+        run: |
+          set -euo pipefail
+
+          MISSING=''
+          if [ -z "${TMDB_API_KEY:-}" ]; then MISSING="$MISSING TMDB_API_KEY"; fi
+          if [ -z "${OMDB_API_KEY:-}" ]; then MISSING="$MISSING OMDB_API_KEY"; fi
+
+          if [ -n "$MISSING" ]; then
+            echo "::warning title=Releasing without API keys::Missing repository secret(s):$MISSING. This release starts with no metadata, posters or ratings. Set them under Settings then publish a new version."
+            {
+              echo '> [!WARNING]'
+              echo "> Built without:$MISSING. This release shows no posters,"
+              echo '> synopses or ratings. Set the missing repository secrets'
+              echo '> and publish a new version.'
+              echo ''
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo 'Both API keys are available.'
+          fi
+
+      - name: Package
+        if: steps.gate.outputs.publish == 'true'
+        uses: ./.github/actions/package-app
+        with:
+          version: ${{ steps.version.outputs.version }}
+          # Compiled into the shipped binaries so an official download works
+          # the moment it is opened, with no account to create and no config
+          # file to write. Not secret once shipped -- see docs/releases.md --
+          # but kept in Actions secrets so they are absent from git history and
+          # rotating one is an edit to a repository setting rather than a
+          # commit.
+          tmdb-api-key: ${{ secrets.TMDB_API_KEY }}
+          omdb-api-key: ${{ secrets.OMDB_API_KEY }}
+
+      # Checksums, so somebody who cares can confirm the zip they downloaded is
+      # the zip this run built. Costs nothing and is the only answer available
+      # to "is this file safe?" for an unsigned build.
+      - name: Checksum the archives
+        if: steps.gate.outputs.publish == 'true'
+        run: |
+          set -euo pipefail
+          cd dist
+          # macOS ships `shasum` and no `sha256sum`; Linux is usually the other
+          # way round. Both are checked so this keeps working if the job ever
+          # moves back to a Linux runner, and so the output format is the same
+          # either way -- it is what people paste into `shasum -c`.
+          if command -v sha256sum >/dev/null 2>&1; then
+            sha256sum -- *.zip > SHA256SUMS.txt
+          else
+            shasum -a 256 -- *.zip > SHA256SUMS.txt
+          fi
+          cat SHA256SUMS.txt
+
+      # Annotated rather than lightweight, so the tag itself records who
+      # published it and when, independently of the commit it points at.
+      #
+      # Pushed before the release is created because a GitHub release needs a
+      # tag to hang off. Creating the release first with `--target` would make
+      # GitHub create a lightweight tag of its own, and the annotation would be
+      # lost.
+      - name: Tag the release
+        if: steps.gate.outputs.publish == 'true'
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git tag --annotate "$TAG" --message "UrDatabase $VERSION"
+          git push origin "refs/tags/$TAG"
+
+      # Recorded so the repository's Deployments page answers "what is live and
+      # when did it go out?" without anyone reading workflow logs. The ref is
+      # the tag, so each entry names the version it shipped.
+      #
+      # Created after the tag exists: a deployment against a ref GitHub cannot
+      # resolve is rejected. `required_contexts: []` matters -- the default is
+      # "every status check configured on the branch", and since this workflow
+      # is itself one of them, the deployment would sit forever waiting for the
+      # run that is creating it.
+      - name: Open a deployment
+        id: deployment
+        if: steps.gate.outputs.publish == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          set -euo pipefail
+
+          RUN_URL="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+
+          # Built as JSON and piped in, rather than assembled from `--field`
+          # arguments. `--field required_contexts='[]'` would send the two
+          # characters `[]` as a string, the API would refuse it, and the error
+          # names a type mismatch rather than the reason it matters.
+          ID=$(jq -n \
+                --arg ref "$TAG" \
+                --arg description "UrDatabase $TAG" \
+                '{
+                   ref: $ref,
+                   environment: "production",
+                   description: $description,
+                   auto_merge: false,
+                   required_contexts: [],
+                   production_environment: true
+                 }' \
+             | gh api "repos/$GITHUB_REPOSITORY/deployments" \
+                 --method POST --input - --jq '.id')
+
+          echo "id=$ID" >> "$GITHUB_OUTPUT"
+          echo "Deployment $ID opened for $TAG."
+
+          jq -n --arg log_url "$RUN_URL" '{state: "in_progress", log_url: $log_url}' \
+            | gh api "repos/$GITHUB_REPOSITORY/deployments/$ID/statuses" \
+                --method POST --input - --silent
+
+      # `--generate-notes` writes the "What's Changed" list from the pull
+      # requests merged since the previous tag. Written by GitHub rather than
+      # by this workflow because it is the only party that knows which pull
+      # requests those were.
+      #
+      # The zips are attached here rather than uploaded afterwards so the
+      # release is never briefly visible with no downloads on it -- which is
+      # exactly when somebody following a link would see it.
+      - name: Publish the release
+        id: publish
+        if: steps.gate.outputs.publish == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.version.outputs.tag }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+
+          # An unquoted heredoc, so `$VERSION` expands, with the backticks
+          # escaped so they stay Markdown instead of becoming command
+          # substitution. The obvious alternative -- a quoted heredoc with a
+          # placeholder replaced afterwards -- needs `sed -i`, which takes a
+          # mandatory backup suffix on macOS and none on Linux, and this job
+          # runs on macOS.
+          cat > notes.md <<NOTES
+          ## Downloads
+
+          Take the build for your machine below, or use
+          https://urdatabase-downloads.web.app
+
+          | Machine | File |
+          | --- | --- |
+          | Mac, Apple silicon | \`UrDatabase-$VERSION-osx-arm64.zip\` |
+          | Mac, Intel | \`UrDatabase-$VERSION-osx-x64.zip\` |
+          | Windows, 64-bit | \`UrDatabase-$VERSION-win-x64.zip\` |
+
+          These builds are **not code signed or notarized**. macOS quarantines
+          anything downloaded through a browser and refuses to open an unsigned
+          app outright, reporting it as damaged. It is not damaged. Clear the
+          flag once, after unzipping:
+
+          \`\`\`sh
+          xattr -dr com.apple.quarantine ~/Downloads/UrDatabase-$VERSION-osx-arm64
+          \`\`\`
+
+          On Windows, SmartScreen shows "Windows protected your PC". Choose
+          **More info**, then **Run anyway**.
+
+          \`SHA256SUMS.txt\` lists the checksum of each archive.
+
+          NOTES
+
+          gh release create "$TAG" \
+            --title "UrDatabase $VERSION" \
+            --notes-file notes.md \
+            --generate-notes \
+            --verify-tag \
+            dist/UrDatabase-"$VERSION"-osx-arm64.zip \
+            dist/UrDatabase-"$VERSION"-osx-x64.zip \
+            dist/UrDatabase-"$VERSION"-win-x64.zip \
+            dist/SHA256SUMS.txt
+
+          URL=$(gh release view "$TAG" --json url --jq '.url')
+          echo "url=$URL" >> "$GITHUB_OUTPUT"
+
+          {
+            echo "### Released $VERSION"
+            echo ''
+            echo "- $URL"
+            echo '- https://urdatabase-downloads.web.app picks it up on its own,'
+            echo '  because it reads the releases API in the browser rather than'
+            echo '  being rebuilt.'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # Split from opening the deployment, and running on failure too, so the
+      # Deployments page shows a failed release as failed. A deployment stuck
+      # at "in progress" forever reads as "still deploying", which is the one
+      # thing it is not.
+      - name: Close the deployment
+        if: always() && steps.deployment.outputs.id != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DEPLOYMENT: ${{ steps.deployment.outputs.id }}
+          STATE: ${{ steps.publish.outcome == 'success' && 'success' || 'failure' }}
+          RELEASE_URL: ${{ steps.publish.outputs.url }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+
+          RUN_URL="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+
+          # `environment_url` is left out entirely when the release never got
+          # created, rather than sent empty: an empty link on the Deployments
+          # page looks like a live deployment nobody can reach.
+          jq -n \
+            --arg state "$STATE" \
+            --arg log_url "$RUN_URL" \
+            --arg environment_url "${RELEASE_URL:-}" \
+            --arg description "UrDatabase $VERSION" \
+            '{state: $state, log_url: $log_url, description: $description}
+             + (if $environment_url == "" then {}
+                else {environment_url: $environment_url} end)' \
+          | gh api "repos/$GITHUB_REPOSITORY/deployments/$DEPLOYMENT/statuses" \
+              --method POST --input - --silent
+
+          echo "Deployment $DEPLOYMENT closed as $STATE."

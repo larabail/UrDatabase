@@ -1,0 +1,6 @@
+{
+  "name": "urdatabase-downloads",
+  "private": true,
+  "type": "module",
+  "description": "Marks the downloads site's scripts as ES modules so `node --test` loads them the way a browser does. Not published and not deployed: firebase.json keeps it out of the site, and there are no dependencies to install."
+}

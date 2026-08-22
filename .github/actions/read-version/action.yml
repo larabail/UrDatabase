@@ -1,0 +1,82 @@
+name: Read the release version
+description: >
+  The <Version> from Directory.Build.props, which is the single source of truth
+  for what this repository releases: the git tag, the GitHub release and all
+  three asset names are derived from it and nowhere else.
+
+# Shared between pr.yml and release.yml so the version a pull request builds
+# under is read exactly the same way as the version that gets tagged. Two
+# copies of "grep the props file" drift the first time one of them learns to
+# cope with, say, a comment on the same line.
+
+inputs:
+  props:
+    description: The props file to read.
+    required: false
+    default: Directory.Build.props
+
+outputs:
+  version:
+    description: 'The version, for example `0.1.0`. Empty when there is none.'
+    value: ${{ steps.read.outputs.version }}
+  tag:
+    description: 'The git tag for it, for example `v0.1.0`. Empty when there is none.'
+    value: ${{ steps.read.outputs.tag }}
+  present:
+    description: >
+      "true" when the props file states a usable version. Callers are expected
+      to check this rather than assume: until the Avalonia port lands,
+      Directory.Build.props does not exist on main at all, and a release
+      workflow that failed on every merge in the meantime would train everyone
+      to ignore it.
+    value: ${{ steps.read.outputs.present }}
+
+runs:
+  using: composite
+  steps:
+    - id: read
+      shell: bash
+      env:
+        PROPS: ${{ inputs.props }}
+      run: |
+        set -euo pipefail
+
+        if [ ! -f "$PROPS" ]; then
+          echo "No $PROPS in this tree."
+          {
+            echo 'version='
+            echo 'tag='
+            echo 'present=false'
+          } >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+
+        # `tr -d` first so a version split across lines by an editor still
+        # reads, then a single capture of the element's contents. sed rather
+        # than an XML tool because the runners have sed and this is one
+        # element.
+        VERSION=$(tr -d '\n' < "$PROPS" \
+          | sed -n 's/.*<Version>[[:space:]]*\([^<[:space:]][^<]*\)<\/Version>.*/\1/p' \
+          | head -n 1 \
+          | tr -d '[:space:]')
+
+        # Validated here rather than trusted, because this string becomes a git
+        # tag and three filenames. A stray `$(Foo)` from an unexpanded MSBuild
+        # property would otherwise produce an unopenable release asset and a
+        # tag nobody can type.
+        if ! printf '%s' "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+          echo "::warning title=No usable version::$PROPS does not set a <Version> of the form MAJOR.MINOR.PATCH (read: '${VERSION}')"
+          {
+            echo 'version='
+            echo 'tag='
+            echo 'present=false'
+          } >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+
+        echo "Version $VERSION, which tags as v$VERSION."
+        {
+          echo "version=$VERSION"
+          echo "tag=v$VERSION"
+          echo 'present=true'
+        } >> "$GITHUB_OUTPUT"

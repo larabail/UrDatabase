@@ -1,0 +1,355 @@
+name: Pull request checks
+
+# Everything a change has to pass before it can reach `main`. A merge to `main`
+# tags a version and publishes a release immediately, with no staging step in
+# between, so this workflow is the only thing standing between a bad commit and
+# a download somebody installs. It therefore runs the same publish the release
+# runs, rather than a cheaper approximation of it.
+#
+# The job names below are load bearing. Branch protection on `main` matches
+# required checks by name, so renaming a job silently stops it being required
+# and the rule it enforces quietly stops applying. The required set is:
+#
+#     Build and test
+#     Test builds
+#     Version
+#     Downloads site
+#
+# Deliberately no `paths-ignore:` anywhere in this file. A path filter applies
+# to a whole workflow, and GitHub leaves a required check that was filtered out
+# sitting at "Expected" forever rather than reporting success -- so a
+# documentation-only pull request would become permanently unmergeable with
+# nothing to click. The jobs below decide what they can skip themselves, which
+# costs a few runner-minutes on a README change and cannot deadlock anybody.
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+# A new push to the same pull request makes the previous answer irrelevant, and
+# the three publishes below are the expensive part of it.
+concurrency:
+  group: pr-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+# Read-only. Nothing here comments, labels or pushes, and a pull request from a
+# fork must not be able to make it do so.
+permissions:
+  contents: read
+
+env:
+  DOTNET_VERSION: '8.0.x'
+  # The SDK phones home for a first-run message and a telemetry ping on every
+  # invocation, which is noise in the log and latency in a job that calls
+  # `dotnet` four times.
+  DOTNET_NOLOGO: 'true'
+  DOTNET_CLI_TELEMETRY_OPTOUT: 'true'
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: 'true'
+
+jobs:
+  # Does the change compile, and do the tests still pass.
+  build:
+    name: Build and test
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # First, because it is the cheapest check in the repository and it
+      # catches the failure that is worst to debug: an invalid expression in a
+      # workflow is rejected by GitHub before any job is scheduled, so it fails
+      # in seconds with no logs and no indication of which line is wrong.
+      # Linting from inside a job that does run gives it a log to point at.
+      - name: Lint the workflows
+        run: |
+          set -euo pipefail
+          curl -fsSL \
+            https://github.com/rhysd/actionlint/releases/download/v1.7.7/actionlint_1.7.7_linux_amd64.tar.gz \
+            | tar -xz actionlint
+          ./actionlint -color
+          rm -f ./actionlint
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      # Keyed on the project files, which is what decides the package graph.
+      # A cache that also keyed on the source would miss on every commit and
+      # cost more to write than it ever saved.
+      - name: Cache NuGet packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('**/*.csproj', 'Directory.Build.props', 'Directory.Packages.props') }}
+          restore-keys: nuget-${{ runner.os }}-
+
+      - name: Restore
+        run: dotnet restore UrDatabase.sln
+
+      - name: Build
+        run: dotnet build UrDatabase.sln --configuration Release --no-restore
+
+      # No API keys are passed here, and that is not an oversight.
+      #
+      # The test suite drives the TMDB and OMDb clients through fake HTTP
+      # handlers, so it neither needs a key nor should be able to reach the
+      # real services: a test that quietly starts making live calls is slow,
+      # rate limited, and fails for reasons that have nothing to do with the
+      # change under review. `dotnet test` must keep passing with both keys
+      # unset -- that is what proves the fakes are actually in the path.
+      #
+      # `--logger trx` writes a report GitHub renders on the run page, so a
+      # failed assertion is readable without opening the raw log.
+      - name: Test
+        run: |
+          dotnet test UrDatabase.sln \
+            --configuration Release \
+            --no-build \
+            --logger 'trx;LogFileName=results.trx' \
+            --logger 'console;verbosity=normal' \
+            --results-directory TestResults
+
+      # Uploaded even when the tests fail -- especially then, since that is
+      # when somebody wants to read them.
+      - name: Keep the test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: TestResults
+          if-no-files-found: ignore
+          retention-days: 14
+
+  # Builds a reviewer can actually run.
+  #
+  # Asked for explicitly by the repository owner, and the reason is sound: this
+  # is a desktop application whose whole job is what it looks like and how it
+  # behaves, and neither of those is visible in a diff. Without this, reviewing
+  # a UI change means installing the .NET SDK, cloning the branch and building
+  # it -- which is enough friction that it does not happen, and changes get
+  # approved on the strength of the code reading plausibly.
+  #
+  # Not gated behind `Build and test`. A failing test is the moment somebody
+  # most wants to poke at the running app, and making the download depend on
+  # green tests would withhold it exactly then.
+  package:
+    name: Test builds
+    # macOS, not Linux, and it matters: the .NET SDK only ad-hoc signs the
+    # macOS launcher when the build host is macOS, and Apple silicon kills an
+    # unsigned arm64 binary outright. A Linux runner here would hand reviewers
+    # a Mac build that dies on launch with no message. The reasoning is spelled
+    # out in .github/actions/package-app/action.yml.
+    #
+    # Free here because this repository is public. On a private repository a
+    # macOS runner is billed at ten times the rate of a Linux one, so if this
+    # repository is ever made private again, this job and the release are
+    # where the bill goes -- and they still cannot move back to Linux without
+    # breaking the Mac builds. Fixing that properly would mean paying Apple for
+    # a Developer ID and signing on any host.
+    #
+    # Pinned rather than `macos-latest` so the runner architecture cannot
+    # change under this job without somebody choosing it.
+    runs-on: macos-14
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: Cache NuGet packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('**/*.csproj', 'Directory.Build.props', 'Directory.Packages.props') }}
+          restore-keys: nuget-${{ runner.os }}-
+
+      - id: version
+        uses: ./.github/actions/read-version
+
+      # Falls back to a placeholder rather than failing. A pull request that
+      # does not touch `src/` is under no obligation to have a version at all
+      # (see the Version job), and refusing to build a reviewable copy of a
+      # change because of that would be backwards. The number only ends up in
+      # the filename.
+      - name: Decide what to call the builds
+        id: name
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          if [ -n "$VERSION" ]; then
+            echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          else
+            echo 'version=0.0.0' >> "$GITHUB_OUTPUT"
+            echo '::notice title=No version set::Directory.Build.props sets no <Version>, so these builds are named 0.0.0.'
+          fi
+
+      - uses: ./.github/actions/package-app
+        with:
+          version: ${{ steps.name.outputs.version }}
+          # Compiled in so the build a reviewer downloads actually shows
+          # posters and ratings -- a build that cannot reach TMDB looks broken
+          # in precisely the way a UI review is meant to catch, and the
+          # reviewer has no way to tell that apart from a real regression.
+          #
+          # Empty on a pull request from a fork, because GitHub does not give
+          # those runs access to secrets. That is deliberate and must stay
+          # non-fatal: an outside contributor still gets three builds, just
+          # without live metadata, and the package action says so in the log.
+          tmdb-api-key: ${{ secrets.TMDB_API_KEY }}
+          omdb-api-key: ${{ secrets.OMDB_API_KEY }}
+
+      # Uploaded as the finished `.zip` rather than as the published folder, so
+      # GitHub's own artifact zip ends up wrapping ours. That looks redundant
+      # and is not: an artifact download re-creates files with default
+      # permissions, so a macOS build uploaded loose arrives without its
+      # executable bit and dies with "permission denied". The inner zip carries
+      # the bit through untouched.
+      - name: Upload the builds
+        uses: actions/upload-artifact@v4
+        with:
+          name: UrDatabase-${{ steps.name.outputs.version }}-builds
+          path: dist/*.zip
+          if-no-files-found: error
+          # Long enough to review a pull request, short enough that abandoned
+          # branches are not still holding a gigabyte of runtime in three
+          # months.
+          retention-days: 14
+          # Already compressed. Asking GitHub to compress it again spends time
+          # to add bytes.
+          compression-level: 0
+
+      - name: Say how to run them
+        env:
+          VERSION: ${{ steps.name.outputs.version }}
+          TMDB_API_KEY: ${{ secrets.TMDB_API_KEY }}
+        run: |
+          set -euo pipefail
+          {
+            echo '### Test builds'
+            echo ''
+            echo 'Download **UrDatabase-'"$VERSION"'-builds** from the'
+            echo 'Artifacts section at the bottom of this run, then unzip it'
+            echo 'and unzip the build for your machine.'
+            echo ''
+            echo '| Machine | File |'
+            echo '| --- | --- |'
+            echo "| Mac, Apple silicon | \`UrDatabase-$VERSION-osx-arm64.zip\` |"
+            echo "| Mac, Intel | \`UrDatabase-$VERSION-osx-x64.zip\` |"
+            echo "| Windows, 64-bit | \`UrDatabase-$VERSION-win-x64.zip\` |"
+            echo ''
+            echo 'These are not code signed. macOS quarantines anything that'
+            echo 'arrives through a browser, so clear the flag before the first'
+            echo 'run:'
+            echo ''
+            echo '```sh'
+            echo "xattr -dr com.apple.quarantine ~/Downloads/UrDatabase-$VERSION-osx-arm64"
+            echo '```'
+            echo ''
+            echo 'On Windows, SmartScreen shows "Windows protected your PC".'
+            echo 'Choose **More info**, then **Run anyway**.'
+            if [ -z "${TMDB_API_KEY:-}" ]; then
+              echo ''
+              echo '> [!NOTE]'
+              echo '> This run could not read the API keys, which is normal for'
+              echo '> a pull request from a fork. These builds start with no'
+              echo '> metadata, posters or ratings. That is the build, not the'
+              echo '> change under review.'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # A change to the app has to say so in the version.
+  #
+  # There is no staging environment here: merging to `main` tags `v<Version>`
+  # and publishes a release under that name. If the version does not move, the
+  # release workflow finds the tag already there and correctly does nothing,
+  # and the merge ships nothing -- silently, which is the part that hurts.
+  #
+  # The rule and every message it prints live in `tool/check_version_bump.py`,
+  # with its own tests, because a check that blocks merges needs to be arguable
+  # with on a laptop rather than only by pushing commits at CI.
+  version:
+    name: Version
+    # `workflow_dispatch` has no pull request, so there is no base to compare
+    # against and nothing to check. Guarded rather than left to fail, so a
+    # manual re-run of this workflow stays useful.
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The comparison needs the merge base, which a shallow clone does not
+          # contain.
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Test the version tooling
+        run: python3 -m unittest discover -s tool -p "test_*.py" --verbose
+
+      - name: Check the version bump
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+
+          # Which files this branch changed is measured against the merge base,
+          # not against the tip of main. Against the tip, every file somebody
+          # else landed while this branch was open would read as this branch
+          # touching src/.
+          BASE=$(git merge-base "$BASE_SHA" "$HEAD_SHA")
+          git diff --name-only "$BASE" "$HEAD_SHA" > changed.txt
+
+          echo 'Changed files:'
+          sed 's/^/  /' changed.txt
+
+          # The version, though, is compared against the tip of main, because
+          # that is what the tag has to clear. A branch that bumps 0.1.0 to
+          # 0.1.1 while main has already reached 0.2.0 passes a merge-base
+          # comparison and then publishes nothing, since v0.1.1 was tagged
+          # weeks ago.
+          #
+          # `|| true`: main not having the file at all is an ordinary answer
+          # here, not an error. The check reads an absent file as "main states
+          # no version yet".
+          git show "$BASE_SHA:Directory.Build.props" > base.props 2>/dev/null || true
+
+          python3 tool/check_version_bump.py \
+            --base-props base.props \
+            --head-props Directory.Build.props \
+            --changed changed.txt
+
+  # The downloads site is plain HTML, CSS and JavaScript with no build step, so
+  # there is nothing to compile and the only thing that can be verified is the
+  # logic: which asset belongs to which machine, which of two versions is
+  # newer, and whether the page still contains the elements its script reaches
+  # for. All three fail silently in a browser nobody is watching.
+  site:
+    name: Downloads site
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      # `node --test` and nothing else: the site has no dependencies, so there
+      # is nothing to install and no lockfile to go stale.
+      #
+      # The glob is left unquoted so the shell expands it. Node's own glob
+      # handling resolves `web/downloads/*.test.js` to the directory when it
+      # matches nothing useful, then tries to run the directory as a test file.
+      - name: Test
+        run: node --test web/downloads/*.test.js
