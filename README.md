@@ -16,6 +16,13 @@ It runs on Windows and macOS from one codebase, built with
 
 ## Features
 
+- **Set up on first launch.** A fresh install opens a setup screen instead of an
+  empty library: tick folders on this computer, a Jellyfin server, or both, test
+  the server before committing to it, and optionally paste your TMDB and OMDb
+  keys. It writes `appsettings.json` for you and never appears again — the
+  **Settings** button reopens the same screen, and anything saved there is
+  applied to the running window rather than at the next launch
+  (`Views/SetupWindow`, `Models/SetupChoices`, `Services/ConfigStore`).
 - **Browse by genre.** The library opens as rows of poster cards, one row per
   genre, newest first within each row. Genre chips across the top narrow the
   view to a single genre (`Views/MainWindow`).
@@ -110,6 +117,13 @@ dotnet publish src/UrDatabase.App -c Release -r osx-arm64
 
 ## Configuration
 
+**You do not have to read this section.** The first launch opens a setup screen
+that asks the two questions that matter — where the films on this machine are,
+and whether there is a Jellyfin server — writes the answers to
+`appsettings.json`, and does not ask again. The **Settings** button reopens it
+whenever you want to change something. What follows is what that file contains,
+for anyone who would rather edit it directly.
+
 Settings live next to the built app in `appsettings.json`. The file is
 gitignored, because it holds your API keys and the absolute paths to your own
 film folders. Copy the template and edit it:
@@ -121,18 +135,43 @@ cp src/UrDatabase.App/appsettings.example.json src/UrDatabase.App/appsettings.js
 | Key | What it does |
 | --- | --- |
 | `DatabasePath` | The SQLite catalogue. Defaults to `UrDatabase/movies.db` under the user's application data directory |
-| `WatchFolders` | Absolute paths the scan button walks, searched recursively |
+| `WatchFolders` | Absolute paths the scan button walks, searched recursively. Empty means the platform's film folder, unless `SetupCompleted` is set — somebody who was asked and named none meant none |
 | `TmdbApiKey` | Your TMDB v3 API key. Leave it empty to run without metadata |
 | `OmdbApiKey` | Your OMDb API key. Leave it empty to run without the IMDb rating |
 | `PosterCacheDir` | Where downloaded posters go |
 | `DownloadPosters` | `false` points the UI at TMDB's own image URLs; `true` caches each poster to disk |
 | `TmdbImageSize` | TMDB's poster width — `w185`, `w342`, `w500`, `original` |
+| `SetupCompleted` | Set by the setup screen once it has been answered, and the only thing that stops it being offered again |
 | `Jellyfin` | An optional server to browse. Empty, as it ships, means the feature is off entirely — see [A Jellyfin server](#a-jellyfin-server) |
 
 Paths may contain environment variables and are expanded on load, so
 `%APPDATA%\UrDatabase\movies.db` works on Windows. The application data
 directory .NET reports is `%APPDATA%` on Windows and `~/.config` on macOS, so a
 configuration file written on one is not portable to the other.
+
+### Where the file lives
+
+The app reads `appsettings.json` from beside the executable, then from
+`UrDatabase/appsettings.json` under the user's application data directory, then
+falls back to the shipped `appsettings.example.json`. The first of those is the
+documented location and the one the setup screen writes to; the second exists
+only for an app installed somewhere its own folder cannot be written to, where
+setup would otherwise have nowhere to put an answer. A file you edit by hand
+therefore always wins over one the app wrote for itself.
+
+Setup only ever writes what you typed into it. A key that came from an
+environment variable, or one compiled into an official build, is shown as an
+empty box and stays out of the file — otherwise pressing Save would copy a
+shipped credential onto your disk under your own name, where nobody would think
+to rotate it.
+
+### When setup appears
+
+Only on an install that has never been configured: no `appsettings.json` of its
+own, no catalogue on disk, and no record of the screen having been answered
+before. An install predating this screen has at least one of those and goes
+straight to the library, as it always did. Skipping is an answer too — it goes
+straight to the library and does not ask again.
 
 ### API keys
 
@@ -178,6 +217,12 @@ the one that once was.
 Entirely optional, and off unless you fill it in. Leave `ServerUrl` empty — as
 it ships — and the app makes no request, opens no extra panel and behaves
 exactly as it did before this existed.
+
+The easiest way to fill it in is the setup screen, which has a **Test
+connection** button: it signs in, finds the movie library and reports how many
+films are in it, so a wrong address, a wrong password and a server with no movie
+library are told apart before anything is saved. The same four fields can be
+written by hand instead:
 
 ```jsonc
 "Jellyfin": {
@@ -382,16 +427,18 @@ Stated plainly, so nobody has to find out by using it:
 - **Playback position is not shared with the server.** A film played from
   Jellyfin does not resume where you left off and is not marked watched, because
   the app hands the stream to an external player and never hears from it again.
-- **One Jellyfin server, chosen in a file.** There is no way to add a second, and
-  no in-app form for the first: the address and credentials are configuration,
-  edited by hand.
+- **One Jellyfin server.** There is no way to add a second. The setup screen
+  configures the first one and tests it, but a household with two servers has to
+  pick one.
 - **Files are matched to films by heuristic.** An exact filename stem wins,
   otherwise the first name containing the title. Two films whose titles are
   substrings of each other can still be confused.
 - **Linking a file by hand does not persist.** The file picker updates the open
   window and nothing else; reopening the film forgets it.
-- **Settings is a placeholder** that says so when clicked. Configuration is
-  file-only for now.
+- **Settings covers where your films are, and nothing else.** The screen asks
+  about watch folders, a Jellyfin server and the two API keys. `DatabasePath`,
+  `PosterCacheDir`, `DownloadPosters` and `TmdbImageSize` are still file-only;
+  they survive a save untouched, but nothing in the app edits them.
 - **macOS builds are not notarized**, so the first launch needs one `xattr`
   command, as described above.
 

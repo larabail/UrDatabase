@@ -128,6 +128,16 @@ namespace UrDatabase.Tests
         }
 
         [Fact]
+        public void An_answered_setup_that_named_no_folder_is_taken_at_its_word()
+        {
+            // Somebody who chose a Jellyfin server and unticked films on this computer must not
+            // then find their home movie folder scanned into the library anyway.
+            var config = AppConfig.Load(WriteConfig(@"{ ""WatchFolders"": [], ""SetupCompleted"": true }"));
+
+            Assert.Empty(config.WatchFolders);
+        }
+
+        [Fact]
         public void Watch_folders_are_expanded_and_blank_entries_dropped()
         {
             var path = WriteConfig(@"{ ""WatchFolders"": [ ""%USERPROFILE%\\Movies"", """" ] }");
