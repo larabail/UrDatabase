@@ -14,6 +14,31 @@
   blocked script, a bug -- the page is still a usable page that leads to every
   download. Nothing here depends on the script to be readable.
 
+  The design is "The Card Catalogue". UrDatabase writes a card for every film
+  on your disk, so the page that hands it out is built as one: ruled manila
+  paper, a red margin rule, typed labels, index cards punched for the rod, and
+  a rubber stamp for the build that belongs to the machine reading. Its sibling
+  site, downloads.uractor.com, is "The Reel" -- dark, gold, a film print. The
+  two are deliberately not the same page in different colours: they are two
+  objects from the same building.
+
+  Three typefaces, each with a job, and none of them decorative:
+
+    Fraunces        headings, and only headings
+    Newsreader      prose you are meant to read a paragraph of
+    Courier Prime   anything typed onto a card -- labels, call numbers,
+                    filenames, versions, buttons
+
+  They come from Google Fonts because the character is the design here, and
+  each falls back to a system face of the same shape, so a blocked request
+  costs the page its voice and nothing else.
+
+  Contrast against the paper, which is what keeps this legible rather than
+  merely warm:
+
+    --ink    13.8    --ink-2   8.2    --stamp  5.0    --faded  4.9
+    --rule    1.5    hairlines and card edges only, never text
+
   The ids below are the contract with `page.js`, and `markup.test.js` checks
   that none of them go missing in a restyle. That test exists because losing
   one is silent: the page still looks finished and simply lists nothing.
@@ -27,304 +52,373 @@
 <meta property="og:title" content="Download UrDatabase">
 <meta property="og:description" content="A catalogue of the films on your own drive, for macOS and Windows.">
 <meta property="og:type" content="website">
-<meta name="theme-color" content="#101722">
+<meta name="theme-color" content="#EDE4D0">
 
-<!-- An inline SVG favicon: a film frame over a catalogue card. Inline so the
-     page ships as three files with no binary assets to keep in step, and so
-     there is no second request for 400 bytes. -->
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%23101722'/%3E%3Crect x='7' y='9' width='18' height='14' rx='2' fill='%23F6F2E9'/%3E%3Crect x='7' y='9' width='18' height='3.2' fill='%23D9724B'/%3E%3Crect x='10' y='15' width='12' height='1.6' rx='.8' fill='%23101722'/%3E%3Crect x='10' y='18.5' width='8' height='1.6' rx='.8' fill='%23101722'/%3E%3C/svg%3E">
+<!-- An inline SVG favicon: a catalogue card, ruled, with the red rule at its
+     head. Inline so the page ships as three files with no binary assets to
+     keep in step, and so there is no second request for 400 bytes. The dark
+     surround is not decoration -- it is what stops a cream card disappearing
+     into a light tab bar. -->
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%231B1A16'/%3E%3Crect x='6' y='7' width='20' height='18' rx='1.5' fill='%23F6F1E3'/%3E%3Crect x='6' y='7' width='20' height='2.6' rx='1.3' fill='%23A83A24'/%3E%3Crect x='9' y='13' width='14' height='1.5' rx='.75' fill='%231B1A16'/%3E%3Crect x='9' y='16.5' width='10' height='1.5' rx='.75' fill='%231B1A16'/%3E%3Ccircle cx='16' cy='22' r='1.6' fill='%23EDE4D0' stroke='%23C9BB9C'/%3E%3C/svg%3E">
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Courier+Prime:ital,wght@0,400;0,700;1,400&family=Fraunces:ital,opsz,wght@0,9..144,600;0,9..144,900;1,9..144,400&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;1,6..72,400&display=swap" rel="stylesheet">
 
 <style>
-/* The palette. Warm paper against a dark slate, with one accent used only for
-   things you can act on -- the download buttons and links. A catalogue card in
-   a dark room, which is the idea the whole page is built around. */
+/* The palette. Manila paper, ink, and one red -- the red of a rubber stamp,
+   used only where a librarian would have used it: the margin rule, the
+   "Yours" stamp, and the things you can act on. */
 :root {
-  --ink:      #101722;
-  --ink-soft: #1A2432;
-  --line:     #2C3A4C;
-  --paper:    #F6F2E9;
-  --muted:    #9AA9BC;
-  --accent:   #D9724B;
-  --accent-2: #F0A07E;
-  --ok:       #6FCF97;
-  --sans: ui-sans-serif, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
-          'Helvetica Neue', Arial, sans-serif;
-  --mono: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas,
-          'Liberation Mono', monospace;
+  color-scheme: light;
+
+  --paper:  #EDE4D0;
+  --card:   #F6F1E3;
+  --ink:    #1B1A16;
+  --ink-2:  #454034;
+  --faded:  #67604E;
+  --rule:   #C9BB9C;
+  --stamp:  #A83A24;
+
+  --disp: 'Fraunces', Georgia, 'Times New Roman', serif;
+  --prose: 'Newsreader', Georgia, 'Times New Roman', serif;
+  --mono: 'Courier Prime', ui-monospace, 'Courier New', Courier, monospace;
 }
 
 /* A class that sets `display` outranks the browser's own rule for the hidden
    attribute, and several sections here are held back with `hidden` until they
-   have something in them. Without this, the "Yours" badge shows on all three
+   have something in them. Without this, the "Yours" stamp shows on all three
    cards at once. */
 [hidden] { display: none !important; }
 
-* { box-sizing: border-box; }
+*, *::before, *::after { box-sizing: border-box; }
+* { margin: 0; padding: 0; }
 
 html { scroll-behavior: smooth; }
-@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
 
 body {
-  margin: 0;
-  background: var(--ink);
-  color: var(--paper);
-  font-family: var(--sans);
-  font-size: 17px;
-  line-height: 1.6;
-  -webkit-font-smoothing: antialiased;
-}
-
-a { color: var(--accent-2); }
-a:hover { color: var(--paper); }
-
-.skip {
-  position: absolute;
-  left: -9999px;
-}
-.skip:focus {
-  left: 1rem;
-  top: 1rem;
-  z-index: 10;
-  background: var(--paper);
+  background-color: var(--paper);
   color: var(--ink);
-  padding: .6rem 1rem;
-  border-radius: 6px;
+  font-family: var(--prose);
+  font-size: 17px;
+  line-height: 1.62;
+  -webkit-font-smoothing: antialiased;
+  /* The ruling of the paper itself. It runs edge to edge rather than stopping
+     at the column, so the page reads as one sheet the text was typed onto
+     rather than as a card floating on a background. */
+  background-image: repeating-linear-gradient(
+    to bottom, transparent 0 31px, rgba(140, 129, 104, .17) 31px 32px);
 }
 
-.bar {
-  border-bottom: 1px solid var(--line);
-  background: var(--ink);
+a { color: inherit; }
+:focus-visible { outline: 2px solid var(--stamp); outline-offset: 3px; }
+::selection { background: var(--stamp); color: var(--card); }
+
+.skip { position: absolute; left: -9999px; }
+.skip:focus {
+  left: 12px; top: 12px; z-index: 20;
+  background: var(--ink); color: var(--card);
+  padding: 10px 16px;
+  font-family: var(--mono); font-size: 12px;
+  letter-spacing: .12em; text-transform: uppercase; text-decoration: none;
 }
-.bar > div {
-  max-width: 62rem;
+
+/* --- the sheet, and the red margin rule down its left edge ---------------- */
+
+.sheet {
+  position: relative;
+  min-height: 100vh;
+  max-width: 61rem;
   margin: 0 auto;
-  padding: .9rem 1.4rem;
-  display: flex;
-  align-items: center;
-  gap: 1.4rem;
-  flex-wrap: wrap;
+  padding: 0 clamp(1.15rem, 5vw, 3.9rem);
 }
-.brand {
-  display: flex;
-  align-items: center;
-  gap: .55rem;
-  color: var(--paper);
-  text-decoration: none;
-  font-weight: 600;
-  letter-spacing: .01em;
+.sheet::before {
+  content: "";
+  position: absolute; top: 0; bottom: 0;
+  left: clamp(.55rem, 3.2vw, 2.6rem);
+  width: 1px;
+  background: var(--stamp);
+  opacity: .32;
 }
-.brand .card {
-  width: 20px;
-  height: 15px;
-  border-radius: 3px;
+@media (max-width: 30rem) { .sheet::before { display: none; } }
+
+/* --- the drawer label ----------------------------------------------------- */
+
+.drawer { padding-top: 1.6rem; }
+.drawer > div {
+  display: flex; align-items: center; gap: 1rem; flex-wrap: wrap;
+  background: var(--card);
+  border: 1.5px solid var(--ink);
+  padding: .6rem .9rem;
+}
+/* The brass pull on the front of the drawer. Decorative, so it goes when
+   there is no room for it rather than crowding the navigation. */
+.drawer > div::after {
+  content: "";
+  flex: none; margin-left: auto;
+  width: 2.1rem; height: .75rem;
+  border: 1.5px solid var(--ink); border-radius: .4rem;
   background: var(--paper);
-  border-top: 4px solid var(--accent);
-  flex: none;
 }
-.bar nav { margin-left: auto; display: flex; gap: 1.2rem; flex-wrap: wrap; }
-.bar nav a { color: var(--muted); text-decoration: none; font-size: .94rem; }
-.bar nav a:hover { color: var(--paper); }
+@media (max-width: 44rem) { .drawer > div::after { display: none; } }
 
-main {
-  max-width: 62rem;
-  margin: 0 auto;
-  padding: 0 1.4rem 5rem;
+.brand {
+  font-family: var(--disp); font-weight: 900;
+  font-size: 1.3rem; line-height: 1; letter-spacing: -.015em;
+  text-decoration: none; white-space: nowrap;
 }
+.brand i { font-style: normal; color: var(--stamp); }
 
-.hero { padding: 4rem 0 3rem; border-bottom: 1px solid var(--line); }
-
-.tags {
-  display: flex;
-  flex-wrap: wrap;
-  gap: .5rem 1.4rem;
-  margin: 0 0 1.6rem;
-  padding: 0;
-  list-style: none;
-  font-family: var(--mono);
-  font-size: .76rem;
-  text-transform: uppercase;
-  letter-spacing: .11em;
-  color: var(--muted);
+.drawer nav { display: flex; gap: .95rem; flex-wrap: wrap; }
+.drawer nav a {
+  font-family: var(--mono); font-size: .7rem;
+  letter-spacing: .16em; text-transform: uppercase;
+  color: var(--faded); text-decoration: none;
+  border-bottom: 1px solid var(--rule); padding-bottom: 1px;
 }
-.tags b { color: var(--paper); font-weight: 500; }
+.drawer nav a:hover { color: var(--ink); border-color: var(--ink); }
+
+/* --- the entry ------------------------------------------------------------ */
+
+.entry { padding: 3.4rem 0 2.8rem; }
+
+.slate {
+  display: flex; flex-wrap: wrap; gap: .3rem 1.7rem;
+  margin-bottom: 1.7rem;
+  font-family: var(--mono); font-size: .69rem;
+  letter-spacing: .17em; text-transform: uppercase;
+  color: var(--faded);
+}
+.slate b { color: var(--ink); font-weight: 700; }
 
 h1 {
-  font-size: clamp(2.3rem, 6vw, 3.6rem);
-  line-height: 1.08;
-  letter-spacing: -.02em;
-  margin: 0 0 1.1rem;
-  font-weight: 700;
+  font-family: var(--disp); font-weight: 900;
+  font-size: clamp(2.6rem, 8.4vw, 5.4rem);
+  line-height: .93; letter-spacing: -.032em;
+  max-width: 13ch;
 }
-h1 em { display: block; font-style: normal; color: var(--accent); }
+h1 em { display: block; font-style: italic; font-weight: 400; color: var(--stamp); }
 
-.lede { font-size: 1.16rem; max-width: 34rem; color: #D8DFE9; margin: 0 0 2rem; }
+.lede { margin-top: 1.4rem; max-width: 40ch; color: var(--ink-2); font-size: 1.06rem; }
 
-.hero-actions { display: flex; flex-wrap: wrap; gap: .8rem; align-items: center; }
+.hero-actions { display: flex; flex-wrap: wrap; gap: .8rem; align-items: center; margin-top: 1.9rem; }
+
+/* --- anything you can press ----------------------------------------------- */
 
 .button {
-  display: inline-block;
-  background: var(--accent);
-  color: #1A0E08;
-  font-weight: 650;
-  text-decoration: none;
-  padding: .8rem 1.5rem;
-  border-radius: 8px;
-  border: 1px solid transparent;
+  display: inline-block; text-align: center; text-decoration: none;
+  background: var(--ink); color: var(--card);
+  border: 1.5px solid var(--ink);
+  padding: .72rem 1.35rem;
+  font-family: var(--mono); font-size: .74rem; font-weight: 700;
+  letter-spacing: .14em; text-transform: uppercase;
+  box-shadow: 4px 4px 0 rgba(27, 26, 22, .2);
+  transition: background .14s, border-color .14s, box-shadow .14s, transform .14s;
 }
-.button:hover { background: var(--accent-2); color: #1A0E08; }
-.button.secondary {
-  background: transparent;
-  color: var(--paper);
-  border-color: var(--line);
+.button:hover {
+  background: var(--stamp); border-color: var(--stamp); color: var(--card);
+  box-shadow: 4px 4px 0 rgba(168, 58, 36, .26);
 }
-.button.secondary:hover { border-color: var(--paper); background: transparent; }
+.button:active { transform: translate(2px, 2px); box-shadow: 2px 2px 0 rgba(27, 26, 22, .2); }
+
+.button.secondary { background: transparent; color: var(--ink); box-shadow: none; }
+.button.secondary:hover { background: var(--card); color: var(--ink); border-color: var(--ink); }
+
+/* A build that has not been published. Said with a dashed edge, the way a
+   card is stamped for something not on the shelf. */
 .button[aria-disabled='true'] {
-  background: var(--ink-soft);
-  color: var(--muted);
-  border-color: var(--line);
-  pointer-events: none;
+  background: transparent; color: var(--faded);
+  border-style: dashed; border-color: var(--rule);
+  box-shadow: none; pointer-events: none;
 }
 
-.hero-meta, .hint, .status {
-  font-family: var(--mono);
-  font-size: .84rem;
-  color: var(--muted);
+/* --- the typed lines under the entry -------------------------------------- */
+
+.hero-meta {
+  margin-top: 1.05rem; min-height: 1.5em;
+  font-family: var(--mono); font-size: .74rem;
+  letter-spacing: .1em; text-transform: uppercase; color: var(--faded);
 }
-.hero-meta { margin: 1rem 0 0; }
-.hint {
-  margin: .9rem 0 0;
-  max-width: 40rem;
-  font-family: var(--sans);
-  font-size: .93rem;
-  line-height: 1.55;
-}
+.hint { margin-top: .9rem; max-width: 44ch; font-size: .95rem; color: var(--ink-2); }
+.hint a { color: var(--stamp); text-underline-offset: 3px; }
+
 .status {
-  margin: 1.2rem 0 0;
-  max-width: 40rem;
-  font-family: var(--sans);
-  font-size: .93rem;
-  border-left: 2px solid var(--accent);
-  padding-left: .9rem;
+  margin-top: 1.2rem; max-width: 46ch;
+  background: var(--card);
+  border: 1px solid var(--rule); border-left: 3px solid var(--stamp);
+  padding: .85rem 1rem;
+  font-size: .95rem; color: var(--ink-2);
 }
-.skeleton { opacity: .55; }
+.status a { color: var(--stamp); }
+.skeleton { color: var(--faded); }
 
-section.band { padding: 3rem 0; border-bottom: 1px solid var(--line); }
-h2 {
-  font-size: 1.45rem;
-  margin: 0 0 .4rem;
-  letter-spacing: -.01em;
-}
-.band > p.sub { color: var(--muted); margin: 0 0 1.8rem; max-width: 38rem; }
+/* --- section heads, set as a line in a table of contents ------------------- */
 
-.cards {
-  display: grid;
-  gap: 1rem;
-  grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr));
+.chapter { padding: 3rem 0; border-top: 1.5px solid var(--ink); }
+.chead { display: flex; align-items: baseline; gap: .9rem; margin-bottom: 1.6rem; }
+.chead h2 {
+  font-family: var(--disp); font-weight: 600;
+  font-size: clamp(1.4rem, 3.4vw, 2.15rem);
+  line-height: 1.05; letter-spacing: -.022em;
 }
+/* Leader dots, the way a contents page runs a heading out to its page number.
+   They shrink to nothing before they wrap, which is why they are a flexible
+   background rather than a row of full stops. */
+.chead .dots {
+  flex: 1 1 1rem; min-width: 1rem; height: 1px; align-self: flex-end; margin-bottom: .45em;
+  background: repeating-linear-gradient(to right, var(--rule) 0 3px, transparent 3px 7px);
+}
+.chead .of {
+  flex: none;
+  font-family: var(--mono); font-size: .69rem;
+  letter-spacing: .16em; text-transform: uppercase; color: var(--faded);
+}
+@media (max-width: 30rem) { .chead .dots, .chead .of { display: none; } }
+
+.sub { max-width: 48ch; margin-bottom: 1.8rem; color: var(--ink-2); font-size: .98rem; }
+
+/* --- the cards in the drawer ---------------------------------------------- */
+
+.cards { display: grid; gap: 1.15rem; grid-template-columns: repeat(auto-fit, minmax(15.5rem, 1fr)); }
+
 .card {
-  background: var(--ink-soft);
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  padding: 1.3rem;
-  display: flex;
-  flex-direction: column;
-  gap: .6rem;
+  position: relative;
+  display: flex; flex-direction: column;
+  background-color: var(--card);
+  border: 1px solid var(--rule);
+  padding: 1.15rem 1.15rem 2.2rem;
+  box-shadow: 2px 3px 0 rgba(140, 129, 104, .3);
 }
-.card.yours { border-color: var(--accent); }
+/* Punched for the rod that holds a drawer of cards together. */
+.card::after {
+  content: "";
+  position: absolute; left: 50%; bottom: .72rem; transform: translateX(-50%);
+  width: .8rem; height: .8rem; border-radius: 50%;
+  background: var(--paper); border: 1px solid var(--rule);
+}
+.card .rid {
+  font-family: var(--mono); font-size: .67rem;
+  letter-spacing: .18em; text-transform: uppercase; color: var(--faded);
+}
 .card h3 {
-  margin: 0;
-  font-size: 1.05rem;
-  display: flex;
-  align-items: center;
-  gap: .6rem;
-  flex-wrap: wrap;
+  font-family: var(--disp); font-weight: 600;
+  font-size: 1.5rem; line-height: 1.06; letter-spacing: -.022em;
+  margin: .15rem 0 .1rem;
 }
-.badge {
-  font-family: var(--mono);
-  font-size: .64rem;
-  text-transform: uppercase;
-  letter-spacing: .12em;
-  background: var(--accent);
-  color: #1A0E08;
-  border-radius: 4px;
-  padding: .15rem .45rem;
+/* The head-line of a catalogue card, ruled in the same red as the margin. It
+   also does the work of separating what this build is from what pressing the
+   button will get you. */
+.card .meta {
+  padding-bottom: 1.1rem; margin-bottom: 1.1rem;
+  border-bottom: 1px solid rgba(168, 58, 36, .45);
+  font-size: .9rem; color: var(--ink-2);
 }
-.card .meta { margin: 0; color: var(--muted); font-size: .88rem; }
-.card .button { text-align: center; margin-top: auto; }
+.card .button { margin-top: auto; letter-spacing: .1em; font-size: .71rem; padding-left: .9rem; padding-right: .9rem; }
 .card .asset {
-  margin: 0;
-  font-family: var(--mono);
-  font-size: .76rem;
-  color: var(--muted);
-  min-height: 1.2em;
+  margin-top: .7rem; min-height: 1.5em; overflow-wrap: anywhere;
+  font-family: var(--mono); font-size: .69rem; color: var(--faded);
 }
 
-.note {
-  background: var(--ink-soft);
-  border: 1px solid var(--line);
-  border-left: 3px solid var(--accent);
-  border-radius: 10px;
-  padding: 1.2rem 1.3rem;
+/* The build this machine wants. A card pulled slightly proud of the others,
+   and stamped. */
+.card.yours { border-color: var(--ink); box-shadow: 3px 4px 0 rgba(27, 26, 22, .22); }
+
+.badge {
+  position: absolute; top: .8rem; right: -.4rem;
+  transform: rotate(-7deg);
+  border: 2px solid var(--stamp); color: var(--stamp);
+  padding: .1rem .5rem;
+  font-family: var(--mono); font-size: .62rem; font-weight: 700;
+  letter-spacing: .2em; text-transform: uppercase;
+  opacity: .88;
 }
-.note h3 { margin: 0 0 .6rem; font-size: 1rem; }
-.note p { margin: 0 0 .8rem; font-size: .95rem; }
+
+/* --- the notes on the back of the card ------------------------------------ */
+
+.notes { display: grid; gap: 1.5rem 2rem; grid-template-columns: repeat(auto-fit, minmax(19rem, 1fr)); }
+.note { border-left: 2px solid var(--stamp); padding-left: 1.1rem; }
+.note h3 {
+  font-family: var(--disp); font-weight: 600;
+  font-size: 1.05rem; letter-spacing: -.01em; margin-bottom: .5rem;
+}
+.note p { margin-bottom: .7rem; font-size: .95rem; color: var(--ink-2); }
 .note p:last-child { margin-bottom: 0; }
-.note ol { margin: 0 0 .8rem; padding-left: 1.2rem; font-size: .95rem; }
+.note ol { margin: 0 0 .7rem 1.15rem; font-size: .95rem; color: var(--ink-2); }
+.note strong { color: var(--ink); font-weight: 500; }
+.note a { color: var(--stamp); text-underline-offset: 3px; }
 
+/* The command wraps rather than scrolling sideways. It exists to be copied,
+   and half a command in a box somebody has to drag is half a command. */
 pre {
-  background: var(--ink);
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  padding: .8rem 1rem;
-  overflow-x: auto;
-  margin: 0 0 .8rem;
+  background: var(--ink); color: var(--card);
+  padding: .7rem .85rem; margin-bottom: .7rem;
+  white-space: pre-wrap; overflow-wrap: anywhere;
 }
-code { font-family: var(--mono); font-size: .82rem; }
+code { font-family: var(--mono); font-size: .76rem; }
 
-.feature-list {
-  list-style: none;
-  padding: 0;
-  margin: 0;
-  display: grid;
-  gap: 1rem 2rem;
-  grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+/* --- subject tracings, the way they are set on the foot of a card --------- */
+
+.tracings { list-style: none; display: grid; gap: 1.1rem 2.2rem; grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr)); }
+.tracings li { display: grid; grid-template-columns: 2.1rem 1fr; align-items: baseline; }
+.tracings .num {
+  font-family: var(--mono); font-size: .72rem; font-weight: 700;
+  letter-spacing: .1em; color: var(--stamp);
 }
-.feature-list h3 { margin: 0 0 .2rem; font-size: .98rem; }
-.feature-list p { margin: 0; color: var(--muted); font-size: .92rem; }
+.tracings h3 { font-family: var(--disp); font-weight: 600; font-size: 1rem; letter-spacing: -.01em; }
+.tracings p { font-size: .93rem; color: var(--ink-2); }
 
-#notes-body {
-  white-space: pre-wrap;
-  font-size: .95rem;
-  color: #D8DFE9;
-  margin: 0 0 1rem;
-  max-width: 44rem;
+/* --- what's new ----------------------------------------------------------- */
+
+#notes-body { max-width: 46ch; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--ink-2); font-size: 1rem; }
+#notes-link {
+  display: inline-block; margin-top: 1.1rem; color: var(--stamp);
+  font-family: var(--mono); font-size: .74rem;
+  letter-spacing: .12em; text-transform: uppercase; text-underline-offset: 3px;
 }
 
-.history { list-style: none; padding: 0; margin: 0; }
+/* --- every version, set as the date slip pasted inside a cover ------------ */
+
+.history { list-style: none; border-top: 1px solid var(--rule); }
 .history li {
-  display: grid;
-  grid-template-columns: 5rem 11rem 1fr;
-  gap: .6rem;
-  align-items: baseline;
-  padding: .6rem 0;
-  border-bottom: 1px solid var(--line);
-  font-size: .9rem;
+  display: grid; grid-template-columns: 5rem 9.5rem 1fr;
+  gap: .3rem .9rem; align-items: baseline;
+  padding: .62rem .1rem;
+  border-bottom: 1px solid var(--rule);
+  font-family: var(--mono); font-size: .78rem;
 }
-.history .ver { font-family: var(--mono); font-weight: 600; }
-.history .when { color: var(--muted); font-size: .84rem; }
-.history .links { display: flex; gap: 1rem; flex-wrap: wrap; }
-.history .links span { color: #5A6B80; }
-@media (max-width: 34rem) {
-  .history li { grid-template-columns: 1fr; gap: .2rem; }
+.history li:nth-child(odd) { background: rgba(246, 241, 227, .55); }
+.history .ver { font-weight: 700; color: var(--stamp); }
+.history .when { color: var(--faded); font-size: .72rem; letter-spacing: .08em; text-transform: uppercase; }
+.history .links { display: flex; gap: 1.1rem; flex-wrap: wrap; }
+.history .links a { color: var(--ink-2); text-underline-offset: 3px; }
+.history .links a:hover { color: var(--stamp); }
+/* A platform that release never shipped for. Struck through rather than
+   merely faint, because "no build" is information and a colour nobody can
+   read is not a way to say it. */
+.history .links span { color: var(--faded); text-decoration: line-through; text-decoration-color: var(--rule); }
+@media (max-width: 38rem) {
+  .history li { grid-template-columns: 1fr; }
+  .history .when { margin-bottom: .2rem; }
 }
 
-footer {
-  padding: 2.5rem 0 0;
-  color: var(--muted);
-  font-size: .88rem;
-  display: flex;
-  gap: 1.4rem;
-  flex-wrap: wrap;
+/* --- the date slip -------------------------------------------------------- */
+
+footer { padding: 2.2rem 0 3.4rem; border-top: 1.5px solid var(--ink); }
+.slip {
+  display: flex; flex-wrap: wrap; gap: .6rem 1.6rem; align-items: baseline;
+  border: 1.5px dashed var(--rule);
+  padding: .95rem 1.1rem;
+  font-family: var(--mono); font-size: .72rem;
+  letter-spacing: .12em; text-transform: uppercase; color: var(--faded);
+}
+.slip a { color: var(--ink-2); text-underline-offset: 3px; }
+.slip a:hover { color: var(--stamp); }
+.slip .credit { margin-left: auto; text-transform: none; letter-spacing: .04em; }
+@media (max-width: 44rem) { .slip .credit { margin-left: 0; } }
+
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  *, *::before, *::after { transition-duration: .001ms !important; animation-duration: .001ms !important; }
 }
 </style>
 </head>
@@ -332,12 +426,11 @@ footer {
 
 <a class="skip" href="#main">Skip to content</a>
 
-<header class="bar">
+<div class="sheet">
+
+<header class="drawer">
   <div>
-    <a class="brand" href="https://github.com/larabail/UrDatabase">
-      <span class="card" aria-hidden="true"></span>
-      <span>Ur<b>Database</b></span>
-    </a>
+    <a class="brand" href="https://github.com/larabail/UrDatabase">Ur<i>Database</i></a>
     <nav aria-label="Primary">
       <a href="#builds">Builds</a>
       <a href="#first-run">First run</a>
@@ -349,20 +442,21 @@ footer {
 
 <main id="main">
 
-  <section class="hero">
-    <ul class="tags">
-      <li>macOS <b>&amp;</b> Windows</li>
-      <li>Runs <b>offline</b></li>
-      <li>Licence <b>open source</b></li>
-      <li>Price <b>free</b></li>
-    </ul>
+  <section class="entry">
+    <!-- 791.43 is where a library actually files motion pictures. -->
+    <p class="slate">
+      <span>Call no. <b>UD&middot;791.43</b></span>
+      <span>Format <b>Desktop</b></span>
+      <span>Platform <b>macOS &amp; Windows</b></span>
+      <span>Loan <b>Free</b></span>
+    </p>
 
-    <h1>Your films.<em>Finally catalogued.</em></h1>
+    <h1>Your films,<em>finally filed.</em></h1>
 
     <p class="lede">UrDatabase reads the folder your films already live in and
-       builds a catalogue of them &mdash; posters, cast, directors, genres and
-       ratings, filled in automatically. Everything stays on your machine, in
-       one SQLite file you can open yourself.</p>
+       writes a card for each one &mdash; poster, cast, director, genre, rating,
+       filled in for you. Everything stays on your machine, in one SQLite file
+       you can open yourself.</p>
 
     <div class="hero-actions" id="hero-actions">
       <a class="button" id="hero-button"
@@ -381,16 +475,21 @@ footer {
     </noscript>
   </section>
 
-  <section class="band" id="builds">
-    <h2>Three builds</h2>
-    <p class="sub">One for each kind of machine. If you are not sure which Mac
-       you have, open the <span aria-hidden="true">&#127822;</span> menu and
-       choose About&nbsp;This&nbsp;Mac: an Apple silicon machine says
+  <section class="chapter" id="builds">
+    <div class="chead">
+      <h2>Three cards in the drawer</h2>
+      <span class="dots" aria-hidden="true"></span>
+      <span class="of">One per machine</span>
+    </div>
+    <p class="sub">If you are not sure which Mac you have, open the
+       <span aria-hidden="true">&#127822;</span> menu and choose
+       About&nbsp;This&nbsp;Mac: an Apple silicon machine says
        <em>Chip&nbsp;Apple&nbsp;M-something</em>, an older one says
        <em>Processor&nbsp;Intel</em>.</p>
 
     <div class="cards">
       <section class="card" id="card-osx-arm64">
+        <span class="rid">osx-arm64</span>
         <h3>Apple silicon<span class="badge" id="badge-osx-arm64" hidden>Yours</span></h3>
         <p class="meta">Mac with an M1, M2, M3 or M4 &middot; macOS 12 or later</p>
         <a class="button" id="button-osx-arm64"
@@ -399,6 +498,7 @@ footer {
       </section>
 
       <section class="card" id="card-osx-x64">
+        <span class="rid">osx-x64</span>
         <h3>Intel Mac<span class="badge" id="badge-osx-x64" hidden>Yours</span></h3>
         <p class="meta">Mac made before late 2020 &middot; macOS 12 or later</p>
         <a class="button" id="button-osx-x64"
@@ -407,6 +507,7 @@ footer {
       </section>
 
       <section class="card" id="card-win-x64">
+        <span class="rid">win-x64</span>
         <h3>Windows<span class="badge" id="badge-win-x64" hidden>Yours</span></h3>
         <p class="meta">Windows 10 or later &middot; 64-bit</p>
         <a class="button" id="button-win-x64"
@@ -416,14 +517,18 @@ footer {
     </div>
   </section>
 
-  <section class="band" id="first-run">
-    <h2>The first time you open it</h2>
+  <section class="chapter" id="first-run">
+    <div class="chead">
+      <h2>The first time you open it</h2>
+      <span class="dots" aria-hidden="true"></span>
+      <span class="of">Unsigned builds</span>
+    </div>
     <p class="sub">These builds are not code signed. That is a statement of
        fact, not a formality: both operating systems will stop you, and it is
        better to know why before it happens than to conclude the download is
        broken.</p>
 
-    <div class="cards">
+    <div class="notes">
       <div class="note">
         <h3>macOS &mdash; &ldquo;damaged and can&rsquo;t be opened&rdquo;</h3>
         <p>UrDatabase is <strong>not code signed and not notarized</strong>.
@@ -458,57 +563,85 @@ footer {
     </div>
   </section>
 
-  <section class="band" id="notes" hidden>
-    <h2 id="notes-heading">What&rsquo;s new</h2>
+  <section class="chapter" id="notes" hidden>
+    <div class="chead">
+      <h2 id="notes-heading">What&rsquo;s new</h2>
+      <span class="dots" aria-hidden="true"></span>
+      <span class="of">Latest release</span>
+    </div>
     <p id="notes-body"></p>
     <a id="notes-link"
        href="https://github.com/larabail/UrDatabase/releases">Full release notes on GitHub &rarr;</a>
   </section>
 
-  <section class="band" id="about">
-    <h2>What it actually does</h2>
+  <section class="chapter" id="about">
+    <div class="chead">
+      <h2>What it actually does</h2>
+      <span class="dots" aria-hidden="true"></span>
+      <span class="of">Subject tracings</span>
+    </div>
     <p class="sub">A desktop application, not a service. Nothing is uploaded,
        there is no account, and it keeps working with the network off &mdash;
        it only reaches out to fetch metadata for a film it has not seen
        before.</p>
 
-    <ul class="feature-list">
+    <ul class="tracings">
       <li>
-        <h3>Scans the folder you already have</h3>
-        <p>Point it at your films and it reads the filenames, works out what
-           each one is and looks the rest up.</p>
+        <span class="num" aria-hidden="true">I.</span>
+        <div>
+          <h3>Scans the folder you already have</h3>
+          <p>Point it at your films and it reads the filenames, works out what
+             each one is and looks the rest up.</p>
+        </div>
       </li>
       <li>
-        <h3>Posters, cast and crew</h3>
-        <p>Artwork, synopses, genres, directors and cast come from TMDB;
-           ratings come from OMDb.</p>
+        <span class="num" aria-hidden="true">II.</span>
+        <div>
+          <h3>Posters, cast and crew</h3>
+          <p>Artwork, synopses, genres, directors and cast come from TMDB;
+             ratings come from OMDb.</p>
+        </div>
       </li>
       <li>
-        <h3>Browse by genre, year or person</h3>
-        <p>The catalogue is the point. Wander it by whatever you happen to be
-           in the mood for.</p>
+        <span class="num" aria-hidden="true">III.</span>
+        <div>
+          <h3>Browse by genre, year or person</h3>
+          <p>The catalogue is the point. Wander it by whatever you happen to be
+             in the mood for.</p>
+        </div>
       </li>
       <li>
-        <h3>One SQLite file</h3>
-        <p>Your catalogue is a plain database file on your own disk. Copy it,
-           back it up, or query it yourself.</p>
+        <span class="num" aria-hidden="true">IV.</span>
+        <div>
+          <h3>One SQLite file</h3>
+          <p>Your catalogue is a plain database file on your own disk. Copy it,
+             back it up, or query it yourself.</p>
+        </div>
       </li>
     </ul>
   </section>
 
-  <section class="band" id="history" hidden>
-    <h2>Every version</h2>
+  <section class="chapter" id="history" hidden>
+    <div class="chead">
+      <h2>Every version</h2>
+      <span class="dots" aria-hidden="true"></span>
+      <span class="of">Date issued</span>
+    </div>
     <ol class="history" id="history-list"></ol>
   </section>
 
   <footer>
-    <a href="https://github.com/larabail/UrDatabase">Source on GitHub</a>
-    <a href="https://github.com/larabail/UrDatabase/releases">All releases</a>
-    <a href="https://github.com/larabail/UrDatabase/issues">Report a problem</a>
-    <span>Film data from TMDB and OMDb. Not endorsed by either.</span>
+    <p class="slip">
+      <a href="https://github.com/larabail/UrDatabase">Source</a>
+      <a href="https://github.com/larabail/UrDatabase/releases">All releases</a>
+      <a href="https://github.com/larabail/UrDatabase/issues">Report a problem</a>
+      <span class="credit">Film data from TMDB and OMDb. Not endorsed by either.</span>
+    </p>
   </footer>
 
 </main>
+
+</div>
 
 <script type="module" src="page.js"></script>
 </body>
