@@ -77,6 +77,27 @@
                         <TextBlock Foreground="White"
                                    Text="{Binding ImdbRating, StringFormat='IMDb {0:0.0}'}"/>
                     </Border>
+                    <!-- Jellyfin's own community rating. Labelled as Jellyfin's, in its own
+                         colour, because it is not the IMDb number beside it. -->
+                    <Border Background="#7B4DFF"
+                            CornerRadius="6"
+                            Padding="8,2"
+                            Margin="0,0,8,0"
+                            IsVisible="{Binding CommunityRating, Converter={x:Static conv:ObjectConverters.IsNotNull}}">
+                        <TextBlock Foreground="White"
+                                   Text="{Binding CommunityRating, StringFormat='Jellyfin {0:0.0}'}"/>
+                    </Border>
+                    <!-- Says out loud that this film is not on this machine. -->
+                    <Border Background="#2A2A2A"
+                            BorderBrush="#7B4DFF"
+                            BorderThickness="1"
+                            CornerRadius="6"
+                            Padding="8,2"
+                            Margin="0,0,8,0"
+                            IsVisible="{Binding IsRemote}">
+                        <TextBlock Foreground="#EAEAEA"
+                                   Text="On the server"/>
+                    </Border>
                 </StackPanel>
 
                 <TextBlock Foreground="#CFCFCF"
@@ -164,6 +185,7 @@
                             Height="36"
                             Margin="0,0,12,0"
                             HorizontalContentAlignment="Center"
+                            IsVisible="{Binding !IsRemote}"
                             Click="LinkFile_Click"/>
                     <Button Content="Close"
                             Width="100"
@@ -177,12 +199,21 @@
                            TextWrapping="Wrap"
                            Margin="0,6,0,0"/>
 
-                <!-- Attribution required by the TMDB API terms; OMDb credited as the rating source. -->
+                <!-- Attribution required by the TMDB API terms; OMDb credited as the rating source.
+                     A film from a server was described by the server, so TMDB is not credited for
+                     work it did not do. -->
                 <TextBlock Foreground="#7A7A7E"
                            FontSize="11"
                            TextWrapping="Wrap"
                            Margin="0,10,0,0"
+                           IsVisible="{Binding !IsRemote}"
                            Text="Metadata and artwork from TMDB. This product uses the TMDB API but is not endorsed or certified by TMDB. IMDb rating retrieved from the OMDb API; neither IMDb nor OMDb endorses this application."/>
+                <TextBlock Foreground="#7A7A7E"
+                           FontSize="11"
+                           TextWrapping="Wrap"
+                           Margin="0,10,0,0"
+                           IsVisible="{Binding IsRemote}"
+                           Text="Metadata and artwork supplied by your Jellyfin server. IMDb rating retrieved from the OMDb API; neither IMDb nor OMDb endorses this application."/>
             </StackPanel>
         </Grid>
     </Grid>

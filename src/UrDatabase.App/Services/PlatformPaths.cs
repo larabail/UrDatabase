@@ -17,6 +17,15 @@ namespace UrDatabase.Services
         /// <summary>Environment variable consulted when the config file has no OMDb key.</summary>
         public const string OmdbApiKeyVariable = "URDATABASE_OMDB_API_KEY";
 
+        /// <summary>
+        /// Jellyfin connection settings, for anyone who would rather not write a server address
+        /// or a password into a file. Consulted only when the matching config field is blank.
+        /// </summary>
+        public const string JellyfinUrlVariable = "URDATABASE_JELLYFIN_URL";
+        public const string JellyfinUsernameVariable = "URDATABASE_JELLYFIN_USERNAME";
+        public const string JellyfinPasswordVariable = "URDATABASE_JELLYFIN_PASSWORD";
+        public const string JellyfinApiKeyVariable = "URDATABASE_JELLYFIN_API_KEY";
+
         public static string AppDataRoot =>
             Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), AppFolderName);
 

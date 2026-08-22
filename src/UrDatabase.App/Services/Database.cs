@@ -83,6 +83,20 @@ CREATE TABLE IF NOT EXISTS imdb_ratings (
     fetched_at TEXT NOT NULL,
     source     TEXT NOT NULL DEFAULT 'omdb'
 );
+CREATE TABLE IF NOT EXISTS jellyfin_movies (
+    item_id          TEXT PRIMARY KEY,
+    title            TEXT NOT NULL,
+    year             INTEGER,
+    genres           TEXT,
+    overview         TEXT,
+    runtime_minutes  INTEGER,
+    community_rating REAL,
+    imdb_id          TEXT,
+    tmdb_id          TEXT,
+    image_tag        TEXT,
+    synced_at        TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ix_jellyfin_movies_title ON jellyfin_movies(title);
 CREATE VIRTUAL TABLE IF NOT EXISTS movies_fts USING fts5(title, genres, content='movies', content_rowid='id');
 CREATE TRIGGER IF NOT EXISTS movies_ai AFTER INSERT ON movies BEGIN
     INSERT INTO movies_fts(rowid, title, genres) VALUES (new.id, new.title, new.genres);

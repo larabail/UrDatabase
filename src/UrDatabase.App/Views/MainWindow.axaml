@@ -26,9 +26,25 @@
                         Background="Transparent"
                         Cursor="Hand"
                         PointerPressed="MovieCard_Click">
-                <ctrls:PosterCard SourcePath="{Binding PosterPath}"
-                                  Width="120"
-                                  Height="175"/>
+                <Grid>
+                    <ctrls:PosterCard SourcePath="{Binding PosterPath}"
+                                      Width="120"
+                                      Height="175"/>
+                    <!-- Says which films are not on this machine. Without it a server film looks
+                         identical to a local one right up until the network is gone. -->
+                    <Border Background="#CC7B4DFF"
+                            CornerRadius="8"
+                            Padding="6,2"
+                            Margin="0,8,8,0"
+                            HorizontalAlignment="Right"
+                            VerticalAlignment="Top"
+                            IsVisible="{Binding IsRemote}">
+                        <TextBlock Text="{Binding SourceLabel}"
+                                   Foreground="White"
+                                   FontSize="10"
+                                   FontWeight="SemiBold"/>
+                    </Border>
+                </Grid>
                 <TextBlock Text="{Binding Title}"
                            Foreground="#EAEAEA"
                            TextWrapping="Wrap"
@@ -105,6 +121,13 @@
                             x:Name="ScanButton"
                             Content="Scan Folders"
                             Click="ScanButton_Click"/>
+                    <!-- Hidden unless a server is configured, so an install with no Jellyfin
+                         looks exactly as it did before. -->
+                    <Button Classes="dark"
+                            x:Name="JellyfinButton"
+                            Content="Sync Jellyfin"
+                            IsVisible="False"
+                            Click="JellyfinSyncButton_Click"/>
                     <Button Classes="dark"
                             Content="Settings"
                             Click="Settings_Click"/>
