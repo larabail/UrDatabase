@@ -30,7 +30,7 @@ export const REPO_PAGE = `https://github.com/${REPO}`;
  * The three runtime identifiers the release workflow publishes.
  *
  * These are .NET RIDs and they are also, deliberately, the suffix of every
- * release asset name: `UrDatabase-0.1.0-osx-arm64.zip`. One string identifies
+ * release asset name: `UrDatabase-0.2.1-osx-arm64.dmg`. One string identifies
  * the build everywhere -- in the workflow, in the filename and here -- so
  * there is no table mapping one naming scheme onto another to get out of step.
  */
@@ -40,6 +40,17 @@ export const WIN_X64 = 'win-x64';
 
 /** Apple silicon first: it is what most visitors on a Mac are running. */
 export const PLATFORMS = [OSX_ARM64, OSX_X64, WIN_X64];
+
+/**
+ * The containers a build can arrive in.
+ *
+ * macOS moved from `.zip` to `.dmg` at 0.2.1. Both are still recognised
+ * because the page lists the older releases as well, and a version that
+ * shipped a zip is not retrospectively wrong -- it is just one that will not
+ * open on a current Mac, which the page says elsewhere. Windows has always
+ * been a zip and there is no reason for it to be anything else.
+ */
+const CONTAINERS = ['.dmg', '.zip'];
 
 /** Files that sit beside the builds and are not themselves downloads. */
 const NOT_A_BUILD = ['.sha256', '.sha512', '.md5', '.asc', '.sig', '.txt'];
@@ -106,15 +117,16 @@ export function assetPlatform(name) {
   if (typeof name !== 'string') return null;
   const lower = name.toLowerCase();
 
-  // Checked first, because `UrDatabase-0.1.0-osx-arm64.zip.sha256` also ends
-  // in `-osx-arm64.zip` as far as a naive search is concerned, and offering a
+  // Checked first, because `UrDatabase-0.2.1-osx-arm64.dmg.sha256` also ends
+  // in `-osx-arm64.dmg` as far as a naive search is concerned, and offering a
   // 90-byte text file as the macOS build is worse than offering nothing.
   if (NOT_A_BUILD.some((suffix) => lower.endsWith(suffix))) return null;
 
-  // Matched on the whole `-<rid>.zip` tail rather than on the architecture
-  // alone. `-x64.zip` would match both the Intel Mac build and the Windows
-  // one, and whichever was listed first would win.
-  return PLATFORMS.find((rid) => lower.endsWith(`-${rid}.zip`)) || null;
+  // Matched on the whole `-<rid><container>` tail rather than on the
+  // architecture alone. `-x64.zip` would match both the Intel Mac build and
+  // the Windows one, and whichever was listed first would win.
+  return PLATFORMS.find((rid) => CONTAINERS.some(
+    (container) => lower.endsWith(`-${rid}${container}`))) || null;
 }
 
 /**
@@ -154,6 +166,45 @@ export function pickDownloads(assets) {
 }
 
 /**
+ * Whether the macOS builds of a release will open, as the release itself says.
+ *
+ * The page is static HTML, deployed when `web/downloads/` changes and never
+ * rebuilt for a release. So it cannot know from its own markup whether the
+ * build it is offering was signed -- and until 0.2.1 it did not have to,
+ * because none of them were. Now that signing depends on repository secrets
+ * that a run may or may not have had, a page with "it is signed and notarized"
+ * written into it would keep saying so through a release that was neither.
+ * That is a worse failure than the one this replaced: previously the page was
+ * wrong about the remedy, and it would now be wrong about there being a
+ * problem.
+ *
+ * So the release workflow writes what actually happened into its own notes as
+ * `<!-- urdatabase:macos-signing=notarized -->`, and this reads it back.
+ *
+ * `unknown` covers every release published before that marker existed and any
+ * made by hand. It is not treated as good news: those are the ad-hoc signed
+ * ones a current Mac kills on launch.
+ */
+export const MACOS_NOTARIZED = 'notarized';
+export const MACOS_SIGNED = 'signed';
+export const MACOS_UNSIGNED = 'unsigned';
+export const MACOS_UNKNOWN = 'unknown';
+
+const SIGNING_MARKER = /<!--\s*urdatabase:macos-signing=([a-z]+)\s*-->/i;
+
+const SIGNING_STATES = [MACOS_NOTARIZED, MACOS_SIGNED, MACOS_UNSIGNED];
+
+export function macosSigning(body) {
+  if (typeof body !== 'string') return MACOS_UNKNOWN;
+  const found = SIGNING_MARKER.exec(body);
+  if (!found) return MACOS_UNKNOWN;
+  const state = found[1].toLowerCase();
+  // Anything the page has no sentence for is unknown rather than passed
+  // through, so a future marker value cannot reach the DOM as a bare word.
+  return SIGNING_STATES.includes(state) ? state : MACOS_UNKNOWN;
+}
+
+/**
  * A release from the API as the page wants it, or null if it is not one.
  *
  * Drafts are invisible to anyone without push access, so listing one would
@@ -186,6 +237,7 @@ export function normalizeRelease(raw) {
     page,
     published: typeof raw.published_at === 'string' ? raw.published_at : '',
     notes: summariseNotes(raw.body),
+    macosSigning: macosSigning(raw.body),
     downloads,
   };
 }
@@ -245,6 +297,11 @@ export function summariseNotes(body) {
   const kept = [];
   let skippingBelow = 0;
   for (const line of body.replace(/\r\n/g, '\n').split('\n')) {
+    // A line that is nothing but an HTML comment is a marker for a machine --
+    // `urdatabase:macos-signing`, and whatever comes after it. Rendered as
+    // text, which is how these notes are rendered, it would appear verbatim
+    // under "What's new".
+    if (/^\s*<!--[\s\S]*-->\s*$/.test(line)) continue;
     const heading = /^(#{1,6})\s+(.*)$/.exec(line);
     if (heading) {
       const depth = heading[1].length;
@@ -336,40 +393,6 @@ export function detectPlatform(hints) {
   }
 
   return { platform: OSX_ARM64, confident: false };
-}
-
-/**
- * Asset names this is willing to put inside a command it invites people to run.
- *
- * The name comes from the releases API, which is to say from whoever created
- * the release. It is only ever written to the page as text, so it cannot
- * execute anything there -- but the whole point of the line it appears in is
- * that a visitor copies it into a terminal, where `; rm -rf ~` in a filename
- * would execute perfectly well. Anything outside this alphabet falls back to
- * the generic command below.
- */
-const SAFE_ASSET_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
-
-/**
- * The command that clears macOS's quarantine flag from [download].
- *
- * The builds are ad-hoc signed -- the release pipeline verifies that with
- * `codesign --verify` and refuses to publish without it -- but they are not
- * notarized, and Gatekeeper refuses anything quarantined that Apple has not
- * seen. It does so without saying anything: the process is killed on launch
- * with no dialog and nothing in the interface, which reads as a crash. Somebody
- * who thinks the app crashed never goes looking for a terminal command, so the
- * page has to put this in front of them before they try.
- *
- * The path is the folder the archive expands to. The release workflow builds
- * each zip around exactly one top-level folder named after the archive, so
- * stripping `.zip` gives the directory every unzip tool produces.
- */
-export function quarantineCommand(download) {
-  const generic = 'xattr -dr com.apple.quarantine ~/Downloads/UrDatabase-*';
-  const name = download && typeof download.name === 'string' ? download.name : '';
-  if (!SAFE_ASSET_NAME.test(name)) return generic;
-  return `xattr -dr com.apple.quarantine ~/Downloads/${name.replace(/\.zip$/i, '')}`;
 }
 
 /** [bytes] as something a person reads, or '' when the size is unknown. */

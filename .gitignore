@@ -8,6 +8,10 @@ obj/
 [Bb]uild/
 artifacts/
 publish/
+# Where the packaging action assembles and writes the downloads. A single
+# self-contained publish is a couple of hundred megabytes and there are three.
+stage/
+dist/
 
 # User-specific
 *.user
@@ -39,3 +43,7 @@ packages/
 
 # Images (do not store posters in repo)
 posters/
+
+# Python bytecode from the tools in tool/
+__pycache__/
+*.pyc

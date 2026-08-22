@@ -14,6 +14,9 @@
  */
 
 import {
+  MACOS_NOTARIZED,
+  MACOS_SIGNED,
+  MACOS_UNSIGNED,
   OSX_ARM64,
   OSX_X64,
   PLATFORMS,
@@ -25,7 +28,6 @@ import {
   formatSize,
   isMac,
   latestFor,
-  quarantineCommand,
   selectReleases,
 } from './releases.js';
 
@@ -227,18 +229,62 @@ function renderCard(platform, releases, detected) {
 }
 
 /**
- * The exact command for the build this visitor is most likely to have taken.
+ * What the newest release says will happen when a Mac opens it.
  *
- * Filled in from a real asset name so it can be copied and run as it stands.
- * A command with `<version>` in the middle of it is a puzzle handed to
- * somebody at the moment their new application has just refused to open.
+ * One sentence per state, and the page shows none of them until it knows which
+ * one applies. The markup carries no claim about signing precisely because the
+ * page is deployed independently of any release: baked in, "it is signed and
+ * notarized" would keep being said through a release where the certificate was
+ * missing and the build cannot start at all.
+ *
+ * Only `notarized` is good news. The other three are ordered by how much the
+ * visitor can do about it: a signed build can be opened past Gatekeeper by
+ * hand, an ad-hoc one cannot be opened at all.
  */
-function renderQuarantine(releases, detected) {
-  const platform = isMac(detected.platform) ? detected.platform : OSX_ARM64;
-  const release = latestFor(releases, platform);
-  if (!release) return;
-  el('quarantine-command').textContent =
-    quarantineCommand(release.downloads[platform]);
+const MACOS_VERDICT = {
+  [MACOS_NOTARIZED]: {
+    bad: false,
+    text: 'This build is signed with an Apple Developer ID and notarized by '
+      + 'Apple, so it opens the first time like anything else. There is no '
+      + 'terminal command and nothing to clear.',
+  },
+  [MACOS_SIGNED]: {
+    bad: true,
+    text: 'This build is signed but was not notarized, so macOS refuses it on '
+      + 'first launch. Right-click UrDatabase in Applications, choose Open, '
+      + 'and confirm. After that it opens normally.',
+  },
+  [MACOS_UNSIGNED]: {
+    bad: true,
+    text: 'This build is not signed, and macOS kills an unsigned download the '
+      + 'moment it starts \u2014 no dialog, no error, nothing in the '
+      + 'interface. There is no way around it: clearing the quarantine flag '
+      + 'does not help, because it is the signature being refused. Build it '
+      + 'from source, or wait for a signed release.',
+  },
+};
+
+/** Said when the release does not say, which is every release before 0.2.1. */
+const MACOS_UNKNOWN_VERDICT = {
+  bad: true,
+  text: 'This release does not record whether its Mac builds were signed, '
+    + 'which means it was published before 0.2.1 or made by hand. Assume not: '
+    + 'macOS kills an unsigned download the moment it starts, with nothing '
+    + 'shown at all, and clearing the quarantine flag does not help.',
+};
+
+function renderFirstRun(latest) {
+  // Left hidden when there is no release to describe. That happens when the
+  // API could not be reached, and the page already says so in its status line
+  // -- warning somebody that a build might be unsigned when the real problem
+  // is GitHub's rate limit would be its own kind of wrong.
+  if (!latest) return;
+
+  const verdict = MACOS_VERDICT[latest.macosSigning] || MACOS_UNKNOWN_VERDICT;
+  const node = el('macos-signing');
+  node.textContent = verdict.text;
+  node.classList.toggle('bad', verdict.bad);
+  node.hidden = false;
 }
 
 function renderNotes(latest) {
@@ -300,7 +346,7 @@ function renderHistory(releases) {
 function render({ releases, source }, detected) {
   renderHero(releases, detected);
   for (const platform of PLATFORMS) renderCard(platform, releases, detected);
-  renderQuarantine(releases, detected);
+  renderFirstRun(releases[0]);
   renderNotes(releases[0]);
   renderHistory(releases);
 
