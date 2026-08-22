@@ -83,11 +83,13 @@ expose it — a workflow readable by a fork, a step that echoes it, a change tha
 carries it into an artifact — is a real finding and worth reporting, as is any
 workflow change that could place unintended content into a release.
 
-**Unsigned macOS builds.** The macOS archives are not code-signed or notarized
-yet, so Gatekeeper reports them as damaged or from an unidentified developer.
-That warning is accurate and is not a bug. It does mean a user cannot verify a
-download came from us, which is a known limitation recorded here rather than an
-oversight; signing is intended.
+**Not-notarized macOS builds.** The macOS archives are ad-hoc signed — CI
+verifies that with `codesign --verify` — but they are not notarized and carry no
+Developer ID. Gatekeeper therefore refuses them on first launch, which is
+accurate behaviour and not a bug in the app. It does mean a user cannot verify
+that a download came from us, which is a real limitation recorded here rather
+than an oversight: closing it needs a paid Apple signing identity this
+repository does not have yet.
 
 **The catalogue itself.** `movies.db`, the poster cache and your film paths are
 local files owned by your account and protected by your filesystem permissions.

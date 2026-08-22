@@ -175,17 +175,29 @@ page deployed to Firebase Hosting. Every asset is also on the
 
 ### macOS will refuse to open the download
 
-The macOS builds are **not code-signed or notarized**. Downloading one attaches
-a quarantine flag, and Gatekeeper then reports the app as damaged or from an
-unidentified developer. It is neither; it is unsigned. Either open it once from
-the Finder's right-click menu and confirm, or clear the flag:
+The macOS builds are ad-hoc signed but **not notarized**, and that is enough for
+Gatekeeper to refuse them. Downloading through a browser attaches a quarantine
+flag, and on first launch macOS kills the process outright — no dialog, no error,
+nothing in the interface. The app has not crashed and the download is not
+corrupt; it looks broken because macOS declined to say anything.
+
+Clear the flag once, after unzipping, against the folder that came out of the
+archive:
 
 ```bash
-xattr -dr com.apple.quarantine /Applications/UrDatabase.app
+xattr -dr com.apple.quarantine ~/Downloads/UrDatabase-*
 ```
 
-Building from source yourself avoids this entirely, since nothing was
-downloaded to quarantine.
+Then open it normally. There is no `.app` bundle to put in `/Applications`: the
+archive contains a folder named after the build, such as
+`UrDatabase-0.1.0-osx-arm64/`, holding an executable called `UrDatabase.App`.
+Run that.
+
+This step exists only because notarization does not. Proper Developer ID
+signing and notarization would remove it entirely and is the real fix, but it
+needs a paid Apple signing identity that this repository does not have yet — so
+the manual step is a gap, not a design decision. Building from source avoids it,
+since nothing was downloaded to be quarantined.
 
 ## CI and releases
 
@@ -263,7 +275,8 @@ Stated plainly, so nobody has to find out by using it:
   file-only for now.
 - **Search needs `movies_fts`.** Without that FTS5 index the search box throws
   rather than falling back to a `LIKE` query.
-- **macOS builds are unsigned**, as described above.
+- **macOS builds are not notarized**, so the first launch needs one `xattr`
+  command, as described above.
 
 ## Licence
 
