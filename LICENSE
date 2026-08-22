@@ -1,21 +1,39 @@
-MIT License
+Copyright (c) 2025-2026 Lara Bailen Boluda. All rights reserved.
 
-Copyright (c) 2025
+UrDatabase is source-available, not open source. The source is published so that
+it can be read, audited and learned from. Publishing it grants no licence to
+use it.
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+No permission is granted to any person to use, copy, modify, merge, publish,
+distribute, sublicense, sell, or create derivative works from this software or
+any part of it, whether in source or binary form, except as set out below or as
+allowed by law.
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+Permitted without asking:
+
+  - Reading the source, and quoting short excerpts for commentary, review,
+    teaching or research, with attribution.
+  - The mirroring, forking and viewing that GitHub's Terms of Service grant to
+    every visitor of a public repository, which cannot be revoked here.
+  - Running the software locally for the sole purpose of evaluating it or
+    preparing a contribution to this repository.
+
+Anything else -- shipping it, hosting it, publishing a derivative, or reusing
+its code in another project -- requires written permission from the copyright
+holder first. Ask.
+
+The name "UrDatabase", the application's icon, and its other artwork and
+branding are not covered by any of the above and may not be used without
+permission.
+
+Assets retrieved at runtime from third-party services are not covered by this
+licence and remain subject to their own terms. Film metadata and artwork come
+from TMDB, and IMDb ratings from OMDb; UrDatabase is not endorsed or certified
+by either.
 
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS
+FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR
+COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
+IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
+CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
