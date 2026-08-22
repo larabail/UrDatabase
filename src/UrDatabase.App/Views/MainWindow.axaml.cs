@@ -141,9 +141,14 @@ namespace UrDatabase.Views
 
         private void LoadMovies(string? query = null)
         {
-            _localMovies = LoadLocalMovies(query);
+            // Built once so both halves agree on what counts as a search: text with no word in
+            // it at all is not one, and showing the whole local library while hiding every
+            // server film would look like the server had dropped out.
+            var match = FtsQuery.Build(query);
 
-            var remote = string.IsNullOrWhiteSpace(query)
+            _localMovies = LoadLocalMovies(match);
+
+            var remote = match is null
                 ? (IReadOnlyList<UiMovie>)_remoteMovies
                 : JellyfinLibrary.Search(_remoteMovies, query);
 
@@ -164,7 +169,12 @@ namespace UrDatabase.Views
         /// reason it might fail, because a server library still has to be browsable when the
         /// local catalogue is missing or was written by an older schema.
         /// </summary>
-        private List<UiMovie> LoadLocalMovies(string? query)
+        /// <param name="match">
+        /// An FTS5 MATCH expression from <see cref="FtsQuery.Build"/>, or <c>null</c> to list the
+        /// whole catalogue. Never raw text from the search box: FTS5 would read its punctuation
+        /// as operators and fail the query.
+        /// </param>
+        private List<UiMovie> LoadLocalMovies(string? match)
         {
             if (!File.Exists(_dbPath)) return new List<UiMovie>();
 
@@ -178,7 +188,7 @@ namespace UrDatabase.Views
 
                 string sql;
                 object param;
-                if (string.IsNullOrWhiteSpace(query))
+                if (match is null)
                 {
                     sql = "SELECT id AS Id, title AS Title, year AS Year, genres AS Genres, poster_path AS PosterPath FROM movies ORDER BY COALESCE(year,0) DESC, title";
                     param = new { };
@@ -191,7 +201,7 @@ FROM movies_fts f
 JOIN movies m ON m.id = f.rowid
 WHERE movies_fts MATCH @q
 ORDER BY rank";
-                    param = new { q = query };
+                    param = new { q = match };
                 }
 
                 return conn.Query<UiMovie>(sql, param).ToList();
