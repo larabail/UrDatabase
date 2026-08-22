@@ -367,6 +367,14 @@ bracketed year over a bare one so `Blade Runner 2049 (2017)` resolves to the
 right film and year. One casualty of splitting dotted names: genuine full stops
 go with them, so `S.W.A.T.` arrives as `S W A T`.
 
+A scan, a Jellyfin sync and the poster fetches all write to that one file, and
+they run at the same time — so the app makes them take turns rather than
+collide, and browsing stays readable throughout. If a write genuinely cannot be
+made, the status line says so; it does not fail silently and leave you to
+wonder why a poster never arrived. Two copies of the app open on the same
+catalogue is the one case that is only handled rather than prevented: they wait
+for each other, and either may eventually give up and tell you.
+
 ## Downloads
 
 Released builds for Windows and macOS are listed at

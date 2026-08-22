@@ -12,7 +12,6 @@ using Avalonia.Interactivity;
 using Avalonia.Threading;
 using Avalonia.VisualTree;
 using Dapper;
-using Microsoft.Data.Sqlite;
 using UrDatabase.Models;
 using UrDatabase.Services;
 
@@ -44,6 +43,7 @@ namespace UrDatabase.Views
         private Dictionary<string, JellyfinMovie> _remoteById = new(StringComparer.OrdinalIgnoreCase);
 
         private PosterAutoLoader? _posterLoader;
+        private int _posterFailuresReported;
 
         /// <summary>Rebuilt whenever the configuration changes; never null once the window exists.</summary>
         private ImdbRatingService _ratings = null!;
@@ -105,7 +105,8 @@ namespace UrDatabase.Views
                 : null;
 
             _posterLoader?.Dispose();
-            _posterLoader = new PosterAutoLoader(_config, _dbPath, maxConcurrency: 4);
+            _posterFailuresReported = 0;
+            _posterLoader = new PosterAutoLoader(_config, _dbPath, maxConcurrency: 4, onFailure: ReportPosterFailure);
 
             if (JellyfinButton is not null) JellyfinButton.IsVisible = _jellyfin is not null;
         }
@@ -170,11 +171,11 @@ namespace UrDatabase.Views
 
             try
             {
-                // Read-only, and deliberately not Cache=Shared: a scan holds a write transaction,
-                // and shared cache would fail this query outright instead of reading the last
-                // committed snapshot.
-                using var conn = new SqliteConnection($"Data Source={_dbPath}");
-                conn.Open();
+                // Not Database.Open: the read path has no business migrating the schema, and this
+                // runs on the UI thread on every keystroke in the search box. Database.Connect is
+                // still the only way a catalogue connection is built, so this query gets the same
+                // busy timeout and the same WAL snapshot as every write it might be racing.
+                using var conn = Database.Connect(_dbPath);
 
                 string sql;
                 object param;
@@ -237,6 +238,21 @@ ORDER BY rank";
                         onFetched: path => Dispatcher.UIThread.Post(() => m.PosterPath = path),
                         ct: _cts.Token);
             }
+        }
+
+        /// <summary>
+        /// A poster the loader gave up on. Reported once per configured library rather than once
+        /// per film: whatever stops one poster — no key, no network, a catalogue somebody else has
+        /// open — stops all of them, and a status line rewritten several hundred times says less
+        /// than a single sentence. The rest are in <c>posters.log</c>.
+        ///
+        /// Called from whichever background worker failed, so it hops to the UI thread to say so.
+        /// </summary>
+        private void ReportPosterFailure(string message)
+        {
+            if (Interlocked.Increment(ref _posterFailuresReported) > 1) return;
+
+            Dispatcher.UIThread.Post(() => SetStatus(message));
         }
 
         private void RebuildGroups()

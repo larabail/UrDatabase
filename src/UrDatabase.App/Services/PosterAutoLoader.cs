@@ -12,13 +12,21 @@ namespace UrDatabase.Services
         private readonly AppConfig _cfg;
         private readonly string _dbPath;
         private readonly SemaphoreSlim _gate;
+        private readonly Action<string>? _onFailure;
         private readonly ConcurrentDictionary<long, byte> _inflight = new();
 
-        public PosterAutoLoader(AppConfig cfg, string dbPath, int maxConcurrency = 4)
+        /// <param name="onFailure">
+        /// Told about a poster this could not finish, once per failure, with a message fit to put
+        /// in front of somebody. Optional, and the log is written either way — but a loader given
+        /// no callback is back to the behaviour that made this a bug report: posters quietly
+        /// missing, and the reason only in a file nobody opens.
+        /// </param>
+        public PosterAutoLoader(AppConfig cfg, string dbPath, int maxConcurrency = 4, Action<string>? onFailure = null)
         {
             _cfg = cfg;
             _dbPath = dbPath;
             _gate = new SemaphoreSlim(Math.Max(1, maxConcurrency));
+            _onFailure = onFailure;
         }
 
         public async Task EnsurePosterAsync(long movieId, string title, int? year, Action<string?> onFetched, CancellationToken ct)
@@ -71,13 +79,18 @@ namespace UrDatabase.Services
                     pathToStore = url;
                 }
 
-                using (var cmd = conn.CreateCommand())
+                // Through the lane, not straight at the database. Up to four of these run at once
+                // by design, and every one of them is a writer; without a turn to take they queue
+                // on the SQLite write lock instead, where losing is reported as an error rather
+                // than as a wait.
+                await DatabaseWriteLane.RunAsync(conn, async token =>
                 {
+                    using var cmd = conn.CreateCommand();
                     cmd.CommandText = "UPDATE movies SET poster_path=@p WHERE id=@id";
                     cmd.Parameters.AddWithValue("@p", pathToStore ?? (object)DBNull.Value);
                     cmd.Parameters.AddWithValue("@id", movieId);
-                    await cmd.ExecuteNonQueryAsync(ct);
-                }
+                    await cmd.ExecuteNonQueryAsync(token);
+                }, ct);
 
                 onFetched(pathToStore);
             }
@@ -88,6 +101,10 @@ namespace UrDatabase.Services
             catch (Exception ex)
             {
                 AppLog.Write("posters.log", $"movieId={movieId} {ex}");
+
+                _onFailure?.Invoke(DatabaseWriteLane.IsTransientLockFailure(ex)
+                    ? $"Could not save the poster for “{title}”: the library was still in use. It will be fetched again next time."
+                    : $"Could not fetch the poster for “{title}”: {ex.Message}");
             }
             finally
             {

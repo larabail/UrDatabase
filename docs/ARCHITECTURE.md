@@ -91,6 +91,36 @@ existing library.
 - `imdb_ratings` — cached IMDb ratings. A row with a `NULL` rating records "asked already, there
   is none", which is what stops the app re-requesting it.
 
+### Opening it
+
+`Database.Connect` is the only place a connection to the catalogue is constructed, and a test
+enforces that rather than trusting it. It sets `foreign_keys`, a `busy_timeout` and WAL, and
+bounds the provider's own lock wait to match the busy timeout; `Database.Open` is `Connect` plus
+the schema, for callers that could be the first thing to touch a fresh install. The window's read
+path uses `Connect`, because re-running the schema on every keystroke in the search box is work
+nobody asked for.
+
+The split exists because the alternative failed quietly. The read path used to build its own
+connection, which left the most frequent query in the app as the one connection in it with no busy
+timeout — a difference invisible at the call site and in review.
+
+### Writing to it
+
+SQLite allows one writer at a time, and this app has several: a scan committing in batches, a
+Jellyfin sync replacing the cached server library in one transaction, and the poster loader
+writing from up to four tasks at once. `DatabaseWriteLane` gives them a turn each, keyed by the
+file SQLite reports it opened, so writers in this process never contend for the write lock at all.
+
+What the lane cannot see is a second copy of the app on the same file. The busy timeout handles
+that, and a bounded retry on `SQLITE_BUSY` and `SQLITE_LOCKED` handles what the timeout does not.
+The retry is finite on purpose and rethrows what survives it: a write that cannot be made is the
+caller's to report, and the bug that produced all of this was about failures nobody was told
+about.
+
+The scan takes its turn per batch rather than per scan. Holding the lane for a whole library would
+shut the poster loader out for the length of it, which is the starvation `FilesPerTransaction`
+already exists to prevent.
+
 ## Configuration
 
 Settings are read from the first file that exists: an explicit path, then
