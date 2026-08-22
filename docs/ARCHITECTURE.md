@@ -31,14 +31,18 @@ Avalonia replaces WPF. The differences that mattered during the port:
   caches bitmaps and the views assign `Image.Source` themselves.
 - Avalonia has no `MessageBox`, so `Views/MessageBoxWindow` stands in for it.
 - `Program.cs` is an explicit entry point; WPF generated one from `App.xaml`.
+- Every colour, face and metric lives in `Styles/Tokens.axaml`, merged into the application's
+  resources, with the shared control styles in `Styles/Theme.axaml`. Windows do not declare
+  their own brushes: three of them each used to carry a private copy of `#EAEAEA`, and the
+  copies had already drifted apart.
 
 | View | Role |
 | --- | --- |
 | `Views/SetupWindow` | First-run setup, and the Settings screen thereafter: watch folders, a Jellyfin server, API keys. |
-| `Views/MainWindow` | Search, genre chips, and the grouped/flat/single-genre poster panels. |
-| `Views/MovieDetailsWindow` | Backdrop, poster, metadata, cast and crew, play and link actions. |
+| `Views/MainWindow` | Search, the genre row, the grouped/flat/single-genre poster panels, and the empty library. Hosts the details screen. |
+| `Views/MovieDetailsView` | Backdrop, poster, facts, cast and crew, play and link actions. A control, not a window: it fills `MainWindow` so a 16:9 backdrop gets the whole window instead of a third of a dialog. `ShowAsync` is awaited and completes when it is dismissed. |
 | `Views/MessageBoxWindow` | Simple modal dialog. |
-| `Controls/PosterCard` | Rounded poster tile that loads its own bitmap. |
+| `Controls/PosterCard` | A 2:3 poster plate that loads its own bitmap, tints itself from the title, and shows what the scanner parsed while it waits for artwork. |
 
 ## Services
 
@@ -49,7 +53,7 @@ Avalonia replaces WPF. The differences that mattered during the port:
 | `FirstRun` | Whether this launch has never been configured, and so whether to offer setup. |
 | `JellyfinDiagnostics` | Names which of five connection failures happened, and what to try about it. |
 | `PlatformPaths` | Every filesystem location, resolved per platform. Expands `%APPDATA%` and `~`. |
-| `Database` | Opens the SQLite database and applies `Data/schema.sql` idempotently. |
+| `Database` | Opens the SQLite database, applies `Data/schema.sql` idempotently, and migrates an existing library. The schema script is all `CREATE ... IF NOT EXISTS`, so it cannot add a column to a table somebody already has — `Migrate` does that. |
 | `ScanService` | Walks watch folders and upserts the `files` table, skipping unreadable directories. |
 | `TmdbService` | TMDB search, details and credits; builds image URLs. |
 | `OmdbService` | Fetches an IMDb rating for one IMDb id. |

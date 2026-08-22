@@ -49,6 +49,11 @@ CREATE TABLE IF NOT EXISTS jellyfin_movies (
     community_rating REAL,
     imdb_id          TEXT,
     tmdb_id          TEXT,
+    -- Cast and crew as the server reported them, one credit per line, in the same
+    -- "Name (Role)" and "Job: Name" shapes the TMDB path produces. Named with a suffix
+    -- because `cast` is a SQL keyword.
+    cast_list        TEXT,
+    crew_list        TEXT,
     image_tag        TEXT,
     synced_at        TEXT NOT NULL
 );

@@ -1,19 +1,75 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              x:Class="UrDatabase.Controls.PosterCard"
-             MinWidth="120"
-             MinHeight="175">
-    <Border CornerRadius="18"
-            Background="#1E1E1E"
-            Padding="4"
+             Width="{StaticResource PosterWidth}"
+             Height="{StaticResource PosterHeight}">
+
+    <!--
+        152x228 is exactly 2:3, which is the shape a film poster is actually
+        printed in, and the radius is 6 rather than the 18 this control used to
+        carry. At 18 the corners eat four visible bites of artwork and the card
+        reads as an iOS icon rather than a printed sheet.
+    -->
+    <Border CornerRadius="{StaticResource PosterRadius}"
             ClipToBounds="True">
         <Grid>
+            <!-- The plate. Tinted from the title by PlateTint, so the moment
+                 before a bitmap decodes is a colour rather than a hole, and so
+                 forty loading cards are forty different colours instead of one
+                 grey wall. Assigned in code-behind: the gradient depends on the
+                 title, which a static brush cannot know. -->
+            <Border x:Name="Plate"/>
+
             <!-- Source is assigned in code-behind: Avalonia will not turn a string
                  path or URL into an image the way WPF did. -->
             <Image x:Name="PosterImage"
                    Stretch="UniformToFill"/>
-            <Border CornerRadius="18"
-                    BorderBrush="#333"
+
+            <!--
+                The pending plate: the single most important state in the app,
+                because on a fresh library this is most of the screen for the
+                first minute.
+
+                It shows what the scanner actually parsed out of the filename —
+                which is genuinely all the app knows about the film at that
+                moment — so a wall of holes becomes a wall of provisional
+                records. The dashed edge says "not final" without a spinner;
+                forty spinners on one screen is a fairground.
+            -->
+            <Grid x:Name="Pending"
+                  IsVisible="False"
+                  Background="{DynamicResource WallBrush}">
+                <!-- A Border cannot dash in Avalonia, so the dashed edge is a
+                     Rectangle laid over the plate. -->
+                <Rectangle Stroke="{DynamicResource EdgeBrush}"
+                           StrokeThickness="1"
+                           StrokeDashArray="3,3"
+                           RadiusX="6"
+                           RadiusY="6"/>
+                <StackPanel VerticalAlignment="Center"
+                            Margin="12">
+                    <TextBlock x:Name="PendingTitle"
+                               Classes="mono"
+                               FontSize="10"
+                               LineHeight="15"
+                               Foreground="{DynamicResource ProseBrush}"
+                               TextAlignment="Center"
+                               TextWrapping="Wrap"
+                               MaxLines="6"
+                               TextTrimming="CharacterEllipsis"/>
+                    <TextBlock x:Name="PendingYear"
+                               Classes="mono"
+                               FontSize="10"
+                               Margin="0,5,0,0"
+                               TextAlignment="Center"/>
+                </StackPanel>
+            </Grid>
+
+            <!-- The card edge, over everything, so a poster that reaches the
+                 corner is still bounded by a hairline. -->
+            <Border x:Name="Edge"
+                    CornerRadius="{StaticResource PosterRadius}"
+                    BorderBrush="{DynamicResource EdgeBrush}"
                     BorderThickness="1"/>
         </Grid>
     </Border>

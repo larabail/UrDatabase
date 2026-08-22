@@ -24,8 +24,30 @@ It runs on Windows and macOS from one codebase, built with
   applied to the running window rather than at the next launch
   (`Views/SetupWindow`, `Models/SetupChoices`, `Services/ConfigStore`).
 - **Browse by genre.** The library opens as rows of poster cards, one row per
-  genre, newest first within each row. Genre chips across the top narrow the
-  view to a single genre (`Views/MainWindow`).
+  genre, newest first within each row, each shelf headed by the genre and the
+  number of films on it. The genre row across the top carries those counts too,
+  and picking one narrows the whole view to that genre. `Cmd+F` — `Ctrl+F` on
+  Windows — puts the cursor in the search field, and the field says so
+  (`Views/MainWindow`).
+- **Filter by where a film is.** When the library draws on both this computer
+  and a server, a row above the genres offers **Everywhere**, **On this
+  computer** and **On the server**, each with a count. Genre and location are
+  different questions: a scanned film has no genre until something enriches it,
+  so without this every local film sat in the Uncategorised bucket, which sorts
+  behind every genre a server library brings with it. The row is hidden entirely
+  when everything comes from one place (`Services/LibraryFilter`).
+- **It looks like a screening room.** Warm near-black rather than blue-black,
+  because a blue surround makes every poster look faintly green; one brass
+  accent, spent only on the focus ring, the primary action and progress that is
+  genuinely running; posters at a true 2:3; and chrome dimmed to hairlines and
+  text so that forty pieces of artwork are the brightest thing on screen. Every
+  colour, face and metric is a token in `Styles/Tokens.axaml`.
+- **A film with no poster yet still says what it is.** Artwork is fetched in the
+  background, so most of a freshly scanned library has none for the first
+  minute. Rather than a wall of identical holes, each card shows the title and
+  year the scanner parsed, on a plate tinted from the title, inside a dashed
+  edge that means "not final" without putting forty spinners on one screen
+  (`Controls/PosterCard`, `Services/PlateTint`).
 - **Search.** Typing in the search box queries the `movies_fts` full-text index
   and replaces the grouped view with a flat, ranked list of hits. What you type
   is escaped into FTS5's own query language first, so a title with punctuation
@@ -33,13 +55,23 @@ It runs on Windows and macOS from one codebase, built with
   literally instead of being read as search operators, and the word you are
   still typing matches by prefix (`Services/FtsQuery`). Films from a Jellyfin
   server are matched alongside them, on title and genre.
-- **Details on click.** Opening a card fetches the film from TMDB and shows the
-  overview, runtime, genres, backdrop, the top ten billed cast with their
-  characters, and up to three directors and three writers. The star rating
-  beside it is the **IMDb** rating, looked up from OMDb using the IMDb id TMDB
-  returns; if no OMDb key is available the star is simply absent and the rest
-  of the page is unaffected (`Services/TmdbService`,
-  `Views/MovieDetailsWindow`).
+- **It says why something is missing.** A local film's plot, cast and crew come
+  from TMDB, so an install with no TMDB key has none — and the screen says that,
+  and says which setting fixes it, rather than reporting "none found" for a
+  question nobody asked. A server film says when the server itself supplied
+  nothing (`Services/MissingMetadata`).
+- **Details in place.** Opening a card fetches the film from TMDB and fills the
+  whole window — not a dialog inside it — with the backdrop, overview, runtime,
+  genres, the top ten billed cast set as name over character, and up to three
+  directors and three writers. Escape or **Library** goes back.
+
+  The facts under the title are each printed under the name of the service they
+  came from, which is the one thing this screen has to get right: the **IMDb**
+  rating comes from OMDb via the IMDb id TMDB returns, and Jellyfin's community
+  rating is a different measurement of a different population. They are never
+  inked alike or labelled merely "rating". Absent either key, that fact is
+  simply absent and nothing else changes (`Services/TmdbService`,
+  `Services/DetailFacts`, `Views/MovieDetailsView`).
 - **Posters fill themselves in.** Any film in the catalogue with no poster is
   looked up in the background, four at a time, and the result is written back
   to the database so the next launch is instant. Posters are either referenced
@@ -67,7 +99,8 @@ It runs on Windows and macOS from one codebase, built with
 - **Browse a Jellyfin server.** Optional, off until you configure it. Point the
   app at a server and its movie library appears alongside your local one, with
   every server film badged **Server** so you can tell at a glance what is not on
-  this machine. The library is cached in SQLite, so the window opens instantly
+  this machine. The server describes its own films, cast and crew included, so a
+  Jellyfin library is complete without a TMDB key. The library is cached in SQLite, so the window opens instantly
   and stays browsable with the server switched off or the laptop away from home
   — the films simply cannot play until it is reachable again. Playing one
   streams it, without transcoding, through VLC or IINA
@@ -478,8 +511,10 @@ is `urdatabase-downloads`.
 
 ```
 src/UrDatabase.App/          the application: one cross-platform project
-  Views/                     windows and their code-behind
+  Views/                     windows, screens and their code-behind
   Controls/                  reusable pieces, e.g. the poster card
+  Styles/                    Tokens.axaml: every colour, face and metric.
+                             Theme.axaml: the shared control styles
   Models/                    what the views bind to
   Services/                  config, SQLite, scanning, TMDB, OMDb, Jellyfin, posters
   Assets/UrDatabase.icns     the macOS application icon
@@ -513,17 +548,15 @@ Stated plainly, so nobody has to find out by using it:
 
 - **A scanned library has no genres.** Nothing writes the `genres` column for a
   scanned film yet, so every film from a scan lands in a single
-  **Uncategorised** bucket. Since the grouped view is the main way to browse, a
-  freshly scanned library looks bare until TMDB enrichment fills genres in — and
-  no code does that yet. Films from a Jellyfin server are unaffected: the server
-  supplies their genres.
+  **Uncategorised** bucket, and a freshly scanned library looks bare until
+  something fills genres in — which no code does. The **On this computer**
+  filter means those films are still one click away rather than buried behind a
+  server library's genres, but they remain ungrouped. Films from a Jellyfin
+  server are unaffected: the server supplies their genres.
 - **Films only.** The filename parser has no concept of television, so
   `Show.S01E02` becomes an oddly titled film rather than an episode. A mixed
   library will look wrong rather than broken. A Jellyfin server's series
   libraries are skipped outright for the same reason.
-- **A server film has no cast or crew.** The details window fills those from
-  TMDB, and a Jellyfin film deliberately makes no TMDB call, so both lists are
-  empty for one. Jellyfin can report them; nothing asks yet.
 - **Playback position is not shared with the server.** A film played from
   Jellyfin does not resume where you left off and is not marked watched, because
   the app hands the stream to an external player and never hears from it again.

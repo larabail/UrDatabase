@@ -2,153 +2,150 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         x:Class="UrDatabase.Views.SetupWindow"
         Title="UrDatabase — Setup"
-        Width="680"
-        Height="760"
-        MinWidth="560"
-        MinHeight="560"
-        Background="#0F0F10"
+        Width="820"
+        Height="820"
+        MinWidth="640"
+        MinHeight="600"
+        Background="{StaticResource RoomBrush}"
         WindowStartupLocation="CenterScreen">
 
-    <Window.Resources>
-        <SolidColorBrush x:Key="TextBrush" Color="#EAEAEA"/>
-        <SolidColorBrush x:Key="MutedBrush" Color="#8A8A8E"/>
-        <SolidColorBrush x:Key="PanelBg" Color="#171718"/>
-        <SolidColorBrush x:Key="PanelBorder" Color="#2C2C2E"/>
-        <SolidColorBrush x:Key="AccentBrush" Color="#0A84FF"/>
-        <SolidColorBrush x:Key="WarnBrush" Color="#FFB340"/>
-        <SolidColorBrush x:Key="GoodBrush" Color="#4CD964"/>
-    </Window.Resources>
+    <!--
+        The same room as the library, at the one moment the user has no films to
+        look at. It is also the first screen of a fresh install, so nothing here
+        is allowed to look like a form that must be completed: both API keys are
+        optional, and the app works with neither.
+    -->
 
     <Window.Styles>
-        <Style Selector="TextBlock.dark">
-            <Setter Property="Foreground" Value="{StaticResource TextBrush}"/>
+        <Style Selector="Border.panel">
+            <!-- Same reason: an unfilled panel does not take pointer events, so
+                 the wheel did nothing over the largest areas of the screen. -->
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource EdgeBrush}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="CornerRadius" Value="{DynamicResource RadiusMedium}"/>
+            <Setter Property="Padding" Value="20"/>
+            <Setter Property="Margin" Value="0,0,0,16"/>
         </Style>
 
-        <Style Selector="TextBlock.muted">
-            <Setter Property="Foreground" Value="{StaticResource MutedBrush}"/>
-            <Setter Property="FontSize" Value="12"/>
-            <Setter Property="TextWrapping" Value="Wrap"/>
-        </Style>
-
-        <Style Selector="TextBlock.field">
-            <Setter Property="Foreground" Value="{StaticResource MutedBrush}"/>
-            <Setter Property="FontSize" Value="12"/>
-            <Setter Property="Margin" Value="0,0,0,4"/>
+        <Style Selector="TextBlock.panelHeading">
+            <Setter Property="Foreground" Value="{DynamicResource BoneBrush}"/>
+            <Setter Property="FontSize" Value="14"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
         </Style>
 
         <Style Selector="CheckBox.section">
-            <Setter Property="Foreground" Value="{StaticResource TextBrush}"/>
-            <Setter Property="FontSize" Value="15"/>
+            <Setter Property="Foreground" Value="{DynamicResource BoneBrush}"/>
+            <Setter Property="FontSize" Value="14"/>
             <Setter Property="FontWeight" Value="SemiBold"/>
             <Setter Property="Cursor" Value="Hand"/>
-        </Style>
-
-        <Style Selector="Border.card">
-            <Setter Property="Background" Value="{StaticResource PanelBg}"/>
-            <Setter Property="BorderBrush" Value="{StaticResource PanelBorder}"/>
-            <Setter Property="BorderThickness" Value="1"/>
-            <Setter Property="CornerRadius" Value="8"/>
-            <Setter Property="Padding" Value="16"/>
-            <Setter Property="Margin" Value="0,0,0,14"/>
-        </Style>
-
-        <Style Selector="Button.dark">
-            <Setter Property="Foreground" Value="{StaticResource TextBrush}"/>
-            <Setter Property="Background" Value="#262626"/>
-            <Setter Property="BorderBrush" Value="{StaticResource PanelBorder}"/>
-            <Setter Property="BorderThickness" Value="1"/>
-            <Setter Property="Padding" Value="12,6"/>
-            <Setter Property="Cursor" Value="Hand"/>
-        </Style>
-
-        <Style Selector="Button.primary /template/ ContentPresenter#PART_ContentPresenter">
-            <Setter Property="Background" Value="{StaticResource AccentBrush}"/>
-            <Setter Property="BorderBrush" Value="{StaticResource AccentBrush}"/>
-        </Style>
-
-        <Style Selector="Button.primary">
-            <Setter Property="Foreground" Value="White"/>
-            <Setter Property="Padding" Value="18,7"/>
-            <Setter Property="Cursor" Value="Hand"/>
-            <Setter Property="FontWeight" Value="SemiBold"/>
         </Style>
     </Window.Styles>
 
-    <DockPanel Margin="22">
+    <DockPanel>
 
-        <StackPanel DockPanel.Dock="Top" Margin="0,0,0,16">
-            <TextBlock x:Name="HeadingText"
-                       Classes="dark"
-                       FontSize="22"
-                       FontWeight="SemiBold"
-                       Text="Welcome to UrDatabase"/>
-            <TextBlock x:Name="SubheadingText"
-                       Classes="muted"
-                       Margin="0,6,0,0"
-                       Text="Tell it where your films are. You can use folders on this computer, a Jellyfin server, or both."/>
-        </StackPanel>
+        <!--
+            The save bar is docked rather than being the last thing in the
+            scroller. A settings pane whose primary button is only reachable by
+            scrolling past the optional API keys is a pane where people believe
+            their changes were not saved — and this is also the first screen
+            anyone sees.
+        -->
+        <Border DockPanel.Dock="Bottom"
+                Background="{StaticResource WallBrush}"
+                BorderBrush="{StaticResource EdgeBrush}"
+                BorderThickness="0,1,0,0"
+                Padding="0,14">
+            <StackPanel MaxWidth="720" HorizontalAlignment="Center">
+                <!-- The reason the answer is not accepted yet sits directly
+                     above the button that would accept it. -->
+                <TextBlock x:Name="ProblemText"
+                           Foreground="{StaticResource NoBrush}"
+                           FontSize="12"
+                           TextWrapping="Wrap"
+                           IsVisible="False"
+                           Margin="0,0,0,10"/>
+                <Grid ColumnDefinitions="*,16,Auto">
+                    <TextBlock x:Name="SavePathText"
+                               Grid.Column="0"
+                               Classes="mono"
+                               FontSize="10.5"
+                               VerticalAlignment="Center"
+                               TextWrapping="Wrap"/>
+                    <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="12">
+                        <Button x:Name="SkipButton"
+                                Classes="ghost"
+                                Height="34"
+                                Content="Skip"
+                                ToolTip.Tip="Goes straight to the library and does not ask again. The Settings button reopens this."
+                                Click="Skip_Click"/>
+                        <Button x:Name="FinishButton"
+                                Classes="primary"
+                                Content="Finish"
+                                Click="Finish_Click"/>
+                    </StackPanel>
+                </Grid>
+            </StackPanel>
+        </Border>
 
-        <!-- Kept together at the bottom so the answer, the reason it is not accepted yet and
-             the button that accepts it are all in one place. -->
-        <StackPanel DockPanel.Dock="Bottom" Margin="0,14,0,0">
-            <TextBlock x:Name="ProblemText"
-                       Foreground="{StaticResource WarnBrush}"
-                       FontSize="12"
-                       TextWrapping="Wrap"
-                       Margin="0,0,0,10"/>
-            <Grid ColumnDefinitions="Auto,*,Auto">
-                <TextBlock x:Name="SavePathText"
-                           Grid.Column="0"
-                           Classes="muted"
-                           FontSize="11"
-                           VerticalAlignment="Center"
-                           MaxWidth="400"/>
-                <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="10">
-                    <Button x:Name="SkipButton"
-                            Classes="dark"
-                            Content="Skip"
-                            ToolTip.Tip="Goes straight to the library and does not ask again. The Settings button reopens this."
-                            Click="Skip_Click"/>
-                    <Button x:Name="FinishButton"
-                            Classes="primary"
-                            Content="Finish"
-                            Click="Finish_Click"/>
-                </StackPanel>
-            </Grid>
-        </StackPanel>
+        <!-- The breathing room is a margin on the content, not padding on the
+             scroller. A ScrollViewer's bottom padding is not part of what it
+             will scroll to, so the last panel stayed jammed under the docked
+             save bar with no way to reach it — on this window that meant the
+             two API key fields could not be seen, let alone typed into. -->
+        <!-- Transparent, not unset. A control with a null Background is not
+             hit-testable in Avalonia, so the wheel found nothing to scroll
+             across most of this window and the pane appeared to stop short of
+             its own last field. Transparent paints nothing and still takes the
+             pointer. -->
+        <ScrollViewer VerticalScrollBarVisibility="Auto"
+                      Background="Transparent">
+            <StackPanel MaxWidth="720"
+                        HorizontalAlignment="Center"
+                        Margin="0,32">
 
-        <ScrollViewer VerticalScrollBarVisibility="Auto">
-            <StackPanel>
+                <TextBlock x:Name="HeadingText"
+                           Classes="display"
+                           FontSize="32"
+                           TextWrapping="Wrap"
+                           Text="Welcome to UrDatabase"/>
+                <TextBlock x:Name="SubheadingText"
+                           Classes="body"
+                           Margin="0,8,0,28"
+                           Text="Tell it where your films are. You can use folders on this computer, a Jellyfin server, or both."/>
 
                 <!-- Local folders -->
-                <Border Classes="card">
+                <Border Classes="panel">
                     <StackPanel>
                         <CheckBox x:Name="LocalCheck"
                                   Classes="section"
                                   Content="Films on this computer"
                                   IsCheckedChanged="Check_Changed"/>
-                        <TextBlock Classes="muted"
-                                   Margin="0,4,0,0"
+                        <TextBlock Classes="dim"
+                                   Margin="0,6,0,0"
                                    Text="Folders are searched all the way down. Nothing is copied or moved — UrDatabase only records what it finds."/>
 
-                        <StackPanel x:Name="LocalPanel" Margin="0,12,0,0">
+                        <StackPanel x:Name="LocalPanel" Margin="0,16,0,0">
                             <ListBox x:Name="FolderList"
                                      Height="120"
-                                     Background="#101011"
-                                     Foreground="{StaticResource TextBrush}"
-                                     BorderBrush="{StaticResource PanelBorder}"
+                                     Background="{StaticResource WallBrush}"
+                                     Foreground="{StaticResource ProseBrush}"
+                                     FontFamily="{StaticResource MonoFont}"
+                                     FontSize="11.5"
+                                     BorderBrush="{StaticResource EdgeBrush}"
                                      BorderThickness="1"
+                                     CornerRadius="{StaticResource RadiusMedium}"
                                      SelectionChanged="FolderList_SelectionChanged"/>
                             <TextBlock x:Name="FolderNote"
-                                       Classes="muted"
-                                       Margin="0,6,0,0"/>
-                            <StackPanel Orientation="Horizontal" Spacing="10" Margin="0,10,0,0">
+                                       Classes="dim"
+                                       Margin="0,8,0,0"/>
+                            <StackPanel Orientation="Horizontal" Spacing="12" Margin="0,12,0,0">
                                 <Button x:Name="AddFolderButton"
-                                        Classes="dark"
+                                        Classes="ghost"
                                         Content="Add folder…"
                                         Click="AddFolder_Click"/>
                                 <Button x:Name="RemoveFolderButton"
-                                        Classes="dark"
+                                        Classes="ghost"
                                         Content="Remove"
                                         IsEnabled="False"
                                         Click="RemoveFolder_Click"/>
@@ -158,101 +155,135 @@
                 </Border>
 
                 <!-- Jellyfin -->
-                <Border Classes="card">
+                <Border Classes="panel">
                     <StackPanel>
                         <CheckBox x:Name="JellyfinCheck"
                                   Classes="section"
                                   Content="A Jellyfin server"
                                   IsCheckedChanged="Check_Changed"/>
-                        <TextBlock Classes="muted"
-                                   Margin="0,4,0,0"
+                        <TextBlock Classes="dim"
+                                   Margin="0,6,0,0"
                                    Text="Its films are streamed, never downloaded. Only the list and the artwork are cached here."/>
 
-                        <StackPanel x:Name="JellyfinPanel" Margin="0,12,0,0" Spacing="10">
+                        <StackPanel x:Name="JellyfinPanel" Margin="0,16,0,0" Spacing="14">
                             <StackPanel>
-                                <TextBlock Classes="field" Text="Server address"/>
+                                <TextBlock Classes="label" Text="SERVER ADDRESS" Margin="0,0,0,5"/>
                                 <TextBox x:Name="ServerUrlBox"
+                                         Classes="field mono"
                                          Watermark="media-box:8096"
                                          TextChanged="Text_Changed"/>
-                                <TextBlock Classes="muted"
-                                           Margin="0,4,0,0"
+                                <TextBlock Classes="dim"
+                                           Margin="0,6,0,0"
                                            Text="A bare host gets http:// added, since a server on a home network usually has no certificate."/>
                             </StackPanel>
 
-                            <Grid ColumnDefinitions="*,12,*">
+                            <Grid ColumnDefinitions="*,16,*">
                                 <StackPanel Grid.Column="0">
-                                    <TextBlock Classes="field" Text="Username"/>
-                                    <TextBox x:Name="UsernameBox" TextChanged="Text_Changed"/>
+                                    <TextBlock Classes="label" Text="USERNAME" Margin="0,0,0,5"/>
+                                    <TextBox x:Name="UsernameBox"
+                                             Classes="field"
+                                             TextChanged="Text_Changed"/>
                                 </StackPanel>
                                 <StackPanel Grid.Column="2">
-                                    <TextBlock Classes="field" Text="Password"/>
+                                    <TextBlock Classes="label" Text="PASSWORD" Margin="0,0,0,5"/>
                                     <TextBox x:Name="PasswordBox"
+                                             Classes="field"
                                              PasswordChar="•"
                                              TextChanged="Text_Changed"/>
                                 </StackPanel>
                             </Grid>
 
-                            <Grid ColumnDefinitions="*,12,*">
+                            <Grid ColumnDefinitions="*,16,*">
                                 <StackPanel Grid.Column="0">
-                                    <TextBlock Classes="field" Text="API key (instead of a username)"/>
+                                    <TextBlock Classes="label" Text="API KEY (INSTEAD OF A USERNAME)" Margin="0,0,0,5"/>
                                     <TextBox x:Name="ApiKeyBox"
+                                             Classes="field mono"
                                              PasswordChar="•"
                                              TextChanged="Text_Changed"/>
                                 </StackPanel>
                                 <StackPanel Grid.Column="2">
-                                    <TextBlock Classes="field" Text="Library (blank picks the first)"/>
-                                    <TextBox x:Name="LibraryBox" TextChanged="Text_Changed"/>
+                                    <TextBlock Classes="label" Text="LIBRARY (BLANK PICKS THE FIRST)" Margin="0,0,0,5"/>
+                                    <TextBox x:Name="LibraryBox"
+                                             Classes="field"
+                                             TextChanged="Text_Changed"/>
                                 </StackPanel>
                             </Grid>
 
-                            <TextBlock Classes="muted"
+                            <TextBlock Classes="dim"
                                        Text="Every Jellyfin API key is administrative, so signing in as your own account is the safer of the two."/>
 
-                            <TextBlock x:Name="PlayerNoteText"
-                                       Classes="muted"/>
+                            <TextBlock x:Name="PlayerNoteText" Classes="dim"/>
 
-                            <StackPanel Orientation="Horizontal" Spacing="12">
+                            <!-- Three states in one row, and never a colour on
+                                 its own: each carries a glyph too, because a red
+                                 dot and a green dot are the same dot to about
+                                 one man in twelve. -->
+                            <StackPanel Orientation="Horizontal" Spacing="14">
                                 <Button x:Name="TestButton"
-                                        Classes="dark"
+                                        Classes="ghost"
                                         Content="Test connection"
                                         Click="Test_Click"/>
-                                <TextBlock x:Name="TestResultText"
-                                           Classes="muted"
-                                           VerticalAlignment="Center"
-                                           MaxWidth="380"/>
+                                <StackPanel Orientation="Horizontal"
+                                            Spacing="7"
+                                            VerticalAlignment="Center">
+                                    <TextBlock x:Name="TestResultGlyph"
+                                               Classes="mono"
+                                               FontSize="12"
+                                               VerticalAlignment="Center"
+                                               IsVisible="False"/>
+                                    <TextBlock x:Name="TestResultText"
+                                               Classes="mono"
+                                               FontSize="11.5"
+                                               TextWrapping="Wrap"
+                                               MaxWidth="420"
+                                               VerticalAlignment="Center"/>
+                                </StackPanel>
                             </StackPanel>
                         </StackPanel>
                     </StackPanel>
                 </Border>
 
-                <!-- Metadata keys -->
-                <Border Classes="card">
+                <!-- Metadata keys. Optional means optional: this panel is drawn
+                     at the same weight as the others, its heading says so, and
+                     no field in it is ever marked required or outlined in a
+                     warning colour. -->
+                <Border Classes="panel">
                     <StackPanel>
-                        <TextBlock Classes="dark"
-                                   FontSize="15"
-                                   FontWeight="SemiBold"
-                                   Text="Posters and ratings (optional)"/>
+                        <StackPanel Orientation="Horizontal" Spacing="10">
+                            <TextBlock Classes="panelHeading"
+                                       Text="Posters and ratings"
+                                       VerticalAlignment="Center"/>
+                            <Border BorderBrush="{StaticResource EdgeBrush}"
+                                    BorderThickness="1"
+                                    CornerRadius="{StaticResource RadiusSmall}"
+                                    Padding="6,1"
+                                    VerticalAlignment="Center">
+                                <TextBlock Classes="label" Text="OPTIONAL"/>
+                            </Border>
+                        </StackPanel>
                         <TextBlock x:Name="KeyNoteText"
-                                   Classes="muted"
-                                   Margin="0,4,0,0"/>
+                                   Classes="dim"
+                                   Margin="0,6,0,0"/>
 
-                        <Grid ColumnDefinitions="*,12,*" Margin="0,12,0,0">
+                        <Grid ColumnDefinitions="*,16,*" Margin="0,16,0,0">
                             <StackPanel Grid.Column="0">
-                                <TextBlock Classes="field" Text="TMDB API key"/>
+                                <TextBlock Classes="label" Text="TMDB API KEY" Margin="0,0,0,5"/>
                                 <TextBox x:Name="TmdbKeyBox"
+                                         Classes="field mono"
                                          PasswordChar="•"
                                          TextChanged="Text_Changed"/>
                             </StackPanel>
                             <StackPanel Grid.Column="2">
-                                <TextBlock Classes="field" Text="OMDb API key"/>
+                                <TextBlock Classes="label" Text="OMDB API KEY" Margin="0,0,0,5"/>
                                 <TextBox x:Name="OmdbKeyBox"
+                                         Classes="field mono"
                                          PasswordChar="•"
                                          TextChanged="Text_Changed"/>
                             </StackPanel>
                         </Grid>
 
-                        <TextBlock Classes="muted"
-                                   Margin="0,10,0,0"
+                        <TextBlock Classes="dim"
+                                   Margin="0,12,0,0"
                                    Text="Keys are written to this machine's settings file only. A Jellyfin library needs neither: the server describes its own films."/>
                     </StackPanel>
                 </Border>

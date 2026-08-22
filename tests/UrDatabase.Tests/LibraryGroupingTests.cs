@@ -15,6 +15,102 @@ namespace UrDatabase.Tests
         private static UiMovie Movie(string title, string? genres = null, int? year = null) =>
             new() { Title = title, Genres = genres, Year = year };
 
+        /// <summary>
+        /// The genre row shows a count beside each genre, because a row without them tells you a
+        /// library has a Western bucket but not whether it holds two films or two hundred.
+        /// </summary>
+        [Fact]
+        public void Every_genre_chip_carries_how_many_films_are_behind_it()
+        {
+            var movies = new[]
+            {
+                new UiMovie { Id = 1, Title = "Heat", Genres = "Crime, Drama" },
+                new UiMovie { Id = 2, Title = "Sicario", Genres = "Crime" },
+                new UiMovie { Id = 3, Title = "Alien", Genres = "Horror" },
+            };
+
+            var chips = LibraryGrouping.BuildGenreChips(movies);
+
+            Assert.Equal(2, chips.Single(c => c.Name == "Crime").Count);
+            Assert.Equal(1, chips.Single(c => c.Name == "Drama").Count);
+            Assert.Equal(1, chips.Single(c => c.Name == "Horror").Count);
+        }
+
+        /// <summary>
+        /// A film with three genres sits on three shelves, so adding the buckets up reports a
+        /// library several times larger than it is. "All" has to count films, not shelf places.
+        /// </summary>
+        [Fact]
+        public void All_counts_films_and_not_the_sum_of_the_buckets()
+        {
+            var movies = new[]
+            {
+                new UiMovie { Id = 1, Title = "Heat", Genres = "Crime, Drama, Thriller" },
+                new UiMovie { Id = 2, Title = "Alien", Genres = "Horror, Science Fiction" },
+            };
+
+            var all = LibraryGrouping.BuildGenreChips(movies).Single(c => c.Name == LibraryGrouping.AllGenres);
+
+            Assert.Equal(2, all.Count);
+        }
+
+        /// <summary>
+        /// Every server film carries local id 0, so counting on the id alone collapses the whole
+        /// remote library into a single film.
+        /// </summary>
+        [Fact]
+        public void Server_films_are_counted_individually_despite_sharing_a_local_id()
+        {
+            var movies = new[]
+            {
+                new UiMovie { Title = "Ran", Source = MovieSource.Jellyfin, RemoteId = "a", Genres = "Drama" },
+                new UiMovie { Title = "Solaris", Source = MovieSource.Jellyfin, RemoteId = "b", Genres = "Drama" },
+                new UiMovie { Title = "Heat", Id = 4, Genres = "Crime" },
+            };
+
+            var chips = LibraryGrouping.BuildGenreChips(movies);
+
+            Assert.Equal(3, chips.Single(c => c.Name == LibraryGrouping.AllGenres).Count);
+            Assert.Equal(2, chips.Single(c => c.Name == "Drama").Count);
+        }
+
+        [Fact]
+        public void The_chip_row_leads_with_All_and_ends_with_Uncategorised()
+        {
+            var movies = new[] { Movie("Heat", "Crime"), Movie("Unknown Film") };
+
+            var chips = LibraryGrouping.BuildGenreChips(movies);
+
+            Assert.Equal(LibraryGrouping.AllGenres, chips[0].Name);
+            Assert.Equal(LibraryGrouping.Uncategorised, chips[^1].Name);
+            Assert.Equal(1, chips[^1].Count);
+        }
+
+        [Fact]
+        public void An_empty_library_still_offers_the_All_chip_reading_zero()
+        {
+            foreach (var chips in new[] { LibraryGrouping.BuildGenreChips(null), LibraryGrouping.BuildGenreChips(new UiMovie[0]) })
+            {
+                var only = Assert.Single(chips);
+                Assert.Equal(LibraryGrouping.AllGenres, only.Name);
+                Assert.Equal(0, only.Count);
+            }
+        }
+
+        /// <summary>
+        /// "1 films" is the sort of thing that survives review for years, so the singular is
+        /// decided once, here, rather than in a format string in the view.
+        /// </summary>
+        [Theory]
+        [InlineData(0, "0 FILMS")]
+        [InlineData(1, "1 FILM")]
+        [InlineData(2, "2 FILMS")]
+        [InlineData(140, "140 FILMS")]
+        public void The_count_beside_a_shelf_heading_gets_its_plural_right(int count, string expected)
+        {
+            Assert.Equal(expected, LibraryGrouping.CountLabel(count));
+        }
+
         [Fact]
         public void The_genre_list_starts_with_All_and_lists_what_the_library_actually_has()
         {
