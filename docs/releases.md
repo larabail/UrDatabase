@@ -139,27 +139,47 @@ macOS runners are free on public repositories. On a private one they bill at ten
 times the Linux rate, so making this repository private again has a cost
 attached to it.
 
-## The builds are not signed for distribution
+## The builds are signed, but not notarized
 
-Ad-hoc signing is enough to let a binary run. It is not a Developer ID, there is
-no notarization, and both operating systems say so:
+Worth stating precisely, because the loose version of it is wrong in a way that
+matters. The macOS builds **are** code signed — ad-hoc, which is what lets them
+execute at all on Apple silicon, and which `package-app` verifies with
+`codesign --verify` before anything is published. On the released `v0.1.0`
+archive:
 
-- **macOS** quarantines anything a browser downloaded and refuses to open an
-  unsigned app at all, reporting it as *damaged*. It is not damaged. The fix is
-  one command, which the downloads page and the release notes both spell out
-  with the real filename in it:
+```
+Signature=adhoc
+CodeDirectory ... flags=0x2(adhoc)
+TeamIdentifier=not set
+```
+
+What they lack is a **Developer ID and notarization**, and that is what
+Gatekeeper actually objects to:
+
+- **macOS** attaches a quarantine flag to anything a browser downloaded and, on
+  first launch, **kills the process outright — no dialog, no error, nothing in
+  the interface**. That symptom is the important part: a silent death reads as a
+  crash, and somebody who thinks the app crashed never goes looking for a
+  terminal command. Saying "it reports the app as damaged" would describe the
+  `.app` bundle behaviour, which is not what ships. The fix is one command, which
+  the downloads page and the release notes both print with the real filename in
+  it:
 
   ```sh
   xattr -dr com.apple.quarantine ~/Downloads/UrDatabase-0.1.0-osx-arm64
   ```
 
-- **Windows** shows *"Windows protected your PC"* from SmartScreen. **More
-  info**, then **Run anyway**.
+  There is no `.app` to drag to Applications; the folder holds an executable
+  called `UrDatabase.App`.
 
-Fixing this properly means an Apple Developer account and a Windows code signing
-certificate, both of which cost money annually. Until then, saying so plainly is
-the honest option — a page that implies the download is signed sends people off
-re-downloading a file that was never broken.
+- **Windows** shows *"Windows protected your PC"* from SmartScreen, which is a
+  reputation check rather than a signature one. **More info**, then **Run
+  anyway**.
+
+Fixing this properly means a paid Apple signing identity and notarization, plus
+a Windows code signing certificate. Until then the manual step is a **gap, not a
+design decision**, and the wording everywhere should keep saying so. Packaging
+the macOS build as a real `.app` bundle is tracked in issue #30.
 
 ## Secrets
 

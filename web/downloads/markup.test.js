@@ -109,13 +109,26 @@ describe('the page without its script', () => {
 });
 
 describe('what the page says', () => {
-  it('is honest that the builds are unsigned', () => {
-    // Not a detail. Gatekeeper refuses to open an unsigned download and
-    // reports it as damaged, so a page that implies these are signed sends
-    // people off re-downloading a file that was never broken.
-    assert.match(html, /not code signed and not notarized/i);
+  it('is honest about why macOS refuses the download', () => {
+    // Not a detail, and the precise words matter. The builds *are* ad-hoc
+    // signed -- the release pipeline verifies it -- so calling them unsigned
+    // is wrong. What they lack is notarization, and the symptom is not a
+    // dialog: the process is killed with nothing shown at all. Somebody who
+    // believes the app crashed never goes looking for a terminal command, so
+    // a page that describes the wrong symptom is worse than one that says
+    // nothing.
+    assert.match(html, /ad-hoc signed but <strong>not notarized<\/strong>/i);
+    assert.match(html, /kills the process outright/i);
+    assert.ok(!/not code signed/i.test(html),
+      'the page still claims the builds are unsigned, which they are not');
     assert.ok(html.includes('xattr -dr com.apple.quarantine'));
     assert.match(html, /Windows protected your PC/);
+  });
+
+  it('says the download holds an executable rather than a .app bundle', () => {
+    // There is nothing to drag to Applications. Saying otherwise sends people
+    // looking for a bundle that the archive does not contain.
+    assert.match(html, /UrDatabase\.App/);
   });
 
   it('says what UrDatabase is and links to the repository', () => {
