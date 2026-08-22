@@ -1,0 +1,515 @@
+<!DOCTYPE html>
+<!--
+  The UrDatabase downloads page.
+
+  Plain HTML, CSS and JavaScript with no build step and no framework, deployed
+  to Firebase Hosting straight out of `web/downloads/` by
+  `.github/workflows/deploy-downloads.yml`. What is committed here is what is
+  served, which means anybody can open this file locally and see the page, and
+  a change to it is reviewable as a diff rather than as a bundle.
+
+  It is served fully written: every button already points at the GitHub
+  releases page before `page.js` runs. The script narrows those links down to
+  the exact build for the machine asking. If it never runs -- no JavaScript, a
+  blocked script, a bug -- the page is still a usable page that leads to every
+  download. Nothing here depends on the script to be readable.
+
+  The ids below are the contract with `page.js`, and `markup.test.js` checks
+  that none of them go missing in a restyle. That test exists because losing
+  one is silent: the page still looks finished and simply lists nothing.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Download UrDatabase for Mac and Windows</title>
+<meta name="description" content="UrDatabase catalogues the films on your own drive, with posters, cast and ratings pulled in automatically. Free, open source, for macOS and Windows.">
+<meta property="og:title" content="Download UrDatabase">
+<meta property="og:description" content="A catalogue of the films on your own drive, for macOS and Windows.">
+<meta property="og:type" content="website">
+<meta name="theme-color" content="#101722">
+
+<!-- An inline SVG favicon: a film frame over a catalogue card. Inline so the
+     page ships as three files with no binary assets to keep in step, and so
+     there is no second request for 400 bytes. -->
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%23101722'/%3E%3Crect x='7' y='9' width='18' height='14' rx='2' fill='%23F6F2E9'/%3E%3Crect x='7' y='9' width='18' height='3.2' fill='%23D9724B'/%3E%3Crect x='10' y='15' width='12' height='1.6' rx='.8' fill='%23101722'/%3E%3Crect x='10' y='18.5' width='8' height='1.6' rx='.8' fill='%23101722'/%3E%3C/svg%3E">
+
+<style>
+/* The palette. Warm paper against a dark slate, with one accent used only for
+   things you can act on -- the download buttons and links. A catalogue card in
+   a dark room, which is the idea the whole page is built around. */
+:root {
+  --ink:      #101722;
+  --ink-soft: #1A2432;
+  --line:     #2C3A4C;
+  --paper:    #F6F2E9;
+  --muted:    #9AA9BC;
+  --accent:   #D9724B;
+  --accent-2: #F0A07E;
+  --ok:       #6FCF97;
+  --sans: ui-sans-serif, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
+          'Helvetica Neue', Arial, sans-serif;
+  --mono: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas,
+          'Liberation Mono', monospace;
+}
+
+/* A class that sets `display` outranks the browser's own rule for the hidden
+   attribute, and several sections here are held back with `hidden` until they
+   have something in them. Without this, the "Yours" badge shows on all three
+   cards at once. */
+[hidden] { display: none !important; }
+
+* { box-sizing: border-box; }
+
+html { scroll-behavior: smooth; }
+@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+
+body {
+  margin: 0;
+  background: var(--ink);
+  color: var(--paper);
+  font-family: var(--sans);
+  font-size: 17px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+}
+
+a { color: var(--accent-2); }
+a:hover { color: var(--paper); }
+
+.skip {
+  position: absolute;
+  left: -9999px;
+}
+.skip:focus {
+  left: 1rem;
+  top: 1rem;
+  z-index: 10;
+  background: var(--paper);
+  color: var(--ink);
+  padding: .6rem 1rem;
+  border-radius: 6px;
+}
+
+.bar {
+  border-bottom: 1px solid var(--line);
+  background: var(--ink);
+}
+.bar > div {
+  max-width: 62rem;
+  margin: 0 auto;
+  padding: .9rem 1.4rem;
+  display: flex;
+  align-items: center;
+  gap: 1.4rem;
+  flex-wrap: wrap;
+}
+.brand {
+  display: flex;
+  align-items: center;
+  gap: .55rem;
+  color: var(--paper);
+  text-decoration: none;
+  font-weight: 600;
+  letter-spacing: .01em;
+}
+.brand .card {
+  width: 20px;
+  height: 15px;
+  border-radius: 3px;
+  background: var(--paper);
+  border-top: 4px solid var(--accent);
+  flex: none;
+}
+.bar nav { margin-left: auto; display: flex; gap: 1.2rem; flex-wrap: wrap; }
+.bar nav a { color: var(--muted); text-decoration: none; font-size: .94rem; }
+.bar nav a:hover { color: var(--paper); }
+
+main {
+  max-width: 62rem;
+  margin: 0 auto;
+  padding: 0 1.4rem 5rem;
+}
+
+.hero { padding: 4rem 0 3rem; border-bottom: 1px solid var(--line); }
+
+.tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .5rem 1.4rem;
+  margin: 0 0 1.6rem;
+  padding: 0;
+  list-style: none;
+  font-family: var(--mono);
+  font-size: .76rem;
+  text-transform: uppercase;
+  letter-spacing: .11em;
+  color: var(--muted);
+}
+.tags b { color: var(--paper); font-weight: 500; }
+
+h1 {
+  font-size: clamp(2.3rem, 6vw, 3.6rem);
+  line-height: 1.08;
+  letter-spacing: -.02em;
+  margin: 0 0 1.1rem;
+  font-weight: 700;
+}
+h1 em { display: block; font-style: normal; color: var(--accent); }
+
+.lede { font-size: 1.16rem; max-width: 34rem; color: #D8DFE9; margin: 0 0 2rem; }
+
+.hero-actions { display: flex; flex-wrap: wrap; gap: .8rem; align-items: center; }
+
+.button {
+  display: inline-block;
+  background: var(--accent);
+  color: #1A0E08;
+  font-weight: 650;
+  text-decoration: none;
+  padding: .8rem 1.5rem;
+  border-radius: 8px;
+  border: 1px solid transparent;
+}
+.button:hover { background: var(--accent-2); color: #1A0E08; }
+.button.secondary {
+  background: transparent;
+  color: var(--paper);
+  border-color: var(--line);
+}
+.button.secondary:hover { border-color: var(--paper); background: transparent; }
+.button[aria-disabled='true'] {
+  background: var(--ink-soft);
+  color: var(--muted);
+  border-color: var(--line);
+  pointer-events: none;
+}
+
+.hero-meta, .hint, .status {
+  font-family: var(--mono);
+  font-size: .84rem;
+  color: var(--muted);
+}
+.hero-meta { margin: 1rem 0 0; }
+.hint {
+  margin: .9rem 0 0;
+  max-width: 40rem;
+  font-family: var(--sans);
+  font-size: .93rem;
+  line-height: 1.55;
+}
+.status {
+  margin: 1.2rem 0 0;
+  max-width: 40rem;
+  font-family: var(--sans);
+  font-size: .93rem;
+  border-left: 2px solid var(--accent);
+  padding-left: .9rem;
+}
+.skeleton { opacity: .55; }
+
+section.band { padding: 3rem 0; border-bottom: 1px solid var(--line); }
+h2 {
+  font-size: 1.45rem;
+  margin: 0 0 .4rem;
+  letter-spacing: -.01em;
+}
+.band > p.sub { color: var(--muted); margin: 0 0 1.8rem; max-width: 38rem; }
+
+.cards {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr));
+}
+.card {
+  background: var(--ink-soft);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 1.3rem;
+  display: flex;
+  flex-direction: column;
+  gap: .6rem;
+}
+.card.yours { border-color: var(--accent); }
+.card h3 {
+  margin: 0;
+  font-size: 1.05rem;
+  display: flex;
+  align-items: center;
+  gap: .6rem;
+  flex-wrap: wrap;
+}
+.badge {
+  font-family: var(--mono);
+  font-size: .64rem;
+  text-transform: uppercase;
+  letter-spacing: .12em;
+  background: var(--accent);
+  color: #1A0E08;
+  border-radius: 4px;
+  padding: .15rem .45rem;
+}
+.card .meta { margin: 0; color: var(--muted); font-size: .88rem; }
+.card .button { text-align: center; margin-top: auto; }
+.card .asset {
+  margin: 0;
+  font-family: var(--mono);
+  font-size: .76rem;
+  color: var(--muted);
+  min-height: 1.2em;
+}
+
+.note {
+  background: var(--ink-soft);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--accent);
+  border-radius: 10px;
+  padding: 1.2rem 1.3rem;
+}
+.note h3 { margin: 0 0 .6rem; font-size: 1rem; }
+.note p { margin: 0 0 .8rem; font-size: .95rem; }
+.note p:last-child { margin-bottom: 0; }
+.note ol { margin: 0 0 .8rem; padding-left: 1.2rem; font-size: .95rem; }
+
+pre {
+  background: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: .8rem 1rem;
+  overflow-x: auto;
+  margin: 0 0 .8rem;
+}
+code { font-family: var(--mono); font-size: .82rem; }
+
+.feature-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  gap: 1rem 2rem;
+  grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+}
+.feature-list h3 { margin: 0 0 .2rem; font-size: .98rem; }
+.feature-list p { margin: 0; color: var(--muted); font-size: .92rem; }
+
+#notes-body {
+  white-space: pre-wrap;
+  font-size: .95rem;
+  color: #D8DFE9;
+  margin: 0 0 1rem;
+  max-width: 44rem;
+}
+
+.history { list-style: none; padding: 0; margin: 0; }
+.history li {
+  display: grid;
+  grid-template-columns: 5rem 11rem 1fr;
+  gap: .6rem;
+  align-items: baseline;
+  padding: .6rem 0;
+  border-bottom: 1px solid var(--line);
+  font-size: .9rem;
+}
+.history .ver { font-family: var(--mono); font-weight: 600; }
+.history .when { color: var(--muted); font-size: .84rem; }
+.history .links { display: flex; gap: 1rem; flex-wrap: wrap; }
+.history .links span { color: #5A6B80; }
+@media (max-width: 34rem) {
+  .history li { grid-template-columns: 1fr; gap: .2rem; }
+}
+
+footer {
+  padding: 2.5rem 0 0;
+  color: var(--muted);
+  font-size: .88rem;
+  display: flex;
+  gap: 1.4rem;
+  flex-wrap: wrap;
+}
+</style>
+</head>
+<body>
+
+<a class="skip" href="#main">Skip to content</a>
+
+<header class="bar">
+  <div>
+    <a class="brand" href="https://github.com/larabail/UrDatabase">
+      <span class="card" aria-hidden="true"></span>
+      <span>Ur<b>Database</b></span>
+    </a>
+    <nav aria-label="Primary">
+      <a href="#builds">Builds</a>
+      <a href="#first-run">First run</a>
+      <a href="#about">About</a>
+      <a href="https://github.com/larabail/UrDatabase">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<main id="main">
+
+  <section class="hero">
+    <ul class="tags">
+      <li>macOS <b>&amp;</b> Windows</li>
+      <li>Runs <b>offline</b></li>
+      <li>Licence <b>open source</b></li>
+      <li>Price <b>free</b></li>
+    </ul>
+
+    <h1>Your films.<em>Finally catalogued.</em></h1>
+
+    <p class="lede">UrDatabase reads the folder your films already live in and
+       builds a catalogue of them &mdash; posters, cast, directors, genres and
+       ratings, filled in automatically. Everything stays on your machine, in
+       one SQLite file you can open yourself.</p>
+
+    <div class="hero-actions" id="hero-actions">
+      <a class="button" id="hero-button"
+         href="https://github.com/larabail/UrDatabase/releases">Download UrDatabase</a>
+      <a class="button secondary" href="#builds">All builds</a>
+    </div>
+    <p class="hero-meta" id="hero-meta"><span class="skeleton">Finding the latest release&hellip;</span></p>
+    <p class="hint" id="hero-hint" hidden></p>
+    <p class="status" id="status" role="status" hidden></p>
+
+    <noscript>
+      <p class="status">This page lists the builds with JavaScript. Without it,
+         every build is on the
+         <a href="https://github.com/larabail/UrDatabase/releases">releases
+         page</a>.</p>
+    </noscript>
+  </section>
+
+  <section class="band" id="builds">
+    <h2>Three builds</h2>
+    <p class="sub">One for each kind of machine. If you are not sure which Mac
+       you have, open the <span aria-hidden="true">&#127822;</span> menu and
+       choose About&nbsp;This&nbsp;Mac: an Apple silicon machine says
+       <em>Chip&nbsp;Apple&nbsp;M-something</em>, an older one says
+       <em>Processor&nbsp;Intel</em>.</p>
+
+    <div class="cards">
+      <section class="card" id="card-osx-arm64">
+        <h3>Apple silicon<span class="badge" id="badge-osx-arm64" hidden>Yours</span></h3>
+        <p class="meta">Mac with an M1, M2, M3 or M4 &middot; macOS 12 or later</p>
+        <a class="button" id="button-osx-arm64"
+           href="https://github.com/larabail/UrDatabase/releases">Download for Apple silicon</a>
+        <p class="asset" id="asset-osx-arm64"><span class="skeleton">Checking&hellip;</span></p>
+      </section>
+
+      <section class="card" id="card-osx-x64">
+        <h3>Intel Mac<span class="badge" id="badge-osx-x64" hidden>Yours</span></h3>
+        <p class="meta">Mac made before late 2020 &middot; macOS 12 or later</p>
+        <a class="button" id="button-osx-x64"
+           href="https://github.com/larabail/UrDatabase/releases">Download for Intel Mac</a>
+        <p class="asset" id="asset-osx-x64"><span class="skeleton">Checking&hellip;</span></p>
+      </section>
+
+      <section class="card" id="card-win-x64">
+        <h3>Windows<span class="badge" id="badge-win-x64" hidden>Yours</span></h3>
+        <p class="meta">Windows 10 or later &middot; 64-bit</p>
+        <a class="button" id="button-win-x64"
+           href="https://github.com/larabail/UrDatabase/releases">Download for Windows</a>
+        <p class="asset" id="asset-win-x64"><span class="skeleton">Checking&hellip;</span></p>
+      </section>
+    </div>
+  </section>
+
+  <section class="band" id="first-run">
+    <h2>The first time you open it</h2>
+    <p class="sub">These builds are not code signed. That is a statement of
+       fact, not a formality: both operating systems will stop you, and it is
+       better to know why before it happens than to conclude the download is
+       broken.</p>
+
+    <div class="cards">
+      <div class="note">
+        <h3>macOS &mdash; &ldquo;damaged and can&rsquo;t be opened&rdquo;</h3>
+        <p>UrDatabase is <strong>not code signed and not notarized</strong>.
+           Apple charges for the developer account that makes those possible,
+           and this is a free project that does not have one.</p>
+        <p>macOS flags anything a browser downloaded, and for an unsigned app
+           it refuses to open it at all. The message says the app is damaged.
+           It is not &mdash; it is unsigned, and macOS says the same thing
+           either way.</p>
+        <ol>
+          <li>Unzip the download.</li>
+          <li>Run this in Terminal, against the folder that came out of it:</li>
+        </ol>
+        <pre><code id="quarantine-command">xattr -dr com.apple.quarantine ~/Downloads/UrDatabase-*</code></pre>
+        <p>That clears the download flag from that one folder and nothing else.
+           Then open UrDatabase normally.</p>
+      </div>
+
+      <div class="note">
+        <h3>Windows &mdash; &ldquo;Windows protected your PC&rdquo;</h3>
+        <p>SmartScreen shows this for any program it has not seen many people
+           run before. Choose <strong>More info</strong>, then
+           <strong>Run anyway</strong>.</p>
+        <p>It is a reputation check rather than a virus scan, so it says
+           nothing about the file except that it is new. If you would rather
+           check the file itself, every release lists a SHA-256 for each
+           archive in <code>SHA256SUMS.txt</code> on its
+           <a id="checksums-link"
+              href="https://github.com/larabail/UrDatabase/releases">release
+              page</a>.</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="band" id="notes" hidden>
+    <h2 id="notes-heading">What&rsquo;s new</h2>
+    <p id="notes-body"></p>
+    <a id="notes-link"
+       href="https://github.com/larabail/UrDatabase/releases">Full release notes on GitHub &rarr;</a>
+  </section>
+
+  <section class="band" id="about">
+    <h2>What it actually does</h2>
+    <p class="sub">A desktop application, not a service. Nothing is uploaded,
+       there is no account, and it keeps working with the network off &mdash;
+       it only reaches out to fetch metadata for a film it has not seen
+       before.</p>
+
+    <ul class="feature-list">
+      <li>
+        <h3>Scans the folder you already have</h3>
+        <p>Point it at your films and it reads the filenames, works out what
+           each one is and looks the rest up.</p>
+      </li>
+      <li>
+        <h3>Posters, cast and crew</h3>
+        <p>Artwork, synopses, genres, directors and cast come from TMDB;
+           ratings come from OMDb.</p>
+      </li>
+      <li>
+        <h3>Browse by genre, year or person</h3>
+        <p>The catalogue is the point. Wander it by whatever you happen to be
+           in the mood for.</p>
+      </li>
+      <li>
+        <h3>One SQLite file</h3>
+        <p>Your catalogue is a plain database file on your own disk. Copy it,
+           back it up, or query it yourself.</p>
+      </li>
+    </ul>
+  </section>
+
+  <section class="band" id="history" hidden>
+    <h2>Every version</h2>
+    <ol class="history" id="history-list"></ol>
+  </section>
+
+  <footer>
+    <a href="https://github.com/larabail/UrDatabase">Source on GitHub</a>
+    <a href="https://github.com/larabail/UrDatabase/releases">All releases</a>
+    <a href="https://github.com/larabail/UrDatabase/issues">Report a problem</a>
+    <span>Film data from TMDB and OMDb. Not endorsed by either.</span>
+  </footer>
+
+</main>
+
+<script type="module" src="page.js"></script>
+</body>
+</html>
