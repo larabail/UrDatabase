@@ -25,7 +25,12 @@ namespace UrDatabase.Views
 
         private string _dbPath = "";
 
-        public ObservableCollection<string> Genres { get; } = new();
+        /// <summary>
+        /// The genre row across the top. Each entry carries its own count, which a bare list of
+        /// names could not: a row that says a library has a Western bucket without saying whether
+        /// it holds two films or two hundred is telling you the least useful half of the fact.
+        /// </summary>
+        public ObservableCollection<GenreChip> GenreChips { get; } = new();
         public string? SelectedGenre { get; set; } = LibraryGrouping.AllGenres;
         public ObservableCollection<GenreGroup> VisibleGroups { get; } = new();
         public ObservableCollection<UiMovie> FlatResults { get; } = new();
@@ -63,6 +68,8 @@ namespace UrDatabase.Views
             Closed += (_, __) => { _cts.Cancel(); _posterLoader?.Dispose(); _ratings.Dispose(); _jellyfin?.Dispose(); };
 
             DataContext = this;
+
+            WireSearchShortcut();
 
             LoadRemoteCache();
             LoadMovies();
@@ -212,11 +219,72 @@ ORDER BY rank";
             if (StatusText is not null) StatusText.Text = message;
         }
 
+        /// <summary>
+        /// Shows or hides the one moving thing in the window. The accent is spent here because
+        /// something is genuinely running; a progress bar that is always on screen is furniture.
+        /// </summary>
+        private void SetBusy(bool busy)
+        {
+            if (LiveTrack is not null) LiveTrack.IsVisible = busy;
+        }
+
+        /// <summary>
+        /// Prints the shortcut on the search field, and makes it work. The app has always been
+        /// able to focus search from the keyboard in the sense that Tab reaches it; this is the
+        /// shortcut people actually try, and nothing else in the window would ever mention it.
+        /// </summary>
+        private void WireSearchShortcut()
+        {
+            var mac = OperatingSystem.IsMacOS();
+
+            SearchKeycapText.Text = mac ? "\u2318F" : "Ctrl F";
+
+            var gesture = new KeyGesture(Key.F, mac ? KeyModifiers.Meta : KeyModifiers.Control);
+
+            KeyBindings.Add(new KeyBinding
+            {
+                Gesture = gesture,
+                Command = new FocusSearchCommand(this)
+            });
+        }
+
+        /// <summary>
+        /// Focuses and selects the search box. A command rather than a handler because
+        /// <see cref="KeyBinding"/> takes one, and selecting the existing text means the
+        /// shortcut starts a new search rather than appending to the last one.
+        /// </summary>
+        private sealed class FocusSearchCommand : System.Windows.Input.ICommand
+        {
+            private readonly MainWindow _window;
+
+            public FocusSearchCommand(MainWindow window) => _window = window;
+
+            public event EventHandler? CanExecuteChanged { add { } remove { } }
+
+            // Never while a film is open: the search box is behind the details screen, and
+            // focusing something the user cannot see is worse than doing nothing.
+            public bool CanExecute(object? parameter) => !_window.DetailsView.IsShowing;
+
+            public void Execute(object? parameter)
+            {
+                if (!CanExecute(parameter)) return;
+
+                _window.SearchBox.Focus();
+                _window.SearchBox.SelectAll();
+            }
+        }
+
         private void BuildGenres()
         {
-            Genres.Clear();
-            foreach (var genre in LibraryGrouping.BuildGenreList(_allMovies))
-                Genres.Add(genre);
+            GenreChips.Clear();
+            foreach (var chip in LibraryGrouping.BuildGenreChips(_allMovies))
+                GenreChips.Add(chip);
+
+            // The search field says how much it is about to search, which is the cheapest
+            // possible answer to "did the scan actually find anything".
+            var total = GenreChips.Count > 0 ? GenreChips[0].Count : 0;
+            if (SearchBox is not null)
+                SearchBox.Watermark = total == 1 ? "Search 1 film" : $"Search {total:N0} films";
         }
 
         private void WarmPosters(IEnumerable<UiMovie> movies)
@@ -245,7 +313,8 @@ ORDER BY rank";
 
             IEnumerable<string> buckets;
             if (string.Equals(SelectedGenre, LibraryGrouping.AllGenres, StringComparison.OrdinalIgnoreCase) || string.IsNullOrWhiteSpace(SelectedGenre))
-                buckets = Genres.Where(x => !string.Equals(x, LibraryGrouping.AllGenres, StringComparison.OrdinalIgnoreCase));
+                buckets = GenreChips.Select(c => c.Name)
+                                    .Where(x => !string.Equals(x, LibraryGrouping.AllGenres, StringComparison.OrdinalIgnoreCase));
             else
                 buckets = new[] { SelectedGenre! };
 
@@ -256,7 +325,8 @@ ORDER BY rank";
 
                 VisibleGroups.Add(new GenreGroup
                 {
-                    Name = $"{genre} ({items.Count} items)",
+                    Name = genre,
+                    Count = items.Count,
                     Items = new ObservableCollection<UiMovie>(items)
                 });
             }
@@ -288,6 +358,7 @@ ORDER BY rank";
 
             _scanning = true;
             if (ScanButton is not null) ScanButton.IsEnabled = false;
+            SetBusy(true);
 
             try
             {
@@ -314,6 +385,7 @@ ORDER BY rank";
             {
                 _scanning = false;
                 if (ScanButton is not null) ScanButton.IsEnabled = true;
+                SetBusy(false);
             }
         }
 
@@ -347,6 +419,7 @@ ORDER BY rank";
 
             _syncing = true;
             if (JellyfinButton is not null) JellyfinButton.IsEnabled = false;
+            SetBusy(true);
 
             try
             {
@@ -396,6 +469,7 @@ ORDER BY rank";
             {
                 _syncing = false;
                 if (JellyfinButton is not null) JellyfinButton.IsEnabled = true;
+                SetBusy(false);
             }
         }
 
@@ -428,19 +502,29 @@ ORDER BY rank";
                 FlatResults.Add(m);
             }
 
+            SearchCountText.Text = LibraryGrouping.CountLabel(FlatResults.Count);
+
+            // A search that found nothing has to say so. Silence reads as a broken search box.
+            NoResultsText.IsVisible = FlatResults.Count == 0;
+            NoResultsText.Text = $"Nothing in the library matches \u201c{q}\u201d.";
+
             WarmPosters(FlatResults);
             ShowSearch();
         }
 
         private void GenreChip_Click(object? sender, RoutedEventArgs e)
         {
-            if (sender is ToggleButton tb && tb.Content is string genreLabel)
+            // The genre comes off the chip's data context. It used to be read back out of the
+            // button's own Content as a string, which quietly stops working the moment a chip
+            // holds anything but text — and it now holds a name and a count in two faces.
+            if (sender is ToggleButton tb && tb.DataContext is GenreChip chip)
             {
-                SelectedGenre = genreLabel;
+                SelectedGenre = chip.Name;
 
                 // Only the clicked chip stays checked.
-                foreach (var btn in GenreChips.GetVisualDescendants().OfType<ToggleButton>())
-                    btn.IsChecked = string.Equals(btn.Content as string, SelectedGenre, StringComparison.Ordinal);
+                foreach (var btn in GenreChipsList.GetVisualDescendants().OfType<ToggleButton>())
+                    btn.IsChecked = btn.DataContext is GenreChip c
+                                    && string.Equals(c.Name, SelectedGenre, StringComparison.Ordinal);
 
                 if (string.Equals(SelectedGenre, LibraryGrouping.AllGenres, StringComparison.OrdinalIgnoreCase))
                 {
@@ -452,6 +536,8 @@ ORDER BY rank";
                     SingleGenreItems.Clear();
                     foreach (var m in LibraryGrouping.ItemsForGenre(_allMovies, SelectedGenre))
                         SingleGenreItems.Add(m);
+
+                    SingleGenreCountText.Text = LibraryGrouping.CountLabel(SingleGenreItems.Count);
 
                     WarmPosters(SingleGenreItems);
                     ShowSingleGenre();
@@ -488,13 +574,22 @@ ORDER BY rank";
             SearchPanel.IsVisible = true;
             GroupPanel.IsVisible = false;
             SingleGenrePanel.IsVisible = false;
+            EmptyPanel.IsVisible = false;
         }
 
+        /// <summary>
+        /// The grouped view, or the invitation to fill the library when there is nothing to
+        /// group. A fresh install used to land on a blank page here, which is indistinguishable
+        /// from a scan that silently failed.
+        /// </summary>
         private void ShowAllGenres()
         {
+            var empty = _allMovies.Count == 0;
+
             SearchPanel.IsVisible = false;
-            GroupPanel.IsVisible = true;
+            GroupPanel.IsVisible = !empty;
             SingleGenrePanel.IsVisible = false;
+            EmptyPanel.IsVisible = empty;
         }
 
         private void ShowSingleGenre()
@@ -502,6 +597,7 @@ ORDER BY rank";
             SearchPanel.IsVisible = false;
             GroupPanel.IsVisible = false;
             SingleGenrePanel.IsVisible = true;
+            EmptyPanel.IsVisible = false;
         }
 
         private async void MovieCard_Click(object? sender, PointerPressedEventArgs e)
@@ -566,8 +662,7 @@ ORDER BY rank";
                 vm.ImdbRating = await LoadImdbRatingAsync(vm.ImdbId, m.Id, cts.Token);
                 vm.FilePath = FindLocalFileForMovie(m);
 
-                var dlg = new MovieDetailsWindow(vm);
-                await dlg.ShowDialog(this);
+                await DetailsView.ShowAsync(vm);
             }
             catch (Exception ex)
             {
@@ -620,8 +715,7 @@ ORDER BY rank";
                 // not the community number beside it. No local movie row owns it.
                 vm.ImdbRating = await LoadImdbRatingAsync(vm.ImdbId, null, cts.Token);
 
-                var dlg = new MovieDetailsWindow(vm);
-                await dlg.ShowDialog(this);
+                await DetailsView.ShowAsync(vm);
             }
             catch (OperationCanceledException)
             {

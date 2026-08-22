@@ -1,0 +1,117 @@
+<!--
+    The Screening Room — every colour, font and metric the app is allowed to use.
+
+    One dictionary rather than a set of brushes redeclared at the top of each
+    window, which is what this app used to do: three windows each defined their
+    own #EAEAEA and their own #0A84FF, and the three had already drifted apart
+    by a shade before anyone noticed. A token that lives in one file cannot
+    drift.
+
+    The palette is warm and deliberately not slate. A poster wall is mostly warm
+    — skin, film stock, print inks — and a blue-black surround makes every
+    poster look faintly green. #0B0A09 is a brown-biased near-black, which is
+    what a projection room actually looks like, and it leaves the artwork as the
+    only strongly coloured thing on screen.
+
+    Contrast was computed against RoomBrush, not eyeballed:
+
+      Bone 16.8   Prose 11.1   Brass 7.5   Away 6.6   Dim 6.0   Edge 1.6
+
+    EdgeBrush is 1.6 and is therefore barred from carrying text at any size, and
+    barred from being the only thing marking a control as focused — that is
+    BrassBrush's job. On the two raised surfaces the numbers only fall, and the
+    worst case is Dim on Felt at 5.3, still above 4.5.
+-->
+<ResourceDictionary xmlns="https://github.com/avaloniaui"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <!-- Surfaces, darkest first. -->
+    <SolidColorBrush x:Key="RoomBrush" Color="#0B0A09"/>
+    <SolidColorBrush x:Key="WallBrush" Color="#131110"/>
+    <SolidColorBrush x:Key="FeltBrush" Color="#1B1816"/>
+
+    <!-- Text, brightest first. Never EdgeBrush. -->
+    <SolidColorBrush x:Key="BoneBrush" Color="#F1ECE3"/>
+    <SolidColorBrush x:Key="ProseBrush" Color="#C8C1B5"/>
+    <SolidColorBrush x:Key="DimBrush" Color="#948C7F"/>
+
+    <!-- Hairlines, card edges, control borders. Structure only. -->
+    <SolidColorBrush x:Key="EdgeBrush" Color="#38332E"/>
+
+    <!--
+        One accent, spent on three things only: the focus ring, the primary
+        action, and progress that is actually running. An accent that appears
+        on every heading stops meaning anything.
+    -->
+    <SolidColorBrush x:Key="BrassBrush" Color="#C8973F"/>
+    <SolidColorBrush x:Key="BrassHoverBrush" Color="#D3A44E"/>
+
+    <!-- "Not on this disk". Used for the badge, the sync button's edge and the
+         server's own rating, and for nothing else, so the colour answers one
+         question: will this play when the laptop is away from home. -->
+    <SolidColorBrush x:Key="AwayBrush" Color="#9B8AD4"/>
+
+    <!-- Connection state. Neither is ever the only marker — the result line
+         carries a glyph too, because a red dot and a green dot are the same dot
+         to about one man in twelve. -->
+    <SolidColorBrush x:Key="OkBrush" Color="#7BC98A"/>
+    <SolidColorBrush x:Key="NoBrush" Color="#E0714F"/>
+
+    <!-- Placeholder ink, for a text field nobody has typed in yet. -->
+    <SolidColorBrush x:Key="GhostBrush" Color="#6E675D"/>
+
+    <!--
+        Three faces, each with one job.
+
+        Display is a serif, and it is the reason the app stops looking like a
+        settings pane: it carries the wordmark, the genre headings, the film
+        title on Details and the empty-state line, and nothing else. The stack
+        is system serifs only — Hoefler Text on macOS, Georgia everywhere — so
+        no font file ships and nothing is fetched.
+
+        Ui is Inter, which the app already embeds via .WithInterFont() in
+        Program.cs, so it costs nothing and renders identically on both
+        platforms.
+
+        Mono is anything the machine produced rather than a person: years,
+        counts, paths, the status line, field labels.
+
+        Every stack ends in a generic family, so a missing face costs the app
+        its voice and not its legibility.
+    -->
+    <FontFamily x:Key="DisplayFont">Hoefler Text, Georgia, Times New Roman, serif</FontFamily>
+    <FontFamily x:Key="UiFont">Inter, Segoe UI, Helvetica Neue, sans-serif</FontFamily>
+    <FontFamily x:Key="MonoFont">Cascadia Mono, Consolas, Menlo, monospace</FontFamily>
+
+    <!--
+        The poster plate: 152x228 is exactly 2:3, and the corner radius is 6
+        rather than the 18 this app used to use. A film poster is a printed
+        sheet; rounding it to 18 turns it into an iOS icon and eats four visible
+        corners of artwork.
+    -->
+    <x:Double x:Key="PosterWidth">152</x:Double>
+    <x:Double x:Key="PosterHeight">228</x:Double>
+    <CornerRadius x:Key="PosterRadius">6</CornerRadius>
+
+    <!-- Radius scale: 3 for chips and keycaps, 6 for controls and posters,
+         10 for the one large poster on Details. -->
+    <CornerRadius x:Key="RadiusSmall">3</CornerRadius>
+    <CornerRadius x:Key="RadiusMedium">6</CornerRadius>
+    <CornerRadius x:Key="RadiusLarge">10</CornerRadius>
+
+    <!--
+        The vignette over the hall: the one atmospheric move in the design, so
+        the rows read as lit from the middle of the room. Kept under 40% alpha
+        at the corners because anything more starts hiding the posters in the
+        corners of a large display, which is the opposite of the point.
+    -->
+    <RadialGradientBrush x:Key="VignetteBrush"
+                         Center="50%,42%"
+                         GradientOrigin="50%,42%"
+                         RadiusX="75%"
+                         RadiusY="90%">
+        <GradientStop Color="#00000000" Offset="0.46"/>
+        <GradientStop Color="#61000000" Offset="1"/>
+    </RadialGradientBrush>
+
+</ResourceDictionary>
