@@ -151,6 +151,15 @@ namespace UrDatabase.Services
 
         private static bool IsPlausibleYear(string value) =>
             int.TryParse(value, NumberStyles.None, CultureInfo.InvariantCulture, out var year) &&
+            IsPlausibleYear(year);
+
+        /// <summary>
+        /// True for a number that could be a film's release year. Shared with
+        /// <see cref="MovieFileMatcher"/>, which reads years out of filenames for a different
+        /// purpose: two answers to "is 2049 a year" would let the scanner and the file matcher
+        /// disagree about what a filename says.
+        /// </summary>
+        public static bool IsPlausibleYear(int year) =>
             year >= EarliestPlausibleYear && year <= LatestPlausibleYear;
 
         /// <summary>

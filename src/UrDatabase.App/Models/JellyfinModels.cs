@@ -119,6 +119,19 @@ namespace UrDatabase.Models
         [JsonPropertyName("TotalRecordCount")] public int TotalRecordCount { get; set; }
     }
 
+    /// <summary>
+    /// What <c>/System/Info/Public</c> returns. The one endpoint Jellyfin answers without a
+    /// credential, which makes it the only thing a connection test can ask before a sign-in has
+    /// ever worked. An address that answers this is Jellyfin; an address that 404s it is not.
+    /// </summary>
+    public sealed class JellyfinPublicInfoDto
+    {
+        [JsonPropertyName("ServerName")] public string? ServerName { get; set; }
+        [JsonPropertyName("Version")] public string? Version { get; set; }
+        [JsonPropertyName("Id")] public string? Id { get; set; }
+        [JsonPropertyName("ProductName")] public string? ProductName { get; set; }
+    }
+
     /// <summary>A single item from <c>/Users/{id}/Items</c>, before it is folded into a movie.</summary>
     public sealed class JellyfinItemDto
     {

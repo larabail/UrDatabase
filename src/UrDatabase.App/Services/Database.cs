@@ -7,33 +7,100 @@ namespace UrDatabase.Services
     public static class Database
     {
         /// <summary>
+        /// How long SQLite itself waits for another connection to release the write lock before
+        /// reporting the database as locked. Long enough to sit out a scan's batch commit, short
+        /// enough that a lock nobody is going to release is reported rather than hung on.
+        /// </summary>
+        public const int BusyTimeoutMilliseconds = 5000;
+
+        /// <summary>
+        /// The second, separate lock wait that <c>Microsoft.Data.Sqlite</c> applies on top of the
+        /// pragma above, in seconds. It bounds waiting for a lock only; it never interrupts a
+        /// statement that is running.
+        ///
+        /// Left at the provider's thirty second default the two compound badly. The provider
+        /// re-issues a busy statement every 150ms for the whole of its timeout, so a single
+        /// blocked write costs half a minute before it is allowed to fail, and any retry around
+        /// it multiplies that again. Matching it to the busy timeout makes one attempt cost one
+        /// wait, which is what lets <see cref="DatabaseWriteLane"/> put a predictable ceiling on
+        /// a write.
+        /// </summary>
+        public const int LockWaitSeconds = BusyTimeoutMilliseconds / 1000;
+
+        /// <summary>
+        /// Opens a connection to the catalogue configured the way every caller needs it, and does
+        /// nothing else. Reads want this. Anything that could be the first thing to touch a fresh
+        /// install wants <see cref="Open"/>, which also lays the schema down.
+        ///
+        /// Nothing outside this class may construct a <see cref="SqliteConnection"/> for the
+        /// catalogue. The window's read path used to build its own, and so ran the most frequent
+        /// query in the app on the one connection with no busy timeout — a divergence nothing at
+        /// the call site declared and nothing would have caught.
+        /// </summary>
+        public static SqliteConnection Connect(string dbPath)
+        {
+            if (string.IsNullOrWhiteSpace(dbPath))
+                throw new ArgumentException("A database path is required.", nameof(dbPath));
+
+            var full = Path.GetFullPath(dbPath);
+            var directory = Path.GetDirectoryName(full);
+            if (!string.IsNullOrEmpty(directory)) Directory.CreateDirectory(directory);
+
+            // Built rather than interpolated. A connection string is a list of `key=value` pairs
+            // separated by semicolons, so a library kept somewhere with a semicolon or a quote in
+            // its name silently produced a connection string meaning something else entirely.
+            //
+            // No shared cache, and WAL: under Cache=Shared SQLite takes table-level locks and
+            // returns "database table is locked" to a reader immediately, ignoring any busy
+            // timeout. A scan holds a write transaction, so the window would fail to read the
+            // library — and render it as empty — for as long as one was running. In WAL a reader
+            // sees the last committed snapshot instead and is never blocked by the writer.
+            var connectionString = new SqliteConnectionStringBuilder
+            {
+                DataSource = full,
+                DefaultTimeout = LockWaitSeconds
+            }.ToString();
+
+            var conn = new SqliteConnection(connectionString);
+            conn.Open();
+
+            try
+            {
+                using var pragma = conn.CreateCommand();
+                pragma.CommandText =
+                    "PRAGMA foreign_keys=ON; " +
+                    $"PRAGMA busy_timeout={BusyTimeoutMilliseconds}; " +
+                    "PRAGMA journal_mode=WAL;";
+                pragma.ExecuteNonQuery();
+            }
+            catch
+            {
+                conn.Dispose();
+                throw;
+            }
+
+            return conn;
+        }
+
+        /// <summary>
         /// Opens (creating if needed) the catalogue database and makes sure the schema exists.
         /// A fresh macOS or Windows install has no database at all, so the app has to be able to
         /// build one instead of failing on "no such table".
         /// </summary>
         public static SqliteConnection Open(string dbPath)
         {
-            if (string.IsNullOrWhiteSpace(dbPath))
-                throw new ArgumentException("A database path is required.", nameof(dbPath));
+            var conn = Connect(dbPath);
 
-            var directory = Path.GetDirectoryName(Path.GetFullPath(dbPath));
-            if (!string.IsNullOrEmpty(directory)) Directory.CreateDirectory(directory);
-
-            // No shared cache, and WAL: under Cache=Shared SQLite takes table-level locks and
-            // returns "database table is locked" to a reader immediately, ignoring any busy
-            // timeout. A scan holds a write transaction, so the window would fail to read the
-            // library — and render it as empty — for as long as one was running. In WAL a reader
-            // sees the last committed snapshot instead and is never blocked by the writer.
-            var conn = new SqliteConnection($"Data Source={dbPath}");
-            conn.Open();
-
-            using (var pragma = conn.CreateCommand())
+            try
             {
-                pragma.CommandText = "PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000; PRAGMA journal_mode=WAL;";
-                pragma.ExecuteNonQuery();
+                EnsureSchema(conn);
+            }
+            catch
+            {
+                conn.Dispose();
+                throw;
             }
 
-            EnsureSchema(conn);
             return conn;
         }
 

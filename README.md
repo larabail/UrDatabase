@@ -49,8 +49,12 @@ It runs on Windows and macOS from one codebase, built with
   edge that means "not final" without putting forty spinners on one screen
   (`Controls/PosterCard`, `Services/PlateTint`).
 - **Search.** Typing in the search box queries the `movies_fts` full-text index
-  and replaces the grouped view with a flat, ranked list of hits. Films from a
-  Jellyfin server are matched alongside them, on title and genre.
+  and replaces the grouped view with a flat, ranked list of hits. What you type
+  is escaped into FTS5's own query language first, so a title with punctuation
+  in it — `Face/Off`, `Mission: Impossible`, an apostrophe — is searched for
+  literally instead of being read as search operators, and the word you are
+  still typing matches by prefix (`Services/FtsQuery`). Films from a Jellyfin
+  server are matched alongside them, on title and genre.
 - **It says why something is missing.** A local film's plot, cast and crew come
   from TMDB, so an install with no TMDB key has none — and the screen says that,
   and says which setting fixes it, rather than reporting "none found" for a
@@ -80,8 +84,18 @@ It runs on Windows and macOS from one codebase, built with
   gives you a library; re-scanning is idempotent, so two spellings of one title
   collapse onto a single film rather than multiplying
   (`Services/ScanService`, `Services/FilenameParser`, `Services/MovieIndex`).
-- **Play.** The details window hands the linked file to whatever the operating
-  system uses to open it. A file can also be linked by hand from a file picker.
+- **Play.** The details window opens the file the catalogue links to this film —
+  the link the scan wrote, not a guess at the filename — and hands it to whatever
+  the operating system uses. A film with no link, or whose only linked copy has
+  been moved or deleted, does not silently fall back to whichever file looks
+  closest: if something unclaimed on disk resembles the title it is offered by
+  name and Play asks first, and otherwise the window says plainly that nothing is
+  linked. Linking a file by hand from the file picker settles it, and is
+  remembered. Only the video types the scanner recognises can be linked or
+  opened, checked both when the link is made and again before anything is
+  launched — the app asks the operating system to open a path, and an OS will run
+  a script as readily as it plays a film
+  (`Services/PlayTargetResolver`, `Services/MovieFileMatcher`).
 - **Browse a Jellyfin server.** Optional, off until you configure it. Point the
   app at a server and its movie library appears alongside your local one, with
   every server film badged **Server** so you can tell at a glance what is not on
@@ -157,9 +171,37 @@ and whether there is a Jellyfin server — writes the answers to
 whenever you want to change something. What follows is what that file contains,
 for anyone who would rather edit it directly.
 
-Settings live next to the built app in `appsettings.json`. The file is
-gitignored, because it holds your API keys and the absolute paths to your own
-film folders. Copy the template and edit it:
+Settings live in `appsettings.json` in the app's own data directory, beside the
+database, the poster cache and the logs:
+
+| Platform | Where |
+| --- | --- |
+| macOS | `~/Library/Application Support/UrDatabase/appsettings.json` |
+| Windows | `%APPDATA%\UrDatabase\appsettings.json` |
+
+The app also puts a copy of the shipped template there on first run, so
+configuring it by hand means editing a file that already exists.
+
+Nothing is ever written inside `UrDatabase.app`. That bundle is signed and
+notarized: a file written next to the executable breaks the seal, and macOS then
+refuses to launch the app at all — so settings have to live somewhere writable
+that also survives an update. Editing anything inside `UrDatabase.app` is never
+the answer, and if you already have, reinstall from the DMG.
+
+Configuration is read from the first of these that exists:
+
+1. `<app data>/UrDatabase/appsettings.json` — yours, and where the setup screen saves
+2. `appsettings.json` next to the executable — a build tree, or a portable install
+3. `appsettings.example.json` next to the executable — the shipped template
+
+Running from source is unaffected. A local `src/UrDatabase.App/appsettings.json`
+is gitignored, is read and saved in place, and stops the per-user copy being
+created at all. If one was created already — you ran the app before writing
+yours — an untouched copy of the template does not outrank your file, and does
+not count as this install having been configured either. Edit the per-user file
+and it goes back to winning, everywhere.
+
+To configure a checkout by hand:
 
 ```bash
 cp src/UrDatabase.App/appsettings.example.json src/UrDatabase.App/appsettings.json
@@ -179,8 +221,9 @@ cp src/UrDatabase.App/appsettings.example.json src/UrDatabase.App/appsettings.js
 
 Paths may contain environment variables and are expanded on load, so
 `%APPDATA%\UrDatabase\movies.db` works on Windows. The application data
-directory .NET reports is `%APPDATA%` on Windows and `~/.config` on macOS, so a
-configuration file written on one is not portable to the other.
+directory .NET reports is `%APPDATA%` on Windows and
+`~/Library/Application Support` on macOS, so a configuration file written on one
+is not portable to the other.
 
 ### Where the file lives
 
@@ -294,6 +337,31 @@ Nothing is discovered automatically. Jellyfin's UDP discovery is off in many
 deployments, including behind a reverse proxy, so the address is something you
 type once rather than something the app guesses at.
 
+#### When it will not connect
+
+Five things can go wrong reaching a server, and the app names which one it hit
+rather than reporting a single "could not reach the server" for all of them:
+
+| What the app says | What happened | What to do |
+| --- | --- | --- |
+| the name could not be resolved | The address never got as far as being contacted | Use the server's IP address. A Tailscale, VPN or router-local name can work in your browser and still not resolve for the app |
+| refused the connection | The machine is there and nothing is listening on that port | Check Jellyfin is running, and check the port — it is `8096` unless somebody changed it |
+| did not answer in time | Neither refused nor completed | Usually a firewall dropping the connection, or a network this machine cannot currently see |
+| does not look like Jellyfin | Something answered, but not Jellyfin | You have reached a reverse proxy that routes by hostname, and an address it does not recognise lands on the wrong site. Try `http://<address>:8096` directly |
+| rejected the credentials | Jellyfin answered and said no | Check the username and password, or the API key |
+
+The first and fourth are the ones that waste an evening, because in both cases
+the address is genuinely correct in a browser. The **Test** button in setup says
+the same thing before you save, and after any failed sync the app asks the
+server to identify itself on `/System/Info/Public` and writes the verdict to
+`logs/jellyfin.log` in its data directory — so the answer is on disk even for
+the startup sync that never shows a dialog. Credentials are redacted out of that
+file, including one written into the address itself.
+
+An address is taken as typed: a bare host gets `http://`, a trailing slash is
+dropped, and a port or a path prefix you wrote is left exactly as it is, because
+a proxy may need either.
+
 Once configured, **Sync Jellyfin** appears next to the scan button. The app also
 syncs quietly at startup, after the window has already painted from the cache,
 so a slow or absent server never delays anything you are looking at. A sync that
@@ -345,6 +413,28 @@ of a name, keeps the hyphen inside a real title like `Spider-Man`, and prefers a
 bracketed year over a bare one so `Blade Runner 2049 (2017)` resolves to the
 right film and year. One casualty of splitting dotted names: genuine full stops
 go with them, so `S.W.A.T.` arrives as `S W A T`.
+
+Each file the scan records gets `files.movie_id` pointing at the film it belongs
+to, and that column is the only thing Play consults. It matters that it is not
+the filename: names are ambiguous in ways that bite hardest on the shortest
+titles — "it" is inside "spirited", so a film called *It* used to open
+`Spirited Away.mkv` — and they say nothing at all about a file somebody renamed.
+
+A film with no usable link falls back to a suggestion rather than to a guess.
+The name has to match on whole words, must not name a year other than the film's
+own, and must be the only candidate of its strength; a title of five characters
+or less needs the year before a partial match counts at all. Whatever survives
+that is offered by name and opened only once you say so, and confirming it
+records the link. If two files are equally good, nothing is offered — a coin
+flip is not a match.
+
+A scan, a Jellyfin sync and the poster fetches all write to that one file, and
+they run at the same time — so the app makes them take turns rather than
+collide, and browsing stays readable throughout. If a write genuinely cannot be
+made, the status line says so; it does not fail silently and leave you to
+wonder why a poster never arrived. Two copies of the app open on the same
+catalogue is the one case that is only handled rather than prevented: they wait
+for each other, and either may eventually give up and tell you.
 
 ## Downloads
 
@@ -429,7 +519,8 @@ src/UrDatabase.App/          the application: one cross-platform project
   Services/                  config, SQLite, scanning, TMDB, OMDb, Jellyfin, posters
   Assets/UrDatabase.icns     the macOS application icon
   Data/schema.sql            the full schema, applied on first launch
-  appsettings.example.json   configuration template; the real file is ignored
+  appsettings.example.json   configuration template, copied to the user's data
+                             directory on first run; the real file is ignored
   UrDatabase.App.entitlements  hardened runtime exceptions the .NET JIT needs
 tests/UrDatabase.Tests/      xUnit suite
 tool/                        Python helpers with their own unittest suite:
@@ -472,11 +563,23 @@ Stated plainly, so nobody has to find out by using it:
 - **One Jellyfin server.** There is no way to add a second. The setup screen
   configures the first one and tests it, but a household with two servers has to
   pick one.
-- **Files are matched to films by heuristic.** An exact filename stem wins,
-  otherwise the first name containing the title. Two films whose titles are
-  substrings of each other can still be confused.
-- **Linking a file by hand does not persist.** The file picker updates the open
-  screen and nothing else; reopening the film forgets it.
+- **Files are matched to films by heuristic when nothing is linked.** The scan
+  records which film each file belongs to and Play uses only that, so the
+  heuristic no longer decides what opens. It still decides what gets *offered*
+  for a film with no link — a catalogue built before the scanner recorded one, or
+  a film whose copy has moved — and there it can still be wrong; it asks before
+  opening anything, and declines to answer rather than guess between two equally
+  good candidates.
+- **Two prints of one film, and the app picks.** When several linked files
+  survive, Play opens the largest, then the most recently written, then the first
+  by path. That is a guess at which is the better copy, not a preference you can
+  set.
+- **A linked path is trusted to be where you said it was.** A file is only
+  accepted, and only opened, when its extension is one the scanner recognises,
+  and that is checked again immediately before launching. What is *not* checked
+  is where the path points: nothing confines it to your watch folders or resolves
+  it through symlinks first, so a catalogue you did not write yourself is worth
+  the same suspicion as any other file it hands you.
 - **Settings covers where your films are, and nothing else.** The screen asks
   about watch folders, a Jellyfin server and the two API keys. `DatabasePath`,
   `PosterCacheDir`, `DownloadPosters` and `TmdbImageSize` are still file-only;

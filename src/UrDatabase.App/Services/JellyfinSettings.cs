@@ -1,4 +1,5 @@
 using System;
+using System.Text.Json.Serialization;
 
 namespace UrDatabase.Services
 {
@@ -36,6 +37,7 @@ namespace UrDatabase.Services
         public string LibraryName { get; set; } = "";
 
         /// <summary>True once there is somewhere to connect to and something to connect with.</summary>
+        [JsonIgnore]
         public bool IsConfigured =>
             !string.IsNullOrWhiteSpace(ServerUrl) &&
             (!string.IsNullOrWhiteSpace(Username) || !string.IsNullOrWhiteSpace(ApiKey));
@@ -46,6 +48,7 @@ namespace UrDatabase.Services
         /// alongside a username, with no password, is read as "authenticate with the key but read
         /// the library as this user" — which is the only reason to configure both.
         /// </summary>
+        [JsonIgnore]
         public bool UsesUserAccount =>
             !string.IsNullOrWhiteSpace(Username) &&
             (string.IsNullOrWhiteSpace(ApiKey) || !string.IsNullOrWhiteSpace(Password));
@@ -69,18 +72,32 @@ namespace UrDatabase.Services
         /// Trims, supplies a missing scheme and drops any trailing slash. Returns an empty string
         /// for anything that cannot be made into an absolute HTTP URL, which switches the feature
         /// off rather than failing later with a URI parse error the user cannot act on.
+        ///
+        /// What it deliberately leaves alone is the port and the path. A server behind a reverse
+        /// proxy is reached on port 80 at a hostname, or under a path prefix, and "tidying" either
+        /// away turns a working address into a 404 the user has no way to explain.
         /// </summary>
         public static string NormalizeServerUrl(string? input)
         {
-            var value = (input ?? "").Trim();
+            // People paste addresses out of a browser, an email or a chat window, which is where
+            // the quotes and angle brackets come from.
+            var value = (input ?? "").Trim().Trim('"', '\'', '<', '>', '`').Trim();
             if (value.Length == 0) return "";
+
+            // A protocol-relative address is what a copied link sometimes leaves behind.
+            if (value.StartsWith("//", StringComparison.Ordinal)) value = "http:" + value;
 
             if (!value.Contains("://", StringComparison.Ordinal)) value = "http://" + value;
 
             if (!Uri.TryCreate(value, UriKind.Absolute, out var uri)) return "";
             if (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps) return "";
+            if (string.IsNullOrEmpty(uri.Host)) return "";
 
-            return value.TrimEnd('/');
+            // Lowercase the scheme and nothing else. Rebuilding from Uri would drop an explicitly
+            // typed default port — http://host:80 becomes http://host — and a user who wrote a
+            // port wrote it for a reason.
+            var separator = value.IndexOf("://", StringComparison.Ordinal);
+            return (uri.Scheme + value[separator..]).TrimEnd('/');
         }
 
         private static string FirstNonEmpty(string? primary, string? fallback, bool trim = true)

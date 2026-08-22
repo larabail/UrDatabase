@@ -231,9 +231,63 @@ namespace UrDatabase.Tests
         [Fact]
         public void The_shipped_example_is_read_last_and_never_written()
         {
-            Assert.Equal(ConfigStore.ExamplePath, ConfigStore.ReadOrder[^1]);
-            Assert.Equal(ConfigStore.PortablePath, ConfigStore.ReadOrder[0]);
+            var order = ConfigStore.ReadOrder;
+
+            Assert.Equal(ConfigStore.ExamplePath, order[^1]);
+            Assert.Contains(ConfigStore.UserPath, order);
+            Assert.Contains(ConfigStore.PortablePath, order);
             Assert.DoesNotContain(ConfigStore.ExamplePath, new[] { ConfigStore.PortablePath, ConfigStore.UserPath });
+        }
+
+        // ---------- never inside the bundle ----------
+
+        [Theory]
+        [InlineData("/Applications/UrDatabase.app/Contents/MacOS")]
+        [InlineData("/Applications/UrDatabase.app/Contents")]
+        [InlineData("/Users/someone/Desktop/UrDatabase.app/Contents/MacOS/")]
+        [InlineData(@"C:\Program Files\UrDatabase.app\Contents\MacOS")]
+        public void A_path_inside_an_application_bundle_is_recognised(string directory)
+        {
+            Assert.True(ConfigStore.IsInsideApplicationBundle(directory));
+        }
+
+        [Theory]
+        [InlineData("/Users/someone/Library/Application Support/UrDatabase")]
+        [InlineData("/repo/src/UrDatabase.App/bin/Release/net8.0")]
+        [InlineData(@"C:\Users\someone\AppData\Roaming\UrDatabase")]
+        [InlineData("")]
+        public void An_ordinary_folder_is_not_mistaken_for_a_bundle(string directory)
+        {
+            Assert.False(ConfigStore.IsInsideApplicationBundle(directory));
+        }
+
+        [Fact]
+        public void A_bundle_is_refused_as_a_place_to_save_however_writable_it_looks()
+        {
+            // The bundle is owned by whoever installed it, so it usually passes a write test —
+            // and writing there is exactly what invalidates the signature and stops the app
+            // launching. The check happens before the disk is touched at all.
+            Assert.False(ConfigStore.AcceptsConfiguration("/Applications/UrDatabase.app/Contents/MacOS"));
+            Assert.True(ConfigStore.AcceptsConfiguration(_dir));
+        }
+
+        [Fact]
+        public void A_save_from_inside_a_bundle_lands_in_the_users_own_folder()
+        {
+            var chosen = ConfigStore.ChooseSavePath(
+                portablePath: "/Applications/UrDatabase.app/Contents/MacOS/appsettings.json",
+                userPath: "/home/appsettings.json",
+                fileExists: _ => true,
+                directoryAcceptsWrites: ConfigStore.AcceptsConfiguration);
+
+            Assert.Equal("/home/appsettings.json", chosen);
+        }
+
+        [Fact]
+        public void Nothing_this_install_would_write_to_sits_inside_a_bundle()
+        {
+            Assert.False(ConfigStore.IsInsideApplicationBundle(ConfigStore.UserPath));
+            Assert.False(ConfigStore.IsInsideApplicationBundle(ConfigStore.SavePath));
         }
     }
 }

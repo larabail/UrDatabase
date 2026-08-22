@@ -11,7 +11,6 @@ using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Threading;
 using Dapper;
-using Microsoft.Data.Sqlite;
 using UrDatabase.Models;
 using UrDatabase.Services;
 
@@ -64,6 +63,7 @@ namespace UrDatabase.Views
         private Dictionary<string, JellyfinMovie> _remoteById = new(StringComparer.OrdinalIgnoreCase);
 
         private PosterAutoLoader? _posterLoader;
+        private int _posterFailuresReported;
 
         /// <summary>Rebuilt whenever the configuration changes; never null once the window exists.</summary>
         private ImdbRatingService _ratings = null!;
@@ -127,7 +127,8 @@ namespace UrDatabase.Views
                 : null;
 
             _posterLoader?.Dispose();
-            _posterLoader = new PosterAutoLoader(_config, _dbPath, maxConcurrency: 4);
+            _posterFailuresReported = 0;
+            _posterLoader = new PosterAutoLoader(_config, _dbPath, maxConcurrency: 4, onFailure: ReportPosterFailure);
 
             if (JellyfinButton is not null) JellyfinButton.IsVisible = _jellyfin is not null;
         }
@@ -163,9 +164,14 @@ namespace UrDatabase.Views
 
         private void LoadMovies(string? query = null)
         {
-            _localMovies = LoadLocalMovies(query);
+            // Built once so both halves agree on what counts as a search: text with no word in
+            // it at all is not one, and showing the whole local library while hiding every
+            // server film would look like the server had dropped out.
+            var match = FtsQuery.Build(query);
 
-            var remote = string.IsNullOrWhiteSpace(query)
+            _localMovies = LoadLocalMovies(match);
+
+            var remote = match is null
                 ? (IReadOnlyList<UiMovie>)_remoteMovies
                 : JellyfinLibrary.Search(_remoteMovies, query);
 
@@ -186,21 +192,26 @@ namespace UrDatabase.Views
         /// reason it might fail, because a server library still has to be browsable when the
         /// local catalogue is missing or was written by an older schema.
         /// </summary>
-        private List<UiMovie> LoadLocalMovies(string? query)
+        /// <param name="match">
+        /// An FTS5 MATCH expression from <see cref="FtsQuery.Build"/>, or <c>null</c> to list the
+        /// whole catalogue. Never raw text from the search box: FTS5 would read its punctuation
+        /// as operators and fail the query.
+        /// </param>
+        private List<UiMovie> LoadLocalMovies(string? match)
         {
             if (!File.Exists(_dbPath)) return new List<UiMovie>();
 
             try
             {
-                // Read-only, and deliberately not Cache=Shared: a scan holds a write transaction,
-                // and shared cache would fail this query outright instead of reading the last
-                // committed snapshot.
-                using var conn = new SqliteConnection($"Data Source={_dbPath}");
-                conn.Open();
+                // Not Database.Open: the read path has no business migrating the schema, and this
+                // runs on the UI thread on every keystroke in the search box. Database.Connect is
+                // still the only way a catalogue connection is built, so this query gets the same
+                // busy timeout and the same WAL snapshot as every write it might be racing.
+                using var conn = Database.Connect(_dbPath);
 
                 string sql;
                 object param;
-                if (string.IsNullOrWhiteSpace(query))
+                if (match is null)
                 {
                     sql = "SELECT id AS Id, title AS Title, year AS Year, genres AS Genres, poster_path AS PosterPath FROM movies ORDER BY COALESCE(year,0) DESC, title";
                     param = new { };
@@ -213,7 +224,7 @@ FROM movies_fts f
 JOIN movies m ON m.id = f.rowid
 WHERE movies_fts MATCH @q
 ORDER BY rank";
-                    param = new { q = query };
+                    param = new { q = match };
                 }
 
                 return conn.Query<UiMovie>(sql, param).ToList();
@@ -394,6 +405,21 @@ ORDER BY rank";
             }
         }
 
+        /// <summary>
+        /// A poster the loader gave up on. Reported once per configured library rather than once
+        /// per film: whatever stops one poster — no key, no network, a catalogue somebody else has
+        /// open — stops all of them, and a status line rewritten several hundred times says less
+        /// than a single sentence. The rest are in <c>posters.log</c>.
+        ///
+        /// Called from whichever background worker failed, so it hops to the UI thread to say so.
+        /// </summary>
+        private void ReportPosterFailure(string message)
+        {
+            if (Interlocked.Increment(ref _posterFailuresReported) > 1) return;
+
+            Dispatcher.UIThread.Post(() => SetStatus(message));
+        }
+
         private void RebuildGroups()
         {
             VisibleGroups.Clear();
@@ -536,6 +562,11 @@ ORDER BY rank";
             {
                 AppLog.Write("jellyfin.log", JellyfinClient.Redact($"sync failed: {ex.Message}"));
 
+                // Deliberately not awaited. It is one more request against a server that has just
+                // failed to answer, and on the timeout case that is another fifteen seconds; the
+                // person is owed the message they already have now, not after a second wait.
+                _ = LogConnectionDiagnosticAsync();
+
                 var cached = _remoteMovies.Count;
                 SetStatus(cached > 0
                     ? $"{ex.Message} Showing the {cached} films from the last sync."
@@ -557,6 +588,41 @@ ORDER BY rank";
                 _syncing = false;
                 if (JellyfinButton is not null) JellyfinButton.IsEnabled = true;
                 SetBusy(false);
+            }
+        }
+
+        /// <summary>
+        /// After a failed sync, asks the server to identify itself and writes what came back to
+        /// the log. One extra request, only ever on the failure path, and it is the difference
+        /// between a log that says the server could not be reached and one that says the name did
+        /// not resolve, the port refused the connection, or something answered that is not
+        /// Jellyfin. Failing to diagnose a failure must not itself raise anything.
+        /// </summary>
+        private async Task LogConnectionDiagnosticAsync()
+        {
+            if (_jellyfin is null) return;
+
+            // Its own deadline. A server that is dropping connections would otherwise hold this
+            // for the client's full timeout, long after anybody stopped caring.
+            using var deadline = CancellationTokenSource.CreateLinkedTokenSource(_cts.Token);
+            deadline.CancelAfter(TimeSpan.FromSeconds(6));
+
+            try
+            {
+                var report = await _jellyfin.TestConnectionAsync(deadline.Token);
+                AppLog.Write("jellyfin.log", JellyfinClient.Redact($"connection test: {report}"));
+            }
+            catch (OperationCanceledException) when (_cts.IsCancellationRequested)
+            {
+                // The window is closing.
+            }
+            catch (OperationCanceledException)
+            {
+                AppLog.Write("jellyfin.log", "connection test: no answer within six seconds.");
+            }
+            catch (Exception ex)
+            {
+                AppLog.Write("jellyfin.log", JellyfinClient.Redact($"connection test failed: {ex.Message}"));
             }
         }
 
@@ -671,7 +737,7 @@ ORDER BY rank";
 
             try
             {
-                await DetailsView.ShowAsync(vm);
+                await DetailsView.ShowAsync(vm, _dbPath);
             }
             finally
             {
@@ -771,7 +837,13 @@ ORDER BY rank";
                 vm.TopCast = cast;
                 vm.KeyCrew = crew;
                 vm.ImdbRating = await LoadImdbRatingAsync(vm.ImdbId, m.Id, cts.Token);
-                vm.FilePath = FindLocalFileForMovie(m);
+
+                // Both halves of the merge matter here: main's play-target resolution decides
+                // which file Play opens and how sure the app is of it, and the details screen it
+                // was handed to is now a view inside this window rather than a dialog over it.
+                var target = FindPlayTargetForMovie(m);
+                vm.FilePath = target.FilePath;
+                vm.FileMatch = target.Kind;
 
                 await ShowDetailsAsync(vm);
             }
@@ -865,15 +937,28 @@ ORDER BY rank";
             }
         }
 
-        private string? FindLocalFileForMovie(UiMovie m)
+        /// <summary>
+        /// What Play will open for a local film, and on what evidence. The catalogue's own
+        /// <c>files.movie_id</c> link decides it; a filename is only ever a suggestion the user
+        /// gets to confirm. This used to load every path in the table and return the first name
+        /// containing the title, which is how a film called <em>It</em> played
+        /// <c>Spirited Away.mkv</c>.
+        ///
+        /// A failure to read the database is not worth a dialog: the details window says the film
+        /// has no file linked, which is the same thing from where the user is standing.
+        /// </summary>
+        private PlayTarget FindPlayTargetForMovie(UiMovie m)
         {
             try
             {
                 using var conn = Database.Open(_dbPath);
-                var files = conn.Query<string>("SELECT file_path FROM files").ToList();
-                return MovieFileMatcher.FindBestMatch(files, m.Title);
+                return PlayTargetResolver.Resolve(conn, m.Id, m.Title, m.Year);
             }
-            catch { return null; }
+            catch (Exception ex)
+            {
+                AppLog.Write("app.log", $"could not resolve a file for movie {m.Id}: {ex.Message}");
+                return PlayTarget.None;
+            }
         }
     }
 }

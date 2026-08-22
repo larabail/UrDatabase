@@ -79,6 +79,17 @@ namespace UrDatabase.Services
                 // Batched rather than a commit per file, which cost a large library thousands of
                 // fsyncs, and rather than one transaction for a whole folder, which would hold the
                 // write lock long enough to starve poster enrichment on a big library.
+                // A turn in the write lane, taken per batch rather than per scan. The poster
+                // loader and a Jellyfin sync write to the same file, and holding the lane for a
+                // whole library would shut them out for the length of a scan — the starvation
+                // FilesPerTransaction already exists to prevent.
+                //
+                // Not cancellable, deliberately. The lease and the transaction are replaced as a
+                // pair, and a cancellation thrown between them would leave the cleanup below
+                // committing a transaction that no longer exists. Cancellation is picked up by
+                // the enumerator instead, and the wait here is one other writer's turn rather
+                // than anything unbounded.
+                var lease = await DatabaseWriteLane.EnterAsync(conn, CancellationToken.None);
                 var tx = conn.BeginTransaction();
                 try
                 {
@@ -102,6 +113,9 @@ namespace UrDatabase.Services
 
                         tx.Commit();
                         tx.Dispose();
+                        lease.Dispose();
+
+                        lease = await DatabaseWriteLane.EnterAsync(conn, CancellationToken.None);
                         tx = conn.BeginTransaction();
                         sinceCommit = 0;
                     }
@@ -118,6 +132,7 @@ namespace UrDatabase.Services
                 finally
                 {
                     tx.Dispose();
+                    lease.Dispose();
                 }
             }
 

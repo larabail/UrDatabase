@@ -14,7 +14,24 @@ namespace UrDatabase.Models
         public string? ImdbId { get; set; }          // tt....
         public string? PosterPath { get; set; }      // local or URL (you already have this)
         public string? BackdropUrl { get; set; }     // URL for big backdrop
-        public string? FilePath { get; set; }        // first playable file we can 
+
+        /// <summary>
+        /// The file Play would open, when there is one. Read
+        /// <see cref="FileMatch"/> before acting on it: this is not always a file the catalogue
+        /// vouches for.
+        /// </summary>
+        public string? FilePath { get; set; }
+
+        /// <summary>
+        /// On what evidence <see cref="FilePath"/> was chosen. A
+        /// <see cref="PlayTargetKind.Suggested"/> path was guessed from a filename and has to be
+        /// confirmed before it is opened — the app used to make no distinction, and played the
+        /// guess.
+        /// </summary>
+        public PlayTargetKind FileMatch { get; set; } = PlayTargetKind.None;
+
+        public bool HasFile => !string.IsNullOrWhiteSpace(FilePath);
+
         public List<string> TopCast { get; set; } = new();     // “Actor (Role)”
         public List<string> KeyCrew { get; set; } = new();     // “Director: Name”
 

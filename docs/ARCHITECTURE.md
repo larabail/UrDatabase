@@ -48,9 +48,10 @@ Avalonia replaces WPF. The differences that mattered during the port:
 
 | Service | Responsibility |
 | --- | --- |
-| `AppConfig` | Loads settings, resolves API keys, applies platform defaults. Never throws. |
-| `ConfigStore` | Where `appsettings.json` is read from and written to. Refuses to save a resolved config. |
+| `AppConfig` | Loads settings from the per-user data directory, resolves API keys, applies platform defaults. Never throws. |
+| `ConfigStore` | Where `appsettings.json` is read from and written to. Never writes inside an app bundle, and refuses to save a resolved config. |
 | `FirstRun` | Whether this launch has never been configured, and so whether to offer setup. |
+| `JellyfinDiagnostics` | Names which of five connection failures happened, and what to try about it. |
 | `PlatformPaths` | Every filesystem location, resolved per platform. Expands `%APPDATA%` and `~`. |
 | `Database` | Opens the SQLite database, applies `Data/schema.sql` idempotently, and migrates an existing library. The schema script is all `CREATE ... IF NOT EXISTS`, so it cannot add a column to a table somebody already has — `Migrate` does that. |
 | `ScanService` | Walks watch folders and upserts the `files` table, skipping unreadable directories. |
@@ -70,9 +71,10 @@ Nothing may assume Windows. The specific decisions:
 
 - **Paths.** All app data lives under
   `Environment.GetFolderPath(SpecialFolder.ApplicationData)/UrDatabase`, which resolves to
-  `%APPDATA%\UrDatabase` on Windows and `~/.config/UrDatabase` on macOS. `PlatformPaths.Expand`
-  still understands `%APPDATA%`, `%LOCALAPPDATA%`, `%USERPROFILE%` and a leading `~`, and
-  rewrites backslashes, so a config file written by an older Windows install keeps working.
+  `%APPDATA%\UrDatabase` on Windows and `~/Library/Application Support/UrDatabase` on macOS.
+  `PlatformPaths.Expand` still understands `%APPDATA%`, `%LOCALAPPDATA%`, `%USERPROFILE%` and a
+  leading `~`, and rewrites backslashes, so a config file written by an older Windows install
+  keeps working.
 - **Watch folders.** The default is derived per platform — `~/Movies` on macOS, the Videos known
   folder on Windows. No drive letter is ever hardcoded.
 - **Launching a movie.** `UseShellExecute` cannot open documents on macOS, so `FileLauncher`
@@ -93,15 +95,59 @@ existing library.
 - `imdb_ratings` — cached IMDb ratings. A row with a `NULL` rating records "asked already, there
   is none", which is what stops the app re-requesting it.
 
+### Opening it
+
+`Database.Connect` is the only place a connection to the catalogue is constructed, and a test
+enforces that rather than trusting it. It sets `foreign_keys`, a `busy_timeout` and WAL, and
+bounds the provider's own lock wait to match the busy timeout; `Database.Open` is `Connect` plus
+the schema, for callers that could be the first thing to touch a fresh install. The window's read
+path uses `Connect`, because re-running the schema on every keystroke in the search box is work
+nobody asked for.
+
+The split exists because the alternative failed quietly. The read path used to build its own
+connection, which left the most frequent query in the app as the one connection in it with no busy
+timeout — a difference invisible at the call site and in review.
+
+### Writing to it
+
+SQLite allows one writer at a time, and this app has several: a scan committing in batches, a
+Jellyfin sync replacing the cached server library in one transaction, and the poster loader
+writing from up to four tasks at once. `DatabaseWriteLane` gives them a turn each, keyed by the
+file SQLite reports it opened, so writers in this process never contend for the write lock at all.
+
+What the lane cannot see is a second copy of the app on the same file. The busy timeout handles
+that, and a bounded retry on `SQLITE_BUSY` and `SQLITE_LOCKED` handles what the timeout does not.
+The retry is finite on purpose and rethrows what survives it: a write that cannot be made is the
+caller's to report, and the bug that produced all of this was about failures nobody was told
+about.
+
+The scan takes its turn per batch rather than per scan. Holding the lane for a whole library would
+shut the poster loader out for the length of it, which is the starvation `FilesPerTransaction`
+already exists to prevent.
+
 ## Configuration
 
-`appsettings.example.json` is tracked and ships next to the binary. `appsettings.json` is
-gitignored so a personal key or personal folders can never be committed. The app runs with
-neither file present, falling back to platform defaults.
+Settings are read from the first file that exists: an explicit path, then
+`appsettings.json` in the per-user data directory, then `appsettings.json` next to the
+executable, then the tracked `appsettings.example.json` that ships beside it. The per-user file
+is created from the example on first run, unless a build tree already has its own copy.
 
-API keys resolve most specific first: `appsettings.json`, then the `URDATABASE_TMDB_API_KEY` /
-`URDATABASE_OMDB_API_KEY` environment variables, then whatever was compiled in at build time.
-Compiled-in keys default to empty, so a local build needs no secrets.
+One refinement to that order: while the per-user file is still a byte-for-byte copy of the
+template it drops below a config next to the executable, because a copy nobody has edited states
+nothing. Otherwise a developer who ran the app once and wrote `appsettings.json` afterwards
+would find it silently ignored.
+
+The per-user location is not a preference. An installed macOS app runs from inside a signed,
+notarized bundle: a file written next to the executable invalidates the code signature, so
+Gatekeeper refuses to launch it, and an update discards it regardless. Nothing in `AppConfig`
+writes to `AppContext.BaseDirectory` under any circumstance.
+
+`appsettings.json` is gitignored so a personal key or personal folders can never be committed.
+The app runs with no file at all, falling back to platform defaults.
+
+API keys resolve most specific first: the loaded `appsettings.json`, then the
+`URDATABASE_TMDB_API_KEY` / `URDATABASE_OMDB_API_KEY` environment variables, then whatever was
+compiled in at build time. Compiled-in keys default to empty, so a local build needs no secrets.
 
 ## Attribution
 

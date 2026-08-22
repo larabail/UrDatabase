@@ -30,7 +30,16 @@ namespace UrDatabase.Services
             var movies = await client.GetMoviesAsync(progress, ct);
 
             ct.ThrowIfCancellationRequested();
-            return JellyfinCache.Replace(conn, movies);
+
+            // The lane is taken here and not around the fetch above. Replacing the cache is one
+            // transaction over the whole server library, so it is the longest write in the app and
+            // the one most likely to collide with a scan — but holding a write lane across a
+            // network call would block every other writer for as long as the server takes to
+            // answer, which on a bad connection is fifteen seconds of a locked catalogue.
+            return await DatabaseWriteLane.RunAsync(
+                conn,
+                _ => Task.FromResult(JellyfinCache.Replace(conn, movies)),
+                ct);
         }
     }
 }

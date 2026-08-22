@@ -215,6 +215,12 @@ namespace UrDatabase.Services
             if (response.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
                 throw new JellyfinException("Jellyfin rejected that username and password.");
 
+            // Jellyfin always has this endpoint, so a 404 means the address is answering but is
+            // not Jellyfin — most often a reverse proxy reached by an address it does not route.
+            if (response.StatusCode == HttpStatusCode.NotFound)
+                throw new JellyfinException(
+                    JellyfinDiagnostics.Describe(JellyfinConnectionState.NotJellyfin, _settings.ServerUrl, 404));
+
             if (!response.IsSuccessStatusCode)
                 throw new JellyfinException($"Jellyfin refused the sign-in (HTTP {(int)response.StatusCode}).");
 
@@ -378,19 +384,121 @@ namespace UrDatabase.Services
 
             using var response = await SendAsync(request, ct);
 
-            if (response.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
-                throw new JellyfinException("Jellyfin rejected the stored credentials. Check the username, password or API key.");
-
             if (!response.IsSuccessStatusCode)
-                throw new JellyfinException($"Jellyfin returned HTTP {(int)response.StatusCode} for that request.");
+            {
+                // Every path this client asks for exists on every Jellyfin server, so a 404 here
+                // is not a missing item — it is an address that answers without being Jellyfin.
+                var state = JellyfinDiagnostics.FromStatusCode(response.StatusCode);
+                throw new JellyfinException(
+                    JellyfinDiagnostics.Describe(state, _settings.ServerUrl, (int)response.StatusCode));
+            }
 
             return await ReadAsync<T>(response, ct);
         }
 
         /// <summary>
-        /// The single place a transport failure is turned into something a person can read. A
-        /// laptop that has left the house produces a socket error here, and "could not reach the
-        /// server" is the honest description of it — not a crash, and not an empty library.
+        /// Asks the server to identify itself, and reports which of the failure modes it found.
+        /// Needs no credentials — <c>/System/Info/Public</c> is the one endpoint Jellyfin answers
+        /// to anybody — so it can be run before a sign-in has ever succeeded, which is exactly
+        /// when the answer is wanted.
+        ///
+        /// Never throws for a connection problem: reporting one is its whole job.
+        /// </summary>
+        public async Task<JellyfinConnectionReport> TestConnectionAsync(CancellationToken ct = default)
+        {
+            if (string.IsNullOrWhiteSpace(_settings.ServerUrl))
+            {
+                return new JellyfinConnectionReport
+                {
+                    State = JellyfinConnectionState.NotConfigured,
+                    Message = JellyfinDiagnostics.Describe(JellyfinConnectionState.NotConfigured, null)
+                };
+            }
+
+            try
+            {
+                using var request = new HttpRequestMessage(HttpMethod.Get, BuildUri(JellyfinDiagnostics.PublicInfoPath));
+                request.Headers.TryAddWithoutValidation("Authorization", BuildAuthorizationHeader(_token));
+
+                using var response = await _http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
+
+                var status = (int)response.StatusCode;
+                var state = JellyfinDiagnostics.FromStatusCode(response.StatusCode);
+
+                if (state != JellyfinConnectionState.Reachable)
+                    return Report(state, JellyfinDiagnostics.Describe(state, _settings.ServerUrl, status), status);
+
+                var info = await TryReadPublicInfoAsync(response, ct);
+
+                // A 200 from something that cannot name itself is a proxy, a router page or a
+                // captive portal, not a server. Same remedy as a 404, so say the same thing.
+                if (info is null || (string.IsNullOrWhiteSpace(info.ServerName) && string.IsNullOrWhiteSpace(info.Version)))
+                {
+                    return Report(
+                        JellyfinConnectionState.NotJellyfin,
+                        JellyfinDiagnostics.Describe(JellyfinConnectionState.NotJellyfin, _settings.ServerUrl, status),
+                        status);
+                }
+
+                var name = string.IsNullOrWhiteSpace(info.ServerName) ? null : info.ServerName.Trim();
+                var version = string.IsNullOrWhiteSpace(info.Version) ? null : info.Version.Trim();
+
+                var described = $"Reached Jellyfin at {JellyfinDiagnostics.Display(_settings.ServerUrl)}";
+                if (name is not null) described += $" — {name}";
+                if (version is not null) described += $" (version {version})";
+
+                return new JellyfinConnectionReport
+                {
+                    State = JellyfinConnectionState.Reachable,
+                    Message = described + ".",
+                    StatusCode = status,
+                    ServerName = name,
+                    Version = version
+                };
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (OperationCanceledException)
+            {
+                return Report(
+                    JellyfinConnectionState.TimedOut,
+                    JellyfinDiagnostics.Describe(JellyfinConnectionState.TimedOut, _settings.ServerUrl));
+            }
+            catch (Exception ex)
+            {
+                var state = JellyfinDiagnostics.Classify(ex);
+                return Report(state, JellyfinDiagnostics.Describe(state, _settings.ServerUrl));
+            }
+
+            static JellyfinConnectionReport Report(JellyfinConnectionState state, string message, int? status = null)
+                => new() { State = state, Message = message, StatusCode = status };
+        }
+
+        private async Task<JellyfinPublicInfoDto?> TryReadPublicInfoAsync(HttpResponseMessage response, CancellationToken ct)
+        {
+            try
+            {
+                await using var stream = await response.Content.ReadAsStreamAsync(ct);
+                return await JsonSerializer.DeserializeAsync<JellyfinPublicInfoDto>(stream, _json, ct);
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch
+            {
+                // An HTML error page deserialises to nothing, which is itself the answer.
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// The single place a transport failure is turned into something a person can read. Which
+        /// failure it was matters: a name that will not resolve, a refused connection and a
+        /// dropped one send a user to three different places, and saying only that the server
+        /// could not be reached sends them nowhere.
         /// </summary>
         private async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
@@ -405,12 +513,15 @@ namespace UrDatabase.Services
             catch (OperationCanceledException ex)
             {
                 // Not the caller cancelling: HttpClient reports its own timeout this way.
-                throw new JellyfinException($"The Jellyfin server at {HostForMessage()} did not answer in time.", ex);
+                AppLog.Write("jellyfin.log", Redact($"request timed out: {ex.Message}"));
+                throw new JellyfinException(
+                    JellyfinDiagnostics.Describe(JellyfinConnectionState.TimedOut, _settings.ServerUrl), ex);
             }
             catch (HttpRequestException ex)
             {
-                AppLog.Write("jellyfin.log", Redact($"request failed: {ex.Message}"));
-                throw new JellyfinException($"Could not reach the Jellyfin server at {HostForMessage()}.", ex);
+                var state = JellyfinDiagnostics.Classify(ex);
+                AppLog.Write("jellyfin.log", Redact($"request failed ({state}): {ex.Message}"));
+                throw new JellyfinException(JellyfinDiagnostics.Describe(state, _settings.ServerUrl), ex);
             }
         }
 
@@ -431,14 +542,7 @@ namespace UrDatabase.Services
             }
         }
 
-        private string HostForMessage()
-        {
-            if (string.IsNullOrWhiteSpace(_settings.ServerUrl)) return "the configured address";
-            return Uri.TryCreate(_settings.ServerUrl, UriKind.Absolute, out var uri) ? uri.Authority : _settings.ServerUrl;
-        }
-
-        /// <summary>
-        /// Jellyfin parses the authorization header by splitting on quotes and commas, so a value
+        /// <summary>        /// Jellyfin parses the authorization header by splitting on quotes and commas, so a value
         /// containing either would corrupt it. Machine names routinely contain both, along with
         /// non-ASCII characters an HTTP header cannot carry.
         /// </summary>
