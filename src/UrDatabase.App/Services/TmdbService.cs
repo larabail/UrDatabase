@@ -111,19 +111,101 @@ namespace UrDatabase.Services
             }
         }
 
+        /// <summary>
+        /// Fetches a poster into the cache and returns where it landed, or <c>null</c> when the
+        /// response was not artwork worth keeping.
+        ///
+        /// The download is staged and only then moved into place, because the file being present
+        /// is the entire cache lookup: <c>File.Exists</c> below is what every later call asks,
+        /// and it cannot tell a finished poster from an abandoned one. Writing straight to the
+        /// destination meant a closed window, a cancelled fetch, a full disk or a dropped
+        /// connection left a fragment that answered that question with "yes" forever, and the
+        /// only way back was deleting the cache by hand.
+        /// </summary>
         private async Task<string?> DownloadAsync(string url, string fileName, CancellationToken ct)
         {
             Directory.CreateDirectory(_posterCacheDir);
             var dst = Path.Combine(_posterCacheDir, fileName);
             if (File.Exists(dst)) return dst;
 
-            using var resp = await _http.GetAsync(url, ct);
+            // Headers first, then the body straight to disk. Buffering the whole poster into
+            // memory before writing it — which is what GetAsync does by default — both wastes
+            // the memory and hides the failure this method exists to survive: a connection that
+            // dies mid-image would surface from the request rather than from the copy, and the
+            // fragment it left behind would still be sitting at the destination.
+            using var resp = await _http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, ct);
             if (!resp.IsSuccessStatusCode) return null;
+            if (!PosterContent.IsPlausibleContentType(resp.Content.Headers.ContentType?.MediaType)) return null;
 
-            await using var src = await resp.Content.ReadAsStreamAsync(ct);
-            await using var dstStream = File.Create(dst);
-            await src.CopyToAsync(dstStream, ct);
-            return dst;
+            // Staged beside the destination, not in the system temp directory: File.Move is only
+            // atomic within one volume, and a cache configured onto another disk would quietly
+            // turn the move back into the copy this exists to avoid. The GUID keeps two fetches
+            // of the same poster — or a second copy of the app — off each other's staging file.
+            var staging = Path.Combine(_posterCacheDir, $"{fileName}.{Guid.NewGuid():N}.part");
+
+            try
+            {
+                var head = new byte[PosterContent.SignatureLength];
+                int headLength;
+                long written;
+
+                await using (var src = await resp.Content.ReadAsStreamAsync(ct))
+                await using (var staged = new FileStream(staging, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+                {
+                    // Read past the signature first so it can be judged without reading the file
+                    // back afterwards. CopyToAsync then continues from wherever that left off.
+                    headLength = await ReadSignatureAsync(src, head, ct);
+                    await staged.WriteAsync(head.AsMemory(0, headLength), ct);
+                    await src.CopyToAsync(staged, ct);
+
+                    written = staged.Position;
+                }
+
+                if (written == 0 || !PosterContent.LooksLikeImage(head.AsSpan(0, headLength)))
+                {
+                    TryDelete(staging);
+                    return null;
+                }
+
+                File.Move(staging, dst, overwrite: true);
+                return dst;
+            }
+            catch
+            {
+                // Including cancellation. Leaving the fragment would be the original bug with an
+                // extra step: nothing reads a .part file, but nothing would clear it up either.
+                TryDelete(staging);
+                throw;
+            }
+        }
+
+        /// <summary>
+        /// Fills <paramref name="buffer"/> from <paramref name="src"/>, returning how much
+        /// arrived. A single read is not enough: a stream is free to hand back one byte at a
+        /// time, and a signature judged on a short read would reject a real poster.
+        /// </summary>
+        private static async Task<int> ReadSignatureAsync(Stream src, byte[] buffer, CancellationToken ct)
+        {
+            var total = 0;
+
+            while (total < buffer.Length)
+            {
+                var read = await src.ReadAsync(buffer.AsMemory(total, buffer.Length - total), ct);
+                if (read == 0) break;
+                total += read;
+            }
+
+            return total;
+        }
+
+        /// <summary>
+        /// Best effort, and deliberately silent. This runs while another failure is already on
+        /// its way up, and a staging file that cannot be removed is worth strictly less than the
+        /// exception explaining why the poster never arrived.
+        /// </summary>
+        private static void TryDelete(string path)
+        {
+            try { if (File.Exists(path)) File.Delete(path); } catch { }
         }
 
         // Bulk updater: fill movies.poster_path where missing.

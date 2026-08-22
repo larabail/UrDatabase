@@ -41,10 +41,11 @@ It runs on Windows and macOS from one codebase, built with
   of the page is unaffected (`Services/TmdbService`,
   `Views/MovieDetailsWindow`).
 - **Posters fill themselves in.** Any film in the catalogue with no poster is
-  looked up in the background, four at a time, and the result is written back
-  to the database so the next launch is instant. Posters are either referenced
-  at their TMDB URL or downloaded into a local cache directory, depending on
-  `DownloadPosters` (`Services/PosterAutoLoader`).
+  looked up in the background, four at a time, through one shared connection to
+  TMDB, and the result is written back to the database so the next launch is
+  instant. Posters are either referenced at their TMDB URL or downloaded into a
+  local cache directory, depending on `DownloadPosters`
+  (`Services/PosterAutoLoader`).
 - **Scan your watch folders.** The scan button walks the configured folders for
   video files — `.mkv`, `.mp4`, `.avi`, `.mov`, `.wmv`, `.m4v`, `.mpg`, `.mpeg`
   — parses a title and year out of each filename, creates or reuses a canonical
@@ -402,6 +403,19 @@ made, the status line says so; it does not fail silently and leave you to
 wonder why a poster never arrived. Two copies of the app open on the same
 catalogue is the one case that is only handled rather than prevented: they wait
 for each other, and either may eventually give up and tell you.
+
+Closing the window does not simply abandon whatever posters were mid-flight.
+Each is a TMDB request that has already been made, so the app waits up to two
+seconds for the answers to arrive and be written down, and only then cancels
+what is left — the window disappears immediately either way, and the fetches
+that did finish are not asked for again on the next launch.
+
+A poster being cached is a promise that it is readable, because nothing ever
+re-checks one: the file existing is the whole of the lookup from then on. So a
+download is written to a staging file beside its destination, checked for being
+an image at all rather than an error page some proxy answered with, and only
+then moved into place. Anything interrupted leaves nothing behind and is simply
+fetched again.
 
 ## Downloads
 
