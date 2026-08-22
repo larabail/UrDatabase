@@ -137,10 +137,12 @@ requested". Do not mention the agent, the model, or the conversation.
 
 `Directory.Build.props` at the repository root holds a single `<Version>`, and
 it is the only place a version number is allowed to live. Every project in the
-solution inherits it, the release tag is `v<version>`, and the release assets
-are named `UrDatabase-<version>-<rid>.zip`. Never add a `<Version>` to a
+solution inherits it, the release tag is `v<version>`, the macOS bundle takes
+its `CFBundleShortVersionString` from it, and the release assets are named
+`UrDatabase-<version>-<rid>.dmg` on macOS and
+`UrDatabase-<version>-win-x64.zip` on Windows. Never add a `<Version>` to a
 `.csproj`; it would silently win over the shared one for that project alone and
-produce a release whose archives disagree with their own tag.
+produce a release whose downloads disagree with their own tag.
 
 How far to bump follows directly from the commit kind:
 

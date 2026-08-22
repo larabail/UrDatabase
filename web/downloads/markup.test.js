@@ -99,36 +99,56 @@ describe('the page without its script', () => {
   it('tells somebody with no JavaScript where to go', () => {
     assert.match(html, /<noscript>/);
   });
-
-  it('ships a quarantine command that is safe before it is filled in', () => {
-    // The committed placeholder is what a visitor sees if the script never
-    // runs, so it has to be a real command rather than a `<version>`
-    // placeholder somebody would paste verbatim.
-    assert.match(html, /id="quarantine-command">xattr -dr com\.apple\.quarantine /);
-  });
 });
 
 describe('what the page says', () => {
-  it('is honest about why macOS refuses the download', () => {
-    // Not a detail, and the precise words matter. The builds *are* ad-hoc
-    // signed -- the release pipeline verifies it -- so calling them unsigned
-    // is wrong. What they lack is notarization, and the symptom is not a
-    // dialog: the process is killed with nothing shown at all. Somebody who
-    // believes the app crashed never goes looking for a terminal command, so
-    // a page that describes the wrong symptom is worse than one that says
-    // nothing.
-    assert.match(html, /ad-hoc signed but <strong>not notarized<\/strong>/i);
-    assert.match(html, /kills the process outright/i);
-    assert.ok(!/not code signed/i.test(html),
-      'the page still claims the builds are unsigned, which they are not');
-    assert.ok(html.includes('xattr -dr com.apple.quarantine'));
+  it('makes no claim of its own about whether a build is signed', () => {
+    // The page is deployed when web/downloads/ changes and is never rebuilt
+    // for a release, so its markup cannot know whether the build it is
+    // offering was signed -- that depends on repository secrets a given run
+    // may or may not have had. A page with "it is signed and notarized"
+    // written into it would keep saying so through a release where the
+    // certificate was missing and the download cannot start at all, which is
+    // a worse failure than the wrong xattr advice this replaced: it would be
+    // wrong about there being a problem.
+    //
+    // So the sentence lives in page.js, keyed off what the release itself
+    // records, and the markup carries an empty element for it.
+    assert.match(html, /id="macos-signing"[^>]*hidden/,
+      'the verdict element is missing or is not hidden before page.js runs');
+    assert.ok(!/notarized by\s+Apple/i.test(html),
+      'the served page asserts notarization it cannot know about');
+    assert.ok(!/are signed with an Apple/i.test(html),
+      'the served page asserts signing it cannot know about');
+  });
+
+  it('still explains what to do with the download', () => {
+    // The instructions do not depend on signing and must survive without
+    // JavaScript, so they stay in the markup.
+    assert.match(html, /\.dmg/);
+    assert.match(html, /Applications/);
     assert.match(html, /Windows protected your PC/);
   });
 
-  it('says the download holds an executable rather than a .app bundle', () => {
-    // There is nothing to drag to Applications. Saying otherwise sends people
-    // looking for a bundle that the archive does not contain.
+  it('never offers xattr as a way to make a build open', () => {
+    // The word may appear -- the page explains why the old advice was wrong --
+    // but never as an instruction, so it must not be inside a <code>, a <pre>
+    // or an <ol> step somebody would copy.
+    for (const [, code] of html.matchAll(/<code[^>]*>([\s\S]*?)<\/code>/g)) {
+      assert.ok(!/xattr/i.test(code),
+        `the page still puts an xattr command in front of somebody: ${code}`);
+    }
+    assert.ok(!/<pre/.test(html),
+      'the page has a command block again; there is no command to run');
+    assert.ok(!/id="quarantine-command"/.test(html),
+      'the page still has a quarantine command element');
+  });
+
+  it('says the older releases are the ones that will not open', () => {
+    // The zip of a loose `UrDatabase.App` executable is gone, but the
+    // downloads it produced are still on the releases page and still dead.
     assert.match(html, /UrDatabase\.App/);
+    assert.match(html, /0\.2\.1/);
   });
 
   it('says what UrDatabase is and links to the repository', () => {

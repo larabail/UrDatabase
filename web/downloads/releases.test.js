@@ -26,10 +26,14 @@ import {
   formatSize,
   isMac,
   latestFor,
+  macosSigning,
+  MACOS_NOTARIZED,
+  MACOS_SIGNED,
+  MACOS_UNKNOWN,
+  MACOS_UNSIGNED,
   normalizeRelease,
   parseVersion,
   pickDownloads,
-  quarantineCommand,
   selectReleases,
   summariseNotes,
   versionText,
@@ -37,11 +41,20 @@ import {
 
 const DOWNLOAD = 'https://github.com/larabail/UrDatabase/releases/download';
 
+/**
+ * An asset the API would return, named the way the release workflow names one.
+ *
+ * macOS builds are disk images and Windows is a zip. That split is not
+ * cosmetic: a notarization ticket staples to a bundle or an image and has
+ * nowhere to go in a zip, and a zip loses the extended attributes that carry
+ * most of a .NET bundle's nested signatures.
+ */
 function asset(version, rid, size = 74_000_000) {
+  const name = `UrDatabase-${version}-${rid}${rid.startsWith('osx-') ? '.dmg' : '.zip'}`;
   return {
-    name: `UrDatabase-${version}-${rid}.zip`,
+    name,
     size,
-    browser_download_url: `${DOWNLOAD}/v${version}/UrDatabase-${version}-${rid}.zip`,
+    browser_download_url: `${DOWNLOAD}/v${version}/${name}`,
   };
 }
 
@@ -107,29 +120,44 @@ describe('compareVersions', () => {
 
 describe('assetPlatform', () => {
   it('recognises all three builds', () => {
-    assert.equal(assetPlatform('UrDatabase-0.1.0-osx-arm64.zip'), OSX_ARM64);
+    assert.equal(assetPlatform('UrDatabase-0.2.1-osx-arm64.dmg'), OSX_ARM64);
+    assert.equal(assetPlatform('UrDatabase-0.2.1-osx-x64.dmg'), OSX_X64);
+    assert.equal(assetPlatform('UrDatabase-0.2.1-win-x64.zip'), WIN_X64);
+  });
+
+  it('still recognises the zips released before 0.2.1', () => {
+    // The page lists older releases too, and those shipped the macOS builds
+    // as zips. Dropping them would leave every historical row with no macOS
+    // download rather than with an old one, which is a worse answer than the
+    // truth: it shipped, and it will not open on a current Mac.
+    assert.equal(assetPlatform('UrDatabase-0.2.0-osx-arm64.zip'), OSX_ARM64);
     assert.equal(assetPlatform('UrDatabase-0.1.0-osx-x64.zip'), OSX_X64);
-    assert.equal(assetPlatform('UrDatabase-0.1.0-win-x64.zip'), WIN_X64);
   });
 
   it('does not confuse the two x64 builds', () => {
-    // Both names end in "-x64.zip". Matching on the architecture alone would
-    // hand Windows users an Intel Mac build, or the reverse.
+    // Both names end in "-x64". Matching on the architecture alone would hand
+    // Windows users an Intel Mac build, or the reverse.
     assert.notEqual(
-      assetPlatform('UrDatabase-0.1.0-osx-x64.zip'),
-      assetPlatform('UrDatabase-0.1.0-win-x64.zip'),
+      assetPlatform('UrDatabase-0.2.1-osx-x64.dmg'),
+      assetPlatform('UrDatabase-0.2.1-win-x64.zip'),
+    );
+    assert.notEqual(
+      assetPlatform('UrDatabase-0.2.0-osx-x64.zip'),
+      assetPlatform('UrDatabase-0.2.0-win-x64.zip'),
     );
   });
 
   it('ignores checksums and the sums file', () => {
-    // "...-osx-arm64.zip.sha256" contains the whole macOS suffix. Offering a
+    // "...-osx-arm64.dmg.sha256" contains the whole macOS suffix. Offering a
     // 90-byte text file as the application is worse than offering nothing.
+    assert.equal(assetPlatform('UrDatabase-0.2.1-osx-arm64.dmg.sha256'), null);
     assert.equal(assetPlatform('UrDatabase-0.1.0-osx-arm64.zip.sha256'), null);
     assert.equal(assetPlatform('SHA256SUMS.txt'), null);
   });
 
   it('ignores anything that is not one of ours', () => {
-    for (const name of ['UrDatabase-0.1.0-linux-x64.zip', 'source.tar.gz', '', null]) {
+    for (const name of ['UrDatabase-0.2.1-linux-x64.zip', 'source.tar.gz',
+                        'UrDatabase-0.2.1-win-x64.dmg.txt', '', null]) {
       assert.equal(assetPlatform(name), null, `accepted ${JSON.stringify(name)}`);
     }
   });
@@ -137,8 +165,8 @@ describe('assetPlatform', () => {
 
 describe('pickDownloads', () => {
   it('finds each build and keeps its size', () => {
-    const downloads = pickDownloads([asset('0.1.0', OSX_ARM64, 1234)]);
-    assert.equal(downloads[OSX_ARM64].name, 'UrDatabase-0.1.0-osx-arm64.zip');
+    const downloads = pickDownloads([asset('0.2.1', OSX_ARM64, 1234)]);
+    assert.equal(downloads[OSX_ARM64].name, 'UrDatabase-0.2.1-osx-arm64.dmg');
     assert.equal(downloads[OSX_ARM64].size, 1234);
   });
 
@@ -349,54 +377,76 @@ describe('isMac', () => {
   });
 });
 
-describe('quarantineCommand', () => {
-  it('names the folder the archive expands to', () => {
-    // The release workflow builds each zip around exactly one top-level
-    // folder named after the archive, which is what makes this exact.
-    assert.equal(
-      quarantineCommand({ name: 'UrDatabase-0.1.0-osx-arm64.zip' }),
-      'xattr -dr com.apple.quarantine ~/Downloads/UrDatabase-0.1.0-osx-arm64',
-    );
+describe('macosSigning', () => {
+  it('reads the marker the release workflow writes', () => {
+    assert.equal(macosSigning('## Downloads\n\n<!-- urdatabase:macos-signing=notarized -->\n'),
+      MACOS_NOTARIZED);
+    assert.equal(macosSigning('<!-- urdatabase:macos-signing=signed -->'),
+      MACOS_SIGNED);
+    assert.equal(macosSigning('<!-- urdatabase:macos-signing=unsigned -->'),
+      MACOS_UNSIGNED);
   });
 
-  it('refuses to build a command out of a hostile filename', () => {
-    // The name comes from whoever created the release. On the page it is only
-    // ever text and can execute nothing -- but the entire point of this line
-    // is that somebody pastes it into a terminal, where it very much can.
-    for (const name of [
-      'UrDatabase; rm -rf ~/.zip',
-      '$(curl evil.example).zip',
-      'a`whoami`.zip',
-      '../../../etc/passwd.zip',
-      "x' && curl evil.example && echo '.zip",
-    ]) {
-      const command = quarantineCommand({ name });
-      assert.equal(command, 'xattr -dr com.apple.quarantine ~/Downloads/UrDatabase-*',
-        `built a command from ${name}`);
+  it('calls a release with no marker unknown, not signed', () => {
+    // Every release up to 0.2.0 is one of these, and every one of them is
+    // ad-hoc signed and killed on launch by a current Mac. Defaulting the
+    // other way would put "it opens normally" on the page for exactly the
+    // builds that do not.
+    for (const body of ['', null, undefined, 42, '## Downloads\n\nnothing here',
+                        '<!-- urdatabase:something-else=notarized -->']) {
+      assert.equal(macosSigning(body), MACOS_UNKNOWN,
+        `read a state out of ${JSON.stringify(body)}`);
     }
   });
 
-  it('falls back when there is no download at all', () => {
-    for (const download of [null, undefined, {}, { name: 42 }]) {
-      assert.match(quarantineCommand(download), /^xattr -dr com\.apple\.quarantine /);
-    }
+  it('refuses a state the page has no sentence for', () => {
+    // The body comes from whoever created the release. Passing an unrecognised
+    // value through would put a bare word into the DOM where a sentence
+    // belongs.
+    assert.equal(macosSigning('<!-- urdatabase:macos-signing=probably -->'),
+      MACOS_UNKNOWN);
+    assert.equal(macosSigning('<!-- urdatabase:macos-signing= -->'),
+      MACOS_UNKNOWN);
+  });
+
+  it('reaches the page through normalizeRelease', () => {
+    const raw = release('0.2.1');
+    raw.body = '## Downloads\n\n<!-- urdatabase:macos-signing=notarized -->\n';
+    assert.equal(normalizeRelease(raw).macosSigning, MACOS_NOTARIZED);
+
+    const older = release('0.2.0');
+    older.body = '## Downloads\n\nRun xattr.\n';
+    assert.equal(normalizeRelease(older).macosSigning, MACOS_UNKNOWN);
   });
 });
 
 describe('summariseNotes', () => {
+  it('drops the machine-readable marker rather than printing it', () => {
+    // These notes are rendered as text, so an HTML comment left in them shows
+    // up verbatim under "What's new".
+    const notes = summariseNotes([
+      '<!-- urdatabase:macos-signing=notarized -->',
+      "## What's Changed",
+      '* Faster scanning',
+    ].join('\n'));
+    assert.ok(!notes.includes('urdatabase:macos-signing'), notes);
+    assert.ok(!notes.includes('<!--'), notes);
+    assert.ok(notes.includes('Faster scanning'), notes);
+  });
+
   it('drops the Downloads section the release workflow writes', () => {
-    // That section is a table of the three builds, the quarantine command and
-    // the SmartScreen note -- all of which this page already says, higher up
-    // and in better shape. Repeated under "What's new" it reads as news.
+    // That section is a table of the three builds and the SmartScreen note --
+    // all of which this page already says, higher up and in better shape.
+    // Repeated under "What's new" it reads as news.
     const body = [
       '## Downloads',
       '',
       '| Machine | File |',
       '| --- | --- |',
-      '| Mac | `UrDatabase-0.2.0-osx-arm64.zip` |',
+      '| Mac | `UrDatabase-0.2.1-osx-arm64.dmg` |',
       '',
       '### Notarization',
-      'Run xattr.',
+      'Signed and notarized.',
       '',
       "## What's Changed",
       '* Faster scanning',
@@ -404,7 +454,7 @@ describe('summariseNotes', () => {
 
     const notes = summariseNotes(body);
     assert.ok(!notes.includes('osx-arm64'), notes);
-    assert.ok(!notes.includes('xattr'), notes);
+    assert.ok(!notes.includes('Signed and notarized'), notes);
     assert.ok(notes.includes('Faster scanning'), notes);
     assert.ok(notes.startsWith("What's Changed"), notes);
   });

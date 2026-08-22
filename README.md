@@ -273,50 +273,55 @@ go with them, so `S.W.A.T.` arrives as `S W A T`.
 Released builds for Windows and macOS are listed at
 [urdatabase-downloads.web.app](https://urdatabase-downloads.web.app), a static
 page deployed to Firebase Hosting. Every asset is also on the
-[releases page](https://github.com/larabail/UrDatabase/releases), named
-`UrDatabase-<version>-<rid>.zip`.
+[releases page](https://github.com/larabail/UrDatabase/releases): the macOS
+builds as `UrDatabase-<version>-<rid>.dmg`, Windows as
+`UrDatabase-<version>-win-x64.zip`.
 
-### macOS will refuse to open the download
+### Opening it the first time
 
-The macOS builds are ad-hoc signed but **not notarized**, and that is enough for
-Gatekeeper to refuse them. Downloading through a browser attaches a quarantine
-flag, and on first launch macOS kills the process outright — no dialog, no error,
-nothing in the interface. The app has not crashed and the download is not
-corrupt; it looks broken because macOS declined to say anything.
+On a Mac, open the `.dmg` and drag **UrDatabase** to Applications. The build is
+signed with an Apple Developer ID, notarized by Apple and stapled, so it opens
+like any other application. There is no terminal command and nothing to clear.
 
-Clear the flag once, after unzipping, against the folder that came out of the
-archive:
+On Windows, SmartScreen shows *"Windows protected your PC"*. Choose **More
+info**, then **Run anyway**. That is a reputation check rather than a signature
+one, and there is no Windows code signing certificate yet.
 
-```bash
-xattr -dr com.apple.quarantine ~/Downloads/UrDatabase-*
-```
-
-Then open it normally. There is no `.app` bundle to put in `/Applications`: the
-archive contains a folder named after the build, such as
-`UrDatabase-0.1.0-osx-arm64/`, holding an executable called `UrDatabase.App`.
-Run that.
-
-This step exists only because notarization does not. Proper Developer ID
-signing and notarization would remove it entirely and is the real fix, but it
-needs a paid Apple signing identity that this repository does not have yet — so
-the manual step is a gap, not a design decision. Building from source avoids it,
-since nothing was downloaded to be quarantined.
+> [!NOTE]
+> **Releases before 0.2.1 do not open on a current Mac.** They shipped a bare
+> `UrDatabase.App` executable in a zip, ad-hoc signed and not notarized, and
+> macOS kills such a process the moment it starts — no dialog, no error,
+> nothing in the interface. This README used to offer
+> `xattr -dr com.apple.quarantine` as the fix and that was wrong: macOS refuses
+> the ad-hoc signature itself, so clearing the quarantine flag changes nothing.
+> Take 0.2.1 or later.
 
 ## CI and releases
 
 `Directory.Build.props` at the repository root holds a single `<Version>`, and
-that one line is the source of truth for everything below. It starts at
-`0.1.0`. Do not put a version in the `.csproj`.
+that one line is the source of truth for everything below. Do not put a version
+in the `.csproj`.
 
 - **On a pull request**, the workflows restore, build and test, then publish
-  each runtime identifier and attach the archives to the run. You can download
-  and try a branch before it merges.
+  each runtime identifier and attach the results to the run. You can download
+  and try a branch before it merges. Those builds are signed but deliberately
+  not notarized, so the first launch needs a right-click → **Open**.
 - **On a merge to `main`**, the version in `Directory.Build.props` is tagged
   `v<version>`, the TMDB and OMDb keys are compiled in from the `TMDB_API_KEY`
-  and `OMDB_API_KEY` repository secrets, a GitHub Release is created with
-  `UrDatabase-<version>-win-x64.zip`, `UrDatabase-<version>-osx-arm64.zip` and
-  `UrDatabase-<version>-osx-x64.zip` attached, and the downloads site is
+  and `OMDB_API_KEY` repository secrets, the macOS builds are signed with a
+  Developer ID and notarized, a GitHub Release is created with
+  `UrDatabase-<version>-win-x64.zip`, `UrDatabase-<version>-osx-arm64.dmg` and
+  `UrDatabase-<version>-osx-x64.dmg` attached, and the downloads site is
   deployed to Firebase Hosting.
+
+Signing and notarizing need five more repository secrets —
+`MACOS_DEVELOPER_ID_CERT_P12_BASE64`, `MACOS_DEVELOPER_ID_CERT_PASSWORD`,
+`APP_STORE_CONNECT_KEY_ID`, `APP_STORE_CONNECT_ISSUER_ID` and
+`APP_STORE_CONNECT_PRIVATE_KEY`. Without them a release still builds, and it
+says so on the run, in its own release notes and on the downloads page — which
+reads what actually happened out of the release rather than claiming anything
+of its own. See
+[docs/releases.md](docs/releases.md#signing-and-notarization).
 
 Compiling the keys in at release is what makes a downloaded build work with no
 setup. It is not a way of keeping them private, and nothing here pretends it
@@ -342,13 +347,17 @@ src/UrDatabase.App/          the application: one cross-platform project
   Controls/                  reusable pieces, e.g. the poster card
   Models/                    what the views bind to
   Services/                  config, SQLite, scanning, TMDB, OMDb, Jellyfin, posters
+  Assets/UrDatabase.icns     the macOS application icon
   Data/schema.sql            the full schema, applied on first launch
   appsettings.example.json   configuration template; the real file is ignored
+  UrDatabase.App.entitlements  hardened runtime exceptions the .NET JIT needs
 tests/UrDatabase.Tests/      xUnit suite
+tool/                        Python helpers with their own unittest suite:
+                             the version-bump check and the macOS bundler
 Directory.Build.props        the single <Version> for the whole solution
 web/                         the downloads site served by Firebase Hosting
 docs/                        design notes
-scripts/                     local helper scripts
+scripts/                     local helper scripts, and the macOS signing script
 .github/                     workflows, issue templates, the PR template
 ```
 
@@ -392,8 +401,9 @@ Stated plainly, so nobody has to find out by using it:
   window and nothing else; reopening the film forgets it.
 - **Settings is a placeholder** that says so when clicked. Configuration is
   file-only for now.
-- **macOS builds are not notarized**, so the first launch needs one `xattr`
-  command, as described above.
+- **Windows builds are not signed.** SmartScreen warns on first run and there
+  is no way around it short of a Windows code signing certificate. The macOS
+  side of this closed in 0.2.1; the Windows side has not.
 
 ## Licence
 

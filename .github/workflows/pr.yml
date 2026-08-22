@@ -135,18 +135,19 @@ jobs:
   # green tests would withhold it exactly then.
   package:
     name: Test builds
-    # macOS, not Linux, and it matters: the .NET SDK only ad-hoc signs the
-    # macOS launcher when the build host is macOS, and Apple silicon kills an
-    # unsigned arm64 binary outright. A Linux runner here would hand reviewers
-    # a Mac build that dies on launch with no message. The reasoning is spelled
+    # macOS, not Linux, and it matters twice over. The .NET SDK only ad-hoc
+    # signs the macOS launcher when the build host is macOS, and Apple silicon
+    # kills a completely unsigned arm64 binary outright -- so a Linux runner
+    # here would hand reviewers a Mac build that dies on launch with no
+    # message. Everything after the publish is macOS-only anyway: codesign,
+    # hdiutil, stapler and spctl exist nowhere else. The reasoning is spelled
     # out in .github/actions/package-app/action.yml.
     #
     # Free here because this repository is public. On a private repository a
     # macOS runner is billed at ten times the rate of a Linux one, so if this
     # repository is ever made private again, this job and the release are
     # where the bill goes -- and they still cannot move back to Linux without
-    # breaking the Mac builds. Fixing that properly would mean paying Apple for
-    # a Developer ID and signing on any host.
+    # breaking the Mac builds.
     #
     # Pinned rather than `macos-latest` so the runner architecture cannot
     # change under this job without somebody choosing it.
@@ -189,6 +190,7 @@ jobs:
           fi
 
       - uses: ./.github/actions/package-app
+        id: package
         with:
           version: ${{ steps.name.outputs.version }}
           # Compiled in so the build a reviewer downloads actually shows
@@ -202,18 +204,33 @@ jobs:
           # without live metadata, and the package action says so in the log.
           tmdb-api-key: ${{ secrets.TMDB_API_KEY }}
           omdb-api-key: ${{ secrets.OMDB_API_KEY }}
+          # Signed here too, and for the same reason the job exists at all: an
+          # ad-hoc signed Mac build is killed by the kernel on launch, so
+          # without this the macOS half of "builds a reviewer can actually run"
+          # is a download that does nothing. A signed but unnotarized bundle is
+          # refused with a dialog, and a dialog has an "Open Anyway" behind it
+          # -- which is only true because it is now a `.app` and not a loose
+          # executable.
+          macos-certificate-p12-base64: ${{ secrets.MACOS_DEVELOPER_ID_CERT_P12_BASE64 }}
+          macos-certificate-password: ${{ secrets.MACOS_DEVELOPER_ID_CERT_PASSWORD }}
+          # Deliberately not notarized. Notarization is a queue at Apple, and
+          # asking it four times for every push to every branch would add
+          # minutes to each one and spend a shared quota on builds nobody
+          # installs. The release notarizes; this does not, and says so.
 
-      # Uploaded as the finished `.zip` rather than as the published folder, so
-      # GitHub's own artifact zip ends up wrapping ours. That looks redundant
-      # and is not: an artifact download re-creates files with default
-      # permissions, so a macOS build uploaded loose arrives without its
-      # executable bit and dies with "permission denied". The inner zip carries
-      # the bit through untouched.
+      # Uploaded as the finished `.dmg` and `.zip` rather than as the published
+      # folders. That looks redundant -- GitHub's own artifact zip ends up
+      # wrapping ours -- and is not: an artifact download re-creates files with
+      # default permissions and drops extended attributes, so a macOS build
+      # uploaded loose arrives without its executable bit and with most of its
+      # code signature missing. The disk image carries both through untouched.
       - name: Upload the builds
         uses: actions/upload-artifact@v4
         with:
           name: UrDatabase-${{ steps.name.outputs.version }}-builds
-          path: dist/*.zip
+          path: |
+            dist/*.dmg
+            dist/*.zip
           if-no-files-found: error
           # Long enough to review a pull request, short enough that abandoned
           # branches are not still holding a gigabyte of runtime in three
@@ -227,29 +244,38 @@ jobs:
         env:
           VERSION: ${{ steps.name.outputs.version }}
           TMDB_API_KEY: ${{ secrets.TMDB_API_KEY }}
+          SIGNED: ${{ steps.package.outputs.macos-signed }}
         run: |
           set -euo pipefail
           {
             echo '### Test builds'
             echo ''
             echo 'Download **UrDatabase-'"$VERSION"'-builds** from the'
-            echo 'Artifacts section at the bottom of this run, then unzip it'
-            echo 'and unzip the build for your machine.'
+            echo 'Artifacts section at the bottom of this run, then unzip it.'
             echo ''
             echo '| Machine | File |'
             echo '| --- | --- |'
-            echo "| Mac, Apple silicon | \`UrDatabase-$VERSION-osx-arm64.zip\` |"
-            echo "| Mac, Intel | \`UrDatabase-$VERSION-osx-x64.zip\` |"
+            echo "| Mac, Apple silicon | \`UrDatabase-$VERSION-osx-arm64.dmg\` |"
+            echo "| Mac, Intel | \`UrDatabase-$VERSION-osx-x64.dmg\` |"
             echo "| Windows, 64-bit | \`UrDatabase-$VERSION-win-x64.zip\` |"
             echo ''
-            echo 'These are ad-hoc signed but not notarized, so macOS kills'
-            echo 'them on first launch with no dialog at all. Clear the'
-            echo 'quarantine flag before running, then open UrDatabase.App'
-            echo 'from inside the unzipped folder:'
-            echo ''
-            echo '```sh'
-            echo "xattr -dr com.apple.quarantine ~/Downloads/UrDatabase-$VERSION-osx-arm64"
-            echo '```'
+            if [ "$SIGNED" = 'true' ]; then
+              echo "On a Mac, open the \`.dmg\` and drag **UrDatabase** to"
+              echo 'Applications. These builds are signed but deliberately not'
+              echo 'notarized -- only releases are -- so the first launch is'
+              echo 'refused with a dialog. Right-click the app and choose'
+              echo '**Open**, or approve it once under Settings → Privacy &'
+              echo 'Security. After that it opens normally.'
+            else
+              echo '> [!WARNING]'
+              echo '> **These macOS builds will not open.** This run had no'
+              echo '> signing certificate, which is normal for a pull request'
+              echo '> from a fork, so they are only ad-hoc signed -- and macOS'
+              echo '> kills an ad-hoc signed download the moment it starts, with'
+              echo '> no dialog and nothing in the interface. There is no'
+              echo "> workaround; \`xattr\` does not help. Build from source to"
+              echo '> try the change on a Mac.'
+            fi
             echo ''
             echo 'On Windows, SmartScreen shows "Windows protected your PC".'
             echo 'Choose **More info**, then **Run anyway**.'
@@ -293,7 +319,11 @@ jobs:
         with:
           python-version: '3.12'
 
-      - name: Test the version tooling
+      # Everything under `tool/`, not only the version check. The macOS bundle
+      # assembler lives there too and is written in Python precisely so that
+      # its tests can run here, on Linux, rather than only on the macOS runner
+      # that happens to build the release.
+      - name: Test the repository tooling
         run: python3 -m unittest discover -s tool -p "test_*.py" --verbose
 
       - name: Check the version bump

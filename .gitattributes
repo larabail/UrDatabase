@@ -2,3 +2,8 @@
 *.sln text eol=crlf
 *.cs text eol=crlf
 *.xaml text eol=crlf
+
+# Marked explicitly rather than left to git's heuristic. An .icns that gets
+# line-ending translation applied to it is a corrupt icon, and nothing says so
+# until the bundle is built and the Dock shows a blank page.
+*.icns binary

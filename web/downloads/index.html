@@ -346,6 +346,13 @@ h1 em { display: block; font-style: italic; font-weight: 400; color: var(--stamp
 .note ol { margin: 0 0 .7rem 1.15rem; font-size: .95rem; color: var(--ink-2); }
 .note strong { color: var(--ink); font-weight: 500; }
 .note a { color: var(--stamp); text-underline-offset: 3px; }
+/* The one line on this page that is a claim about a specific build rather
+   than a description of how things work. page.js fills it in from the
+   release being offered, so it stays hidden until there is something true to
+   put in it -- a page served with "it is signed" baked into the markup would
+   go on saying so through a release that was not. */
+.verdict { border-left: 2px solid var(--rule); padding-left: .8rem; }
+.verdict.bad { border-left-color: var(--stamp); color: var(--ink); }
 
 /* The command wraps rather than scrolling sideways. It exists to be copied,
    and half a command in a box somebody has to drag is half a command. */
@@ -521,34 +528,28 @@ footer { padding: 2.2rem 0 3.4rem; border-top: 1.5px solid var(--ink); }
     <div class="chead">
       <h2>The first time you open it</h2>
       <span class="dots" aria-hidden="true"></span>
-      <span class="of">Not notarized</span>
+      <span class="of">First launch</span>
     </div>
-    <p class="sub">These builds are not notarized by Apple, and Windows has not
-       seen them before. Both operating systems will stop you on first launch,
-       and it is better to know why beforehand than to conclude the download is
-       broken.</p>
+    <p class="sub">What each operating system does the first time, and what to
+       do about it.</p>
 
     <div class="notes">
       <div class="note">
-        <h3>macOS &mdash; nothing happens at all</h3>
-        <p>The macOS builds are ad-hoc signed but <strong>not notarized</strong>,
-           and that is enough for Gatekeeper to refuse them. Notarizing needs a
-           paid Apple developer account, which this project does not have.</p>
-        <p>Downloading through a browser attaches a quarantine flag, and on
-           first launch macOS <strong>kills the process outright</strong> &mdash;
-           no dialog, no error, nothing in the interface. The app has not
-           crashed and the download is not corrupt. It looks broken because
-           macOS declined to say anything.</p>
+        <h3>macOS &mdash; drag it to Applications</h3>
         <ol>
-          <li>Unzip the download.</li>
-          <li>Run this in Terminal, against the folder that came out of it:</li>
+          <li>Open the <code>.dmg</code> you downloaded.</li>
+          <li>Drag <strong>UrDatabase</strong> into the Applications folder
+              beside it.</li>
+          <li>Open it from Applications.</li>
         </ol>
-        <pre><code id="quarantine-command">xattr -dr com.apple.quarantine ~/Downloads/UrDatabase-*</code></pre>
-        <p>That clears the download flag from that one folder and nothing else.
-           There is no <code>.app</code> to drag to Applications: the folder
-           holds an executable called <code>UrDatabase.App</code>. Open that.</p>
-        <p>This step exists only because notarization does not, so treat it as a
-           gap rather than as how the project is meant to work.</p>
+        <p class="verdict" id="macos-signing" hidden></p>
+        <p>Releases before 0.2.1 shipped a bare <code>UrDatabase.App</code>
+           executable in a zip, ad-hoc signed. macOS
+           <strong>kills those on launch</strong> &mdash; no dialog, no error,
+           nothing in the interface. Clearing the quarantine flag with
+           <em>xattr</em>, which this page used to tell you to do, does not
+           change it: macOS is refusing the signature, not the flag. If you
+           have one of those builds, take a newer one.</p>
       </div>
 
       <div class="note">
@@ -559,7 +560,7 @@ footer { padding: 2.2rem 0 3.4rem; border-top: 1.5px solid var(--ink); }
         <p>It is a reputation check rather than a virus scan, so it says
            nothing about the file except that it is new. If you would rather
            check the file itself, every release lists a SHA-256 for each
-           archive in <code>SHA256SUMS.txt</code> on its
+           download in <code>SHA256SUMS.txt</code> on its
            <a id="checksums-link"
               href="https://github.com/larabail/UrDatabase/releases">release
               page</a>.</p>

@@ -84,6 +84,26 @@ The version comes from `<Version>` in `Directory.Build.props`, the single source
 
 ### macOS note
 
-A self-contained macOS build is ad-hoc signed but not notarized. Gatekeeper kills unnotarized
-binaries on first run (`Killed: 9`), so a distributed macOS build needs signing and notarization,
-or users must clear the quarantine attribute themselves.
+A local `dotnet publish` produces an ad-hoc signed binary. That runs on the
+machine that built it, and **nothing else** — a current Mac kills an ad-hoc
+signed download the moment it starts, with no dialog and no output, and
+clearing the quarantine attribute does not change that because it is the
+signature being refused. Only the release pipeline signs with a Developer ID
+and notarizes; see [releases.md](releases.md#signing-and-notarization).
+
+To reproduce what CI does, with a Developer ID already in your login keychain:
+
+```bash
+dotnet publish src/UrDatabase.App/UrDatabase.App.csproj \
+  -c Release -r osx-arm64 --self-contained true -o /tmp/publish
+
+python3 tool/make_macos_bundle.py \
+  --publish-dir /tmp/publish --output /tmp/stage --version 0.2.1 \
+  --icon src/UrDatabase.App/Assets/UrDatabase.icns
+
+MACOS_SIGNING_IDENTITY="Developer ID Application: … (TEAMID)" \
+  scripts/package-macos-app.sh /tmp/stage/UrDatabase.app /tmp/UrDatabase.dmg
+```
+
+Without notarization credentials that stops after signing and says so.
+`security find-identity -v -p codesigning` lists the identities you have.
