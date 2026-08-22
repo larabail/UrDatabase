@@ -261,6 +261,7 @@ runtime rather than at compile time.
 - **`AppConfig.Load` swallows every exception** and returns defaults. Malformed
   JSON does not raise; the app just behaves as though you configured nothing.
   Check that your file parses before hunting for a bug elsewhere.
-- **Nothing in the app writes the `movies` table.** If the library is empty,
-  the catalogue is empty — scanning only fills `files`. See
-  [the catalogue](README.md#the-catalogue).
+- **A scanned library has no genres.** Scanning writes a title and a year and
+  nothing else, so every film lands in the `Uncategorised` bucket until
+  something fills the `genres` column in. Nothing does yet. An empty-looking
+  grouped view after a successful scan is this, not a bug in the grouping.
