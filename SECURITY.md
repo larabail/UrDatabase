@@ -83,13 +83,24 @@ expose it — a workflow readable by a fork, a step that echoes it, a change tha
 carries it into an artifact — is a real finding and worth reporting, as is any
 workflow change that could place unintended content into a release.
 
-**Not-notarized macOS builds.** The macOS archives are ad-hoc signed — CI
-verifies that with `codesign --verify` — but they are not notarized and carry no
-Developer ID. Gatekeeper therefore refuses them on first launch, which is
-accurate behaviour and not a bug in the app. It does mean a user cannot verify
-that a download came from us, which is a real limitation recorded here rather
-than an oversight: closing it needs a paid Apple signing identity this
-repository does not have yet.
+The same applies, more sharply, to the five macOS signing secrets added in
+0.2.1: `MACOS_DEVELOPER_ID_CERT_P12_BASE64`,
+`MACOS_DEVELOPER_ID_CERT_PASSWORD`, `APP_STORE_CONNECT_KEY_ID`,
+`APP_STORE_CONNECT_ISSUER_ID` and `APP_STORE_CONNECT_PRIVATE_KEY`. Each can be
+used to sign software as this developer, so a leak is worse than a leaked API
+key by some distance — it would let somebody else's binary carry our identity
+past Gatekeeper. They are imported into a keychain created for one workflow run
+and deleted afterwards whether it succeeded or not, they are never written into
+a build, and any change that could put one in a log, an artifact or a release
+asset is a real finding.
+
+**Unsigned Windows builds.** The Windows archive carries no Authenticode
+signature, so SmartScreen warns on first run and a user cannot verify that a
+download came from us. That is a real limitation recorded here rather than an
+oversight: closing it needs a Windows code signing certificate this repository
+does not have. The macOS builds *are* signed with a Developer ID and notarized
+as of 0.2.1; releases before that are ad-hoc signed only and will not launch on
+a current Mac at all.
 
 **The catalogue itself.** `movies.db`, the poster cache and your film paths are
 local files owned by your account and protected by your filesystem permissions.

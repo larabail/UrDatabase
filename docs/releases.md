@@ -23,7 +23,7 @@ looks wrong — the code is merged and simply never reaches anybody.
 ```xml
 <Project>
   <PropertyGroup>
-    <Version>0.1.0</Version>
+    <Version>0.2.1</Version>
   </PropertyGroup>
 </Project>
 ```
@@ -32,12 +32,13 @@ That number is the only source of truth. Everything else is derived from it:
 
 | Thing | Comes out as |
 | --- | --- |
-| Git tag | `v0.1.0` |
-| GitHub release | `UrDatabase 0.1.0` |
-| macOS, Apple silicon | `UrDatabase-0.1.0-osx-arm64.zip` |
-| macOS, Intel | `UrDatabase-0.1.0-osx-x64.zip` |
-| Windows, 64-bit | `UrDatabase-0.1.0-win-x64.zip` |
-| Assembly version | `0.1.0` |
+| Git tag | `v0.2.1` |
+| GitHub release | `UrDatabase 0.2.1` |
+| macOS, Apple silicon | `UrDatabase-0.2.1-osx-arm64.dmg` |
+| macOS, Intel | `UrDatabase-0.2.1-osx-x64.dmg` |
+| Windows, 64-bit | `UrDatabase-0.2.1-win-x64.zip` |
+| Bundle version | `CFBundleShortVersionString` and `CFBundleVersion` of `0.2.1` |
+| Assembly version | `0.2.1` |
 
 Nothing else needs editing to release, and nothing else should be edited
 instead.
@@ -99,10 +100,11 @@ in the **Artifacts** section at the bottom of the run page, as
 ### `release.yml` — on every push to `main`
 
 Reads the version, and stops immediately if there is nothing to do. Otherwise:
-runs the tests again on the merged result, builds and zips all three runtime
-identifiers, checksums them, pushes the annotated tag `v<version>`, opens a
-GitHub Deployment, publishes the release with the three zips, `SHA256SUMS.txt`
-and generated notes, then closes the deployment.
+runs the tests again on the merged result, publishes all three runtime
+identifiers, signs and notarizes the two macOS ones into disk images, checksums
+everything, pushes the annotated tag `v<version>`, opens a GitHub Deployment,
+publishes the release with the three downloads, `SHA256SUMS.txt` and generated
+notes, then closes the deployment.
 
 The deployment is why the repository has a **Deployments** entry per release:
 it answers "what shipped and when" without reading workflow logs.
@@ -126,60 +128,149 @@ cannot be changed without breaking the Mac downloads.
 On Apple silicon the kernel refuses to execute an arm64 binary carrying no code
 signature at all. Not a Gatekeeper prompt — an immediate kill, which a shell
 reports as `Killed: 9` and Finder reports as nothing whatsoever. The .NET SDK
-ad-hoc signs the macOS launcher, which satisfies that requirement, but only when
-the build host is macOS; the condition in `Microsoft.NET.Sdk.targets` is
-literally `IsOSPlatform(OSX) and Exists('/usr/bin/codesign')`.
+ad-hoc signs the macOS launcher, which satisfies that much, but only when the
+build host is macOS; the condition in `Microsoft.NET.Sdk.targets` is literally
+`IsOSPlatform(OSX) and Exists('/usr/bin/codesign')`.
 
 So `dotnet publish -r osx-arm64` on a Linux runner exits 0 and produces a
 download that is dead on arrival, with nothing in the logs saying so. The
 packaging action verifies the signature with `codesign --verify` for exactly
-that reason.
+that reason, before anything else is built on top of it.
+
+Everything after the publish is macOS-only anyway: `codesign`, `hdiutil`,
+`notarytool`, `stapler` and `spctl` exist nowhere else.
 
 macOS runners are free on public repositories. On a private one they bill at ten
 times the Linux rate, so making this repository private again has a cost
 attached to it.
 
-## The builds are signed, but not notarized
+## Signing and notarization
 
-Worth stating precisely, because the loose version of it is wrong in a way that
-matters. The macOS builds **are** code signed — ad-hoc, which is what lets them
-execute at all on Apple silicon, and which `package-app` verifies with
-`codesign --verify` before anything is published. On the released `v0.1.0`
-archive:
+### What was wrong
+
+Up to and including `v0.2.0` the macOS download was ad-hoc signed and nothing
+else, and **it could not be run on a current Mac at all**. Reproduced on macOS
+26.5.1, Apple silicon, from the published `v0.2.0` archive:
 
 ```
-Signature=adhoc
-CodeDirectory ... flags=0x2(adhoc)
-TeamIdentifier=not set
+$ ./UrDatabase.App
+Killed: 9
 ```
 
-What they lack is a **Developer ID and notarization**, and that is what
-Gatekeeper actually objects to:
+No dialog, no stdout, no stderr. The kernel log says why:
 
-- **macOS** attaches a quarantine flag to anything a browser downloaded and, on
-  first launch, **kills the process outright — no dialog, no error, nothing in
-  the interface**. That symptom is the important part: a silent death reads as a
-  crash, and somebody who thinks the app crashed never goes looking for a
-  terminal command. Saying "it reports the app as damaged" would describe the
-  `.app` bundle behaviour, which is not what ships. The fix is one command, which
-  the downloads page and the release notes both print with the real filename in
-  it:
+```
+kernel: (AppleMobileFileIntegrity) AMFI: '.../UrDatabase.App' is adhoc signed.
+kernel: (AppleSystemPolicy) ASP: Security policy would not allow process
+```
 
-  ```sh
-  xattr -dr com.apple.quarantine ~/Downloads/UrDatabase-0.1.0-osx-arm64
-  ```
+`codesign --verify` passed the whole time — the signature was intact, it was
+simply ad-hoc, and that is what was refused.
 
-  There is no `.app` to drag to Applications; the folder holds an executable
-  called `UrDatabase.App`.
+**Every document in this repository used to give the fix as
+`xattr -dr com.apple.quarantine`, and it did not work.** Measured, on the same
+machine and the same archive:
 
-- **Windows** shows *"Windows protected your PC"* from SmartScreen, which is a
-  reputation check rather than a signature one. **More info**, then **Run
-  anyway**.
+| Attempt | Result |
+| --- | --- |
+| Launch as downloaded | `Killed: 9` |
+| `xattr -dr com.apple.quarantine …` | `Killed: 9` |
+| Re-sign ad-hoc locally with `codesign --force --deep --sign -` | `Killed: 9` |
+| `open ./UrDatabase.App` | rejected |
 
-Fixing this properly means a paid Apple signing identity and notarization, plus
-a Windows code signing certificate. Until then the manual step is a **gap, not a
-design decision**, and the wording everywhere should keep saying so. Packaging
-the macOS build as a real `.app` bundle is tracked in issue #30.
+Quarantine was never the blocker. Removing the flag cannot help when the
+signature itself is what macOS refuses, and printing that command on the
+downloads page sent people away certain the application was broken.
+
+### What it does now
+
+`scripts/package-macos-app.sh` is called by the packaging action for each macOS
+runtime identifier. It:
+
+1. imports the Developer ID certificate into a keychain created for that run,
+   calling `security set-key-partition-list` so `codesign` does not block on a
+   GUI prompt no runner can answer;
+2. signs every file under `Contents/MacOS` and then the bundle, with
+   `--timestamp --options runtime`;
+3. notarizes the app with `xcrun notarytool submit --wait` and staples the
+   ticket into it;
+4. builds the disk image around the stapled app, signs it, notarizes and
+   staples that too;
+5. asks `spctl` what a user's machine will conclude, and fails the release if
+   the answer is anything but "accepted".
+
+The hardened runtime — `--options runtime` — is required for notarization and
+forbids the writable-executable memory a JIT needs, so
+`src/UrDatabase.App/UrDatabase.App.entitlements` grants `allow-jit` and
+`allow-unsigned-executable-memory` back. Signing without them produces a build
+that verifies, notarizes and staples perfectly and then dies at startup with
+`Failed to create CoreCLR, HRESULT: 0x80070008`.
+
+### Why a disk image and not a zip
+
+Because a zip loses most of the signature, silently.
+
+`codesign` treats every file under `Contents/MacOS` as the bundle's code, and a
+self-contained .NET publish puts about 225 of them there. Only the 18 Mach-O
+files can carry an embedded signature; the managed assemblies, the
+runtimeconfig and `Data/schema.sql` are signed in the "generic" format, which
+stores the signature in extended attributes. Measured on a real build:
+
+| Archived with | Extracted with | `codesign --verify --strict` |
+| --- | --- | --- |
+| `ditto -c -k` | `ditto -x -k` | valid on disk |
+| `ditto -c -k` | `unzip` | code object is not signed at all |
+| `zip -r -y` | `unzip` | code object is not signed at all |
+
+A zip therefore works for somebody who opens it in Finder and breaks for
+somebody who opens it in a terminal — which is the same shape of bug as the one
+being fixed. A disk image is a filesystem, so nothing can be dropped in
+transit, and it is what Apple's own guidance assumes for Developer ID
+distribution. It also gives a Mac user the drag-to-Applications window they
+already know.
+
+The `.app` bundle is not cosmetic either: `stapler` staples a ticket to a bundle
+or an image and has nowhere to put one on a loose executable, so the bundle is a
+prerequisite for notarization rather than a nicety. It is assembled by
+`tool/make_macos_bundle.py`, which is Python rather than shell so that its tests
+can run on Linux in the `Version` job.
+
+### Without the secrets
+
+A fork gets no secrets, and neither does this repository until the owner adds
+them. Both still produce a build — an unsigned artifact is honest, a failed
+release is not — and the pipeline says so in four places: a workflow warning,
+the job summary, a `[!WARNING]` block in the release notes themselves stating
+that the macOS downloads will not open, and the downloads page.
+
+That last one needs a mechanism, because the downloads page is static HTML
+deployed when `web/downloads/` changes and never rebuilt for a release. It
+therefore cannot know from its own markup whether the build it is offering was
+signed, and a page with *"it is signed and notarized"* written into it would
+keep saying so through a release where the certificate was missing — which
+would be a worse failure than the wrong `xattr` advice it replaced. Being wrong
+about the remedy is bad; being wrong about there being a problem is worse.
+
+So `release.yml` writes one word into its own notes:
+
+```html
+<!-- urdatabase:macos-signing=notarized -->
+```
+
+`notarized`, `signed` or `unsigned`, taken from what packaging actually
+reported. `macosSigning()` in `web/downloads/releases.js` reads it back out of
+the releases API and the page renders the matching sentence. A release with no
+marker — everything up to 0.2.0, and anything made by hand — reads as `unknown`
+and is described as unsigned, because that is what those are.
+
+Nothing about the human-readable text depends on the marker; it is the same
+fact in a form a script can act on, and `summariseNotes` strips it so it never
+appears under "What's new".
+
+Windows is still unsigned. SmartScreen shows *"Windows protected your PC"*,
+which is a reputation check rather than a signature one: **More info**, then
+**Run anyway**. Fixing it needs a Windows code signing certificate and is not
+covered here.
 
 ## Secrets
 
@@ -187,8 +278,27 @@ the macOS build as a real `.app` bundle is tracked in issue #30.
 | --- | --- | --- |
 | `TMDB_API_KEY` | `pr.yml` test builds, `release.yml` | Set |
 | `OMDB_API_KEY` | `pr.yml` test builds, `release.yml` | Set |
+| `MACOS_DEVELOPER_ID_CERT_P12_BASE64` | macOS signing, both workflows | **Missing — see below** |
+| `MACOS_DEVELOPER_ID_CERT_PASSWORD` | macOS signing, both workflows | **Missing — see below** |
+| `APP_STORE_CONNECT_KEY_ID` | notarization, `release.yml` | **Missing — see below** |
+| `APP_STORE_CONNECT_ISSUER_ID` | notarization, `release.yml` | **Missing — see below** |
+| `APP_STORE_CONNECT_PRIVATE_KEY` | notarization, `release.yml` | **Missing — see below** |
 | `FIREBASE_SERVICE_ACCOUNT` | `deploy-downloads.yml` | **Missing — see below** |
 | `GITHUB_TOKEN` | tagging, releases, deployments | Provided automatically |
+
+`MACOS_PROVISIONING_PROFILE_BASE64` is deliberately **not** in that list. A
+provisioning profile is for App Store distribution and for restricted
+entitlements; Developer ID plus notarization needs neither, and requiring one
+would be a step that fails for a reason nobody could act on.
+
+### The five signing secrets are actually secret
+
+Unlike the two API keys below, these are not published in any build and must
+never be. The certificate's private key and the App Store Connect key can each
+be used to sign software as this developer, which is a different and much larger
+thing than reading somebody's film metadata. They are used only on the macOS
+runner, imported into a keychain created for that one run and deleted
+afterwards whether the run succeeded or not.
 
 ### The two API keys are not secret once shipped
 
@@ -220,7 +330,44 @@ Consequences worth knowing:
 
 ## Manual steps the owner still has to do
 
-### 1. Restore `FIREBASE_SERVICE_ACCOUNT` — required before the site can deploy
+### 1. Add the five macOS signing secrets — required before a Mac download opens
+
+Nothing else on this list is as visible: without these, every macOS release is
+a download that cannot be run. A key cannot be read back out of GitHub, so
+these have to be exported afresh rather than copied from another repository.
+
+The certificate, from a Mac that has it in its login keychain:
+
+1. **Keychain Access** → **My Certificates** → the
+   *Developer ID Application: …* entry. If there is none, create one at
+   [developer.apple.com](https://developer.apple.com/account/resources/certificates)
+   → **Certificates** → **+** → **Developer ID Application**. It must be a
+   *Developer ID Application* certificate: an *Apple Development* one cannot
+   sign for distribution outside the App Store, and a *Developer ID Installer*
+   one signs `.pkg` files rather than apps.
+2. Right-click it → **Export…** → `.p12`, and set a password. Export the
+   certificate **with its private key** — the disclosure triangle should have
+   shown one underneath it.
+3. `base64 -i Certificate.p12 | pbcopy`, and paste that as
+   `MACOS_DEVELOPER_ID_CERT_P12_BASE64`. The password goes in
+   `MACOS_DEVELOPER_ID_CERT_PASSWORD`.
+
+The notarization credentials, from App Store Connect:
+
+4. [appstoreconnect.apple.com](https://appstoreconnect.apple.com/access/integrations/api)
+   → **Users and Access** → **Integrations** → **App Store Connect API** →
+   **+**. Access: **Developer** is enough to notarize.
+5. Download the `AuthKey_XXXXXXXXXX.p8`. **It can be downloaded once**; there is
+   no second chance.
+6. `APP_STORE_CONNECT_KEY_ID` is the ten-character key id, shown in the table.
+   `APP_STORE_CONNECT_ISSUER_ID` is the UUID above the table, shared by every
+   key in the account. `APP_STORE_CONNECT_PRIVATE_KEY` is the entire contents of
+   the `.p8`, `-----BEGIN PRIVATE KEY-----` line included.
+
+Then bump the version and merge anything, and check the run's summary: it says
+either "macOS: signed and notarized" or exactly which secret is missing.
+
+### 2. Restore `FIREBASE_SERVICE_ACCOUNT` — required before the site can deploy
 
 The secret was lost when the repository was rebuilt, and a key cannot be read
 back out of GitHub, so it has to be regenerated rather than recovered. Until it
@@ -245,7 +392,7 @@ if one is ever wanted, is connected in the Firebase console and needs DNS record
 at the registrar; a deploy can succeed while a custom domain still says "Site Not
 Found".
 
-### 2. Set the required status checks on `main`
+### 3. Set the required status checks on `main`
 
 Settings → Branches → branch protection for `main` → **Require status checks to
 pass before merging**, and select, by these exact names:
@@ -257,7 +404,7 @@ pass before merging**, and select, by these exact names:
 
 Without this the version check is advisory, and a pull request can merge red.
 
-### 3. Nothing else
+### 4. Nothing else
 
 No Firestore, no Cloud Functions, no emulators, no Firebase Authentication. The
 application uses no Firebase at runtime at all; Hosting serves one static page

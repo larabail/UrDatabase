@@ -1,39 +1,34 @@
 name: Package UrDatabase
 description: >
-  Publishes UrDatabase self-contained for each runtime identifier and zips each
-  one as `UrDatabase-<version>-<rid>.zip`.
+  Publishes UrDatabase self-contained for each runtime identifier: the macOS
+  builds as a signed, notarized `UrDatabase-<version>-<rid>.dmg`, and Windows
+  as `UrDatabase-<version>-win-x64.zip`.
 
-# Shared between pr.yml and release.yml on purpose. The zips a reviewer
-# downloads from a pull request are then byte-for-byte the same kind of thing
-# as the zips attached to the release, produced by the same command. When the
-# two were separate, "it worked in the PR build" and "the release is broken"
-# could both be true at once.
+# Shared between pr.yml and release.yml on purpose. The artefacts a reviewer
+# downloads from a pull request are then the same kind of thing as the ones
+# attached to the release, produced by the same commands. When the two were
+# separate, "it worked in the PR build" and "the release is broken" could both
+# be true at once.
 #
 # **This has to run on a macOS runner.** That is not a preference, and the
 # reason is not obvious enough to be left to be rediscovered:
 #
 #   * On Apple silicon the kernel refuses to execute an arm64 Mach-O binary
 #     that carries no code signature at all. Not a Gatekeeper prompt, not a
-#     quarantine warning -- SIGKILL, reported by the shell as
-#     `Killed: 9` and by Finder as nothing whatsoever. No `xattr` incantation
-#     helps, because the file was never quarantined; it is simply unsignable
-#     as it stands.
-#   * The .NET 8 SDK ad-hoc signs the macOS apphost, which satisfies that
-#     requirement -- but only when the build host is macOS. The condition in
+#     quarantine warning -- SIGKILL, reported by the shell as `Killed: 9` and
+#     by Finder as nothing whatsoever.
+#   * The .NET 8 SDK ad-hoc signs the macOS apphost, which satisfies that much
+#     -- but only when the build host is macOS. The condition in
 #     Microsoft.NET.Sdk.targets is literally
 #     `IsOSPlatform(OSX) and Exists('/usr/bin/codesign')`. Cross-compiling
 #     `-r osx-arm64` from Linux exits 0 and produces an executable that cannot
 #     start on any Apple silicon Mac.
+#   * Everything below the publish -- codesign, hdiutil, notarytool, stapler,
+#     spctl -- is macOS-only anyway.
 #
-# So a Linux runner would publish, package, upload and release a flagship
-# download that is dead on arrival, with nothing anywhere in the logs saying
-# so. The `codesign --verify` below exists to make sure that can never be true
-# again quietly.
-#
-# A macOS host is also the one that gets the archive permissions right: the
-# executable bit lives in a zip's external attributes, and a zip built on
-# Windows has no bit to record, so the download would need `chmod +x` before it
-# could start.
+# A macOS host is also the one that gets the archive permissions right for the
+# Windows zip: the executable bit lives in a zip's external attributes, and a
+# zip built on Windows has no bit to record.
 #
 # Windows is published from here too. It needs no signature to run and no
 # executable bit, so there is nothing to gain from a second runner.
@@ -43,7 +38,7 @@ description: >
 
 inputs:
   version:
-    description: The version to build and to name the archives after.
+    description: The version to build and to name the artefacts after.
     required: true
   tmdb-api-key:
     description: >
@@ -59,6 +54,33 @@ inputs:
       as above.
     required: false
     default: ''
+  macos-certificate-p12-base64:
+    description: >
+      The `Developer ID Application` certificate and its private key, as a
+      base64 `.p12`. Empty means the macOS builds are only ad-hoc signed, which
+      a current Mac kills on launch -- so it is reported loudly rather than
+      left to look like a normal build.
+    required: false
+    default: ''
+  macos-certificate-password:
+    description: The password for that `.p12`.
+    required: false
+    default: ''
+  app-store-connect-key-id:
+    description: >
+      App Store Connect API key id, used to notarize. Empty means the build is
+      signed but not notarized, which macOS still refuses -- with a dialog
+      rather than in silence.
+    required: false
+    default: ''
+  app-store-connect-issuer-id:
+    description: App Store Connect issuer id.
+    required: false
+    default: ''
+  app-store-connect-private-key:
+    description: The `.p8` private key, in full.
+    required: false
+    default: ''
   runtimes:
     description: Space-separated runtime identifiers.
     required: false
@@ -67,31 +89,64 @@ inputs:
     description: The application project to publish.
     required: false
     default: src/UrDatabase.App/UrDatabase.App.csproj
+  icon:
+    description: The `.icns` that becomes the macOS bundle's icon.
+    required: false
+    default: src/UrDatabase.App/Assets/UrDatabase.icns
   output:
-    description: Where the finished zips are written.
+    description: Where the finished artefacts are written.
     required: false
     default: dist
 
 outputs:
   directory:
-    description: The directory holding the finished zips.
+    description: The directory holding the finished artefacts.
     value: ${{ inputs.output }}
+  macos-signed:
+    description: >
+      `true` when the macOS builds carry a Developer ID signature. Both macOS
+      runtime identifiers go through identical code, so one answer covers both.
+    value: ${{ steps.package.outputs.signed }}
+  macos-notarized:
+    description: '`true` when the macOS builds were notarized and stapled.'
+    value: ${{ steps.package.outputs.notarized }}
+  macos-reason:
+    description: Why the macOS builds are not signed or notarized, when they are not.
+    value: ${{ steps.package.outputs.reason }}
 
 runs:
   using: composite
   steps:
-    - shell: bash
+    - id: package
+      shell: bash
       env:
         VERSION: ${{ inputs.version }}
         RUNTIMES: ${{ inputs.runtimes }}
         PROJECT: ${{ inputs.project }}
+        ICON: ${{ inputs.icon }}
         OUTPUT: ${{ inputs.output }}
         TMDB_API_KEY: ${{ inputs.tmdb-api-key }}
         OMDB_API_KEY: ${{ inputs.omdb-api-key }}
+        MACOS_CERT_P12_BASE64: ${{ inputs.macos-certificate-p12-base64 }}
+        MACOS_CERT_PASSWORD: ${{ inputs.macos-certificate-password }}
+        ASC_KEY_ID: ${{ inputs.app-store-connect-key-id }}
+        ASC_ISSUER_ID: ${{ inputs.app-store-connect-issuer-id }}
+        ASC_PRIVATE_KEY: ${{ inputs.app-store-connect-private-key }}
       run: |
         set -euo pipefail
 
+        cd "$GITHUB_WORKSPACE"
         mkdir -p "$OUTPUT"
+
+        # Seeded before anything runs, so a caller reading these outputs always
+        # gets an answer -- including when `runtimes` names no macOS build at
+        # all and nothing below ever sets them. The packaging script appends
+        # its own values later, and for these the last write wins.
+        {
+          echo 'signed=false'
+          echo 'notarized=false'
+          echo 'reason=no macOS build was produced by this run'
+        } >> "$GITHUB_OUTPUT"
 
         # Said once, up front, rather than left for somebody to work out from a
         # running application that shows no posters. A build with no keys is a
@@ -106,22 +161,19 @@ runs:
         # else in this script.
         read -ra RIDS <<< "$RUNTIMES"
 
+        APP=$(basename "$PROJECT" .csproj)
+
         for RID in "${RIDS[@]}"; do
           NAME="UrDatabase-${VERSION}-${RID}"
+          PUBLISH="stage/publish-${RID}"
           echo "::group::Publishing $NAME"
 
-          # Staged under its own name so the archive holds exactly one
-          # top-level folder called `UrDatabase-<version>-<rid>`. Every unzip
-          # tool then produces the same path, which is what makes it possible
-          # to print a `xattr -dr com.apple.quarantine ~/Downloads/<that>`
-          # command on the downloads page that is actually correct -- and it
-          # stops a double-click in ~/Downloads emptying two hundred runtime
-          # files into it.
-          rm -rf "stage/$NAME"
+          rm -rf "$PUBLISH"
 
           # -p:Version is passed as well as being set in Directory.Build.props
-          # so the assembly and the filename cannot disagree, including on a
-          # branch where the props file does not exist yet.
+          # so the assembly, the bundle's CFBundleVersion and the filename
+          # cannot disagree, including on a branch where the props file does
+          # not exist yet.
           #
           # The two API keys are compiled in so that an official build works
           # the moment it is opened, with no signing up and no configuration
@@ -148,7 +200,7 @@ runs:
             -p:TmdbApiKey="$TMDB_API_KEY" \
             -p:OmdbApiKey="$OMDB_API_KEY" \
             -p:ContinuousIntegrationBuild=true \
-            --output "stage/$NAME"
+            --output "$PUBLISH"
 
           echo "::endgroup::"
 
@@ -156,35 +208,62 @@ runs:
           # when the project is a library, or when the target framework is
           # still windows-only and the RID cannot satisfy it. Caught here, the
           # message names the likely cause; left alone, it surfaces as a
-          # release whose zips nobody can start.
-          APP=$(basename "$PROJECT" .csproj)
-          if [ ! -f "stage/$NAME/$APP" ] && [ ! -f "stage/$NAME/$APP.exe" ]; then
+          # release whose downloads nobody can start.
+          if [ ! -f "$PUBLISH/$APP" ] && [ ! -f "$PUBLISH/$APP.exe" ]; then
             echo "::error title=Nothing to run::Publishing $RID produced no $APP executable. Check that ${PROJECT} sets OutputType to WinExe or Exe, targets net8.0 rather than a windows-only framework, and still builds an assembly called ${APP}."
-            ls -la "stage/$NAME" | head -n 40
+            ls -la "$PUBLISH" | head -n 40
             exit 1
           fi
 
-          # And for the two macOS builds, that the launcher is signed.
-          #
-          # An unsigned arm64 binary is killed by the kernel the moment it
-          # starts, so shipping one means a download that does nothing at all.
-          # The SDK signs it automatically on a macOS host and silently does
-          # not anywhere else, which makes this exactly the kind of failure
-          # that survives review: the build is green, the zip is the right
-          # size, and only somebody who unzips it on an actual Mac finds out.
           case "$RID" in
             osx-*)
-              if ! codesign --verify --verbose=1 "stage/$NAME/$APP" 2>&1; then
-                echo "::error title=Unsigned macOS build::stage/$NAME/$APP has no valid code signature, so macOS will kill it on launch. The .NET SDK only ad-hoc signs the apphost when the build host is macOS -- check that this job still runs on a macOS runner."
+              # That the SDK signed the launcher at all, checked before
+              # anything is built on top of it. The SDK ad-hoc signs the
+              # apphost on a macOS host and silently does not anywhere else,
+              # which makes this exactly the kind of failure that survives
+              # review: the build is green, the artefact is the right size, and
+              # only somebody who runs it on an actual Mac finds out. It is
+              # also the cheapest possible check that this job is still on a
+              # macOS runner.
+              if ! codesign --verify --verbose=1 "$PUBLISH/$APP" 2>&1; then
+                echo "::error title=Unsigned macOS build::$PUBLISH/$APP has no code signature at all, so nothing below can re-sign it into something that runs. The .NET SDK only ad-hoc signs the apphost when the build host is macOS -- check that this job still runs on a macOS runner."
                 exit 1
               fi
+
+              # Notarization staples a ticket to a bundle or a disk image and
+              # has nowhere to put one on a loose executable, so the .app is a
+              # prerequisite for the rest of this rather than a nicety. The
+              # publish directory is moved into the bundle, not copied.
+              rm -rf "stage/$RID"
+              python3 tool/make_macos_bundle.py \
+                --publish-dir "$PUBLISH" \
+                --output "stage/$RID" \
+                --version "$VERSION" \
+                --icon "$ICON"
+
+              # Signs, notarizes, staples and wraps the bundle in a disk image.
+              # Degrades to an unsigned .dmg with a loud warning when the
+              # secrets are absent, which is what a fork gets; see the script
+              # for why the container is a disk image rather than a zip.
+              scripts/package-macos-app.sh \
+                "stage/$RID/UrDatabase.app" \
+                "${OUTPUT}/${NAME}.dmg"
+
+              echo "Packaged ${OUTPUT}/${NAME}.dmg"
+              ;;
+
+            *)
+              # Windows keeps its zip. It needs no signature to start and no
+              # executable bit, and the archive holds exactly one top-level
+              # folder called `UrDatabase-<version>-win-x64`, so every unzip
+              # tool produces the same path and a double-click in ~/Downloads
+              # does not empty two hundred runtime files into it.
+              rm -rf "stage/$NAME"
+              mv "$PUBLISH" "stage/$NAME"
+              ( cd stage && zip --recurse-paths --quiet "../${OUTPUT}/${NAME}.zip" "$NAME" )
+              echo "Packaged ${OUTPUT}/${NAME}.zip"
               ;;
           esac
-
-          # Zipped from inside `stage/` so the paths in the archive start at
-          # the folder name and not at `stage/`.
-          ( cd stage && zip --recurse-paths --quiet "../${OUTPUT}/${NAME}.zip" "$NAME" )
-          echo "Packaged ${OUTPUT}/${NAME}.zip"
         done
 
         echo 'Built:'

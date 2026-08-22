@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Entitlements for the hardened runtime.
+
+  `codesign --options runtime` is not optional: Apple's notary service rejects
+  anything without it. The hardened runtime then forbids, among other things,
+  making memory both writable and executable -- which is precisely what a JIT
+  does, and .NET is a JIT. An app signed with the hardened runtime and none of
+  the keys below signs cleanly, notarizes cleanly, staples cleanly and then
+  dies on launch, so these are load bearing rather than boilerplate.
+
+  Each one is here for a reason and none should be added casually; every
+  entitlement is a hole in the protection the hardened runtime is providing.
+  Both of the ones below were confirmed necessary by signing a build without
+  them and launching it: the process dies immediately with
+
+      Failed to create CoreCLR, HRESULT: 0x80070008
+
+  which is the JIT being refused executable memory, reported as though the
+  machine were out of it.
+
+  Deliberately absent:
+
+    com.apple.security.cs.disable-library-validation
+        Would let the process load libraries signed by somebody else. The
+        obvious candidates are the native libraries beside the executable --
+        Skia, HarfBuzz, the Avalonia macOS backend, SQLite -- which arrive
+        from NuGet already signed by their own authors and are loaded with
+        dlopen rather than linked. The release re-signs every one of them with
+        the same Developer ID as the application, so library validation has
+        nothing to object to, and a build that did need this key would be a
+        build that had missed signing something.
+
+    com.apple.security.cs.allow-dyld-environment-variables
+        Lets DYLD_INSERT_LIBRARIES and friends apply to the process, which is
+        the classic route to injecting code into a signed application. .NET
+        configures itself through DOTNET_* variables rather than DYLD_* ones,
+        and this build is self-contained, so nothing here needs it.
+
+    com.apple.security.app-sandbox
+        Sandboxing is an App Store requirement, not a Developer ID one. The
+        whole job of this application is to read a folder of films that the
+        user chose anywhere on their disk, so a sandbox would have to be
+        opened back up with security-scoped bookmarks before it did anything.
+        Worth doing one day; not part of making the download open.
+-->
+<plist version="1.0">
+<dict>
+  <!-- The CoreCLR JIT maps executable pages at runtime. Without this the
+       process is killed the first time it compiles a method, which is during
+       startup, so the app never draws a window. -->
+  <key>com.apple.security.cs.allow-jit</key>
+  <true/>
+
+  <!-- .NET falls back to plain RWX pages when its write-xor-execute mode is
+       unavailable, and parts of the runtime -- notably the interpreter paths
+       and some diagnostics -- still allocate that way. Without this the
+       failure is intermittent by workload rather than immediate, which is the
+       worse kind. -->
+  <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+  <true/>
+</dict>
+</plist>

@@ -58,7 +58,13 @@ jobs:
     # the Linux rate, which is worth knowing before anybody flips this
     # repository back to private.
     runs-on: macos-14
-    timeout-minutes: 45
+    # Long, because notarization is a queue at Apple rather than work this
+    # runner is doing: four submissions -- an app and a disk image for each of
+    # the two macOS builds -- each usually a couple of minutes and occasionally
+    # far longer when Apple is busy. `notarytool --wait` has its own 45 minute
+    # timeout, so this has to be comfortably above it or the job is killed
+    # mid-submission and the release is left tagged with nothing attached.
+    timeout-minutes: 90
 
     steps:
       - uses: actions/checkout@v4
@@ -175,6 +181,7 @@ jobs:
           fi
 
       - name: Package
+        id: package
         if: steps.gate.outputs.publish == 'true'
         uses: ./.github/actions/package-app
         with:
@@ -187,23 +194,101 @@ jobs:
           # commit.
           tmdb-api-key: ${{ secrets.TMDB_API_KEY }}
           omdb-api-key: ${{ secrets.OMDB_API_KEY }}
+          # The five that make the macOS download open at all. Missing, they
+          # produce an ad-hoc signed build that a current Mac kills on launch
+          # with no dialog -- so the steps below refuse to describe such a
+          # release as signed, and say plainly that it is not. Genuinely
+          # secret, unlike the two API keys above: the certificate's private
+          # key and an App Store Connect key can both be used to sign software
+          # as this developer.
+          macos-certificate-p12-base64: ${{ secrets.MACOS_DEVELOPER_ID_CERT_P12_BASE64 }}
+          macos-certificate-password: ${{ secrets.MACOS_DEVELOPER_ID_CERT_PASSWORD }}
+          app-store-connect-key-id: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+          app-store-connect-issuer-id: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+          app-store-connect-private-key: ${{ secrets.APP_STORE_CONNECT_PRIVATE_KEY }}
 
-      # Checksums, so somebody who cares can confirm the zip they downloaded is
-      # the zip this run built. Costs nothing, and with no Developer ID and no
-      # notarization it is the only answer available to "is this file safe?".
-      - name: Checksum the archives
+      # Recorded on the run before anything is published, because "is the Mac
+      # build going to open?" is the question this release exists to answer and
+      # a warning buried in a step log is not an answer.
+      #
+      # Not fatal. A repository without the certificate must still be able to
+      # cut a release -- that is the state this one is in until the secrets are
+      # added, and it is the state every fork is in permanently. What must not
+      # happen is a release that is quietly unsigned while the notes tell
+      # people it opens normally, and that is why the notes below are written
+      # from these two values rather than from an assumption.
+      - name: Say whether the Mac build will open
+        if: steps.gate.outputs.publish == 'true'
+        env:
+          SIGNED: ${{ steps.package.outputs.macos-signed }}
+          NOTARIZED: ${{ steps.package.outputs.macos-notarized }}
+          REASON: ${{ steps.package.outputs.macos-reason }}
+        run: |
+          set -euo pipefail
+
+          if [ "$NOTARIZED" = 'true' ]; then
+            {
+              echo '### macOS: signed and notarized'
+              echo ''
+              echo 'The disk images are signed with a Developer ID, notarized'
+              echo "by Apple and stapled, and \`spctl\` accepted them on the"
+              echo 'runner. They open by double-clicking, with no terminal'
+              echo 'command.'
+              echo ''
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          if [ "$SIGNED" = 'true' ]; then
+            HEADLINE='signed, but **not notarized**'
+            EFFECT='macOS refuses an unnotarized download and says so in a dialog. Nobody can open this build without deliberately overriding Gatekeeper.'
+          else
+            HEADLINE='**not signed**'
+            EFFECT="macOS kills an ad-hoc signed download on launch, with no dialog, no error and nothing in the interface. This build cannot be opened on a current Mac at all, and \`xattr -dr com.apple.quarantine\` does not help -- the ad-hoc signature is what is being refused, not the quarantine flag."
+          fi
+
+          echo "::warning title=The macOS download will not open::This release is $HEADLINE, because $REASON. Add the missing repository secrets and publish a new version."
+          {
+            echo '> [!WARNING]'
+            echo "> ### The macOS download of this release is $HEADLINE"
+            echo '>'
+            echo "> Because $REASON."
+            echo '>'
+            echo "> $EFFECT"
+            echo '>'
+            echo "> Set \`MACOS_DEVELOPER_ID_CERT_P12_BASE64\`,"
+            echo "> \`MACOS_DEVELOPER_ID_CERT_PASSWORD\`, \`APP_STORE_CONNECT_KEY_ID\`,"
+            echo "> \`APP_STORE_CONNECT_ISSUER_ID\` and \`APP_STORE_CONNECT_PRIVATE_KEY\`"
+            echo '> under Settings, then publish a new version. See docs/releases.md.'
+            echo ''
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # Checksums, so somebody who cares can confirm the file they downloaded
+      # is the file this run built.
+      - name: Checksum the downloads
         if: steps.gate.outputs.publish == 'true'
         run: |
           set -euo pipefail
           cd dist
+
+          # nullglob so a missing `.dmg` or `.zip` disappears instead of being
+          # passed through as the literal pattern, which shasum would then
+          # report as a missing file and fail the release over.
+          shopt -s nullglob
+          FILES=(*.dmg *.zip)
+          if [ ${#FILES[@]} -eq 0 ]; then
+            echo '::error title=Nothing was built::dist/ holds no .dmg and no .zip, so there is nothing to release.'
+            exit 1
+          fi
+
           # macOS ships `shasum` and no `sha256sum`; Linux is usually the other
           # way round. Both are checked so this keeps working if the job ever
           # moves back to a Linux runner, and so the output format is the same
           # either way -- it is what people paste into `shasum -c`.
           if command -v sha256sum >/dev/null 2>&1; then
-            sha256sum -- *.zip > SHA256SUMS.txt
+            sha256sum -- "${FILES[@]}" > SHA256SUMS.txt
           else
-            shasum -a 256 -- *.zip > SHA256SUMS.txt
+            shasum -a 256 -- "${FILES[@]}" > SHA256SUMS.txt
           fi
           cat SHA256SUMS.txt
 
@@ -286,8 +371,27 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ steps.version.outputs.tag }}
           VERSION: ${{ steps.version.outputs.version }}
+          SIGNED: ${{ steps.package.outputs.macos-signed }}
+          NOTARIZED: ${{ steps.package.outputs.macos-notarized }}
+          REASON: ${{ steps.package.outputs.macos-reason }}
         run: |
           set -euo pipefail
+
+          # One word for what packaging actually achieved, written into the
+          # notes as a comment so the downloads page can read it. The page is
+          # static HTML deployed independently of any release, so it cannot
+          # know on its own whether the build it is offering is signed -- and a
+          # page with "it is signed" baked into its markup would go on saying
+          # so through a release that was not. Everything else about the macOS
+          # state is human-readable a few lines below; this is the same fact in
+          # a form a script can act on.
+          if [ "$NOTARIZED" = 'true' ]; then
+            STATE=notarized
+          elif [ "$SIGNED" = 'true' ]; then
+            STATE=signed
+          else
+            STATE=unsigned
+          fi
 
           # An unquoted heredoc, so `$VERSION` expands, with the backticks
           # escaped so they stay Markdown instead of becoming command
@@ -298,44 +402,69 @@ jobs:
           cat > notes.md <<NOTES
           ## Downloads
 
+          <!-- urdatabase:macos-signing=$STATE -->
+
           Take the build for your machine below, or use
           https://urdatabase-downloads.web.app
 
           | Machine | File |
           | --- | --- |
-          | Mac, Apple silicon | \`UrDatabase-$VERSION-osx-arm64.zip\` |
-          | Mac, Intel | \`UrDatabase-$VERSION-osx-x64.zip\` |
+          | Mac, Apple silicon | \`UrDatabase-$VERSION-osx-arm64.dmg\` |
+          | Mac, Intel | \`UrDatabase-$VERSION-osx-x64.dmg\` |
           | Windows, 64-bit | \`UrDatabase-$VERSION-win-x64.zip\` |
 
-          These builds are ad-hoc signed but **not notarized**, which is enough
-          for Gatekeeper to refuse them. Downloading through a browser attaches
-          a quarantine flag, and on first launch macOS **kills the process
-          outright** — no dialog, no error, nothing in the interface. The app
-          has not crashed and the download is not corrupt. Clear the flag once,
-          after unzipping:
-
-          \`\`\`sh
-          xattr -dr com.apple.quarantine ~/Downloads/UrDatabase-$VERSION-osx-arm64
-          \`\`\`
-
-          There is no \`.app\` to drag to Applications. The folder holds an
-          executable called \`UrDatabase.App\` — open that. This step exists only
-          because notarization does not.
-
-          On Windows, SmartScreen shows "Windows protected your PC". Choose
-          **More info**, then **Run anyway**.
-
-          \`SHA256SUMS.txt\` lists the checksum of each archive.
-
           NOTES
+
+          # What the macOS paragraph says is decided by what actually happened
+          # during packaging, never assumed. A release that claims to open
+          # normally and then dies silently is the exact failure this pipeline
+          # was changed to stop, and repeating it in the notes would be worse
+          # than the original bug -- it would be a promise.
+          if [ "$NOTARIZED" = 'true' ]; then
+            cat >> notes.md <<'MACOK'
+          On a Mac, open the `.dmg` and drag **UrDatabase** to Applications,
+          then open it from there. The build is signed with a Developer ID and
+          notarized by Apple, so it opens the first time like anything else.
+          There is no terminal command to run.
+
+          MACOK
+          else
+            {
+              echo '> [!WARNING]'
+              echo '> **The macOS downloads in this release will not open.**'
+              echo ">"
+              if [ "$SIGNED" = 'true' ]; then
+                echo '> They are signed with a Developer ID but were not notarized,'
+                echo "> because $REASON, and macOS refuses an unnotarized download."
+              else
+                echo '> They are only ad-hoc signed, because'
+                echo "> $REASON. macOS kills an ad-hoc signed download the moment"
+                echo '> it starts -- no dialog, no error, nothing in the interface.'
+                echo '> Clearing the quarantine flag does not help: the signature is'
+                echo '> what is being refused.'
+              fi
+              echo '>'
+              echo '> Build from source instead, or wait for the next release.'
+              echo ''
+            } >> notes.md
+          fi
+
+          cat >> notes.md <<'NOTESTAIL'
+          On Windows, SmartScreen shows "Windows protected your PC". Choose
+          **More info**, then **Run anyway**. It is a reputation check rather
+          than a signature one.
+
+          `SHA256SUMS.txt` lists the checksum of each file.
+
+          NOTESTAIL
 
           gh release create "$TAG" \
             --title "UrDatabase $VERSION" \
             --notes-file notes.md \
             --generate-notes \
             --verify-tag \
-            dist/UrDatabase-"$VERSION"-osx-arm64.zip \
-            dist/UrDatabase-"$VERSION"-osx-x64.zip \
+            dist/UrDatabase-"$VERSION"-osx-arm64.dmg \
+            dist/UrDatabase-"$VERSION"-osx-x64.dmg \
             dist/UrDatabase-"$VERSION"-win-x64.zip \
             dist/SHA256SUMS.txt
 
