@@ -110,9 +110,36 @@ dotnet publish src/UrDatabase.App -c Release -r osx-arm64
 
 ## Configuration
 
-Settings live next to the built app in `appsettings.json`. The file is
-gitignored, because it holds your API keys and the absolute paths to your own
-film folders. Copy the template and edit it:
+Settings live in `appsettings.json` in the app's own data directory, beside the
+database, the poster cache and the logs:
+
+| Platform | Where |
+| --- | --- |
+| macOS | `~/Library/Application Support/UrDatabase/appsettings.json` |
+| Windows | `%APPDATA%\UrDatabase\appsettings.json` |
+
+**The app creates that file for you on first run**, copied from the shipped
+template, so configuring it is editing a file that already exists. The **Settings**
+button names the exact path on your machine.
+
+Nothing is ever written next to the executable. On macOS the executable lives
+inside `UrDatabase.app`, which is signed and notarized: a file written in there
+breaks the seal, and macOS then refuses to launch the app at all — so settings
+have to live somewhere writable that also survives an update. Editing anything
+inside `UrDatabase.app` is never the answer, and if you already have, reinstall
+from the DMG.
+
+Configuration is read from the first of these that exists:
+
+1. `<app data>/UrDatabase/appsettings.json` — yours
+2. `appsettings.json` next to the executable — a build tree, when running from source
+3. `appsettings.example.json` next to the executable — the shipped template
+
+Running from source is unaffected. A local `src/UrDatabase.App/appsettings.json`
+is still gitignored, still wins over the shipped template, and stops the
+per-user file being created at all. If one was created already — you ran the app
+before writing yours — an untouched copy of the template does not outrank your
+file either. Edit the per-user file and it goes back to winning, everywhere.
 
 ```bash
 cp src/UrDatabase.App/appsettings.example.json src/UrDatabase.App/appsettings.json
@@ -131,8 +158,9 @@ cp src/UrDatabase.App/appsettings.example.json src/UrDatabase.App/appsettings.js
 
 Paths may contain environment variables and are expanded on load, so
 `%APPDATA%\UrDatabase\movies.db` works on Windows. The application data
-directory .NET reports is `%APPDATA%` on Windows and `~/.config` on macOS, so a
-configuration file written on one is not portable to the other.
+directory .NET reports is `%APPDATA%` on Windows and
+`~/Library/Application Support` on macOS, so a configuration file written on one
+is not portable to the other.
 
 ### API keys
 
@@ -215,6 +243,30 @@ option.
 Nothing is discovered automatically. Jellyfin's UDP discovery is off in many
 deployments, including behind a reverse proxy, so the address is something you
 type once rather than something the app guesses at.
+
+#### When it will not connect
+
+Five things can go wrong reaching a server, and the app names which one it hit
+rather than reporting a single "could not reach the server" for all of them:
+
+| What the app says | What happened | What to do |
+| --- | --- | --- |
+| the name could not be resolved | The address never got as far as being contacted | Use the server's IP address. A Tailscale, VPN or router-local name can work in your browser and still not resolve for the app |
+| refused the connection | The machine is there and nothing is listening on that port | Check Jellyfin is running, and check the port — it is `8096` unless somebody changed it |
+| did not answer in time | Neither refused nor completed | Usually a firewall dropping the connection, or a network this machine cannot currently see |
+| does not look like Jellyfin | Something answered, but not Jellyfin | You have reached a reverse proxy that routes by hostname, and an address it does not recognise lands on the wrong site. Try `http://<address>:8096` directly |
+| rejected the credentials | Jellyfin answered and said no | Check the username and password, or the API key |
+
+The first and fourth are the ones that waste an evening, because in both cases
+the address is genuinely correct in a browser. After any failed sync the app
+asks the server to identify itself on `/System/Info/Public` and writes the
+verdict to `logs/jellyfin.log` in its data directory, so the answer is on disk
+even for the startup sync that never shows a dialog. Credentials are redacted
+out of that file.
+
+An address is taken as typed: a bare host gets `http://`, a trailing slash is
+dropped, and a port or a path prefix you wrote is left exactly as it is, because
+a proxy may need either.
 
 Once configured, **Sync Jellyfin** appears next to the scan button. The app also
 syncs quietly at startup, after the window has already painted from the cache,
@@ -349,7 +401,8 @@ src/UrDatabase.App/          the application: one cross-platform project
   Services/                  config, SQLite, scanning, TMDB, OMDb, Jellyfin, posters
   Assets/UrDatabase.icns     the macOS application icon
   Data/schema.sql            the full schema, applied on first launch
-  appsettings.example.json   configuration template; the real file is ignored
+  appsettings.example.json   configuration template, copied to the user's data
+                             directory on first run; the real file is ignored
   UrDatabase.App.entitlements  hardened runtime exceptions the .NET JIT needs
 tests/UrDatabase.Tests/      xUnit suite
 tool/                        Python helpers with their own unittest suite:
@@ -399,8 +452,9 @@ Stated plainly, so nobody has to find out by using it:
   substrings of each other can still be confused.
 - **Linking a file by hand does not persist.** The file picker updates the open
   window and nothing else; reopening the film forgets it.
-- **Settings is a placeholder** that says so when clicked. Configuration is
-  file-only for now.
+- **Settings shows where things are; it does not change them.** The window names
+  the settings file, the database and the watch folders, and the file is still
+  edited by hand. There is no in-app form for any of it.
 - **Windows builds are not signed.** SmartScreen warns on first run and there
   is no way around it short of a Windows code signing certificate. The macOS
   side of this closed in 0.2.1; the Windows side has not.

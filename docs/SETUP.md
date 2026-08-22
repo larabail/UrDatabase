@@ -23,8 +23,42 @@ and never touches the network.
 The app creates its database on first use and needs no configuration to start. Everything below
 is optional.
 
-Copy `src/UrDatabase.App/appsettings.example.json` to `src/UrDatabase.App/appsettings.json` and
-edit it. That file is gitignored, so your key and your folders can never be committed.
+Settings live in `appsettings.json` in the app's own data directory:
+
+| Platform | Where |
+| --- | --- |
+| macOS | `~/Library/Application Support/UrDatabase/appsettings.json` |
+| Windows | `%APPDATA%\UrDatabase\appsettings.json` |
+
+The app writes that file for you on first run, copied from
+`src/UrDatabase.App/appsettings.example.json`, so there is a real file to edit rather than a
+path to create. It sits beside the database, the poster cache and the logs, and it survives an
+update.
+
+**Never put configuration inside an installed `UrDatabase.app`.** The bundle is signed and
+notarized; a file written next to the executable breaks the code signature and macOS then
+refuses to launch it, and the next update discards it anyway.
+
+Working from a checkout is unchanged. Copy the example next to the binary and it wins over the
+shipped template, exactly as before:
+
+```bash
+cp src/UrDatabase.App/appsettings.example.json src/UrDatabase.App/appsettings.json
+```
+
+That file is gitignored, so your key and your folders can never be committed, and its presence
+also stops a per-user file being created at all.
+
+Configuration is read from the first of these that exists:
+
+1. a path passed to `AppConfig.Load` outright — only tests do this
+2. `<app data>/UrDatabase/appsettings.json` — the user's own
+3. `appsettings.json` next to the executable — a build tree
+4. `appsettings.example.json` next to the executable — the shipped template
+
+With one exception, for the case of running the app once and writing a local config afterwards:
+a per-user file that is still a byte-for-byte copy of the template records no decision, so it
+drops below a file written next to the executable. Editing it at all restores it to the top.
 
 | Setting | Meaning | Default when blank |
 | --- | --- | --- |
@@ -35,9 +69,11 @@ edit it. That file is gitignored, so your key and your folders can never be comm
 | `OmdbApiKey` | OMDb key for the IMDb rating | none |
 | `DownloadPosters` | Cache posters to disk instead of loading them from TMDB | `false` |
 | `TmdbImageSize` | TMDB image size, e.g. `w185`, `w342`, `w500`, `original` | `w342` |
+| `Jellyfin` | An optional server to browse; blank switches the feature off | off |
 
-`<app data>` is `%APPDATA%` on Windows and `~/.config` on macOS. Paths may use `%APPDATA%`,
-`%USERPROFILE%` or a leading `~`; a config file written on Windows still resolves on macOS.
+`<app data>` is `%APPDATA%` on Windows and `~/Library/Application Support` on macOS. Paths may
+use `%APPDATA%`, `%USERPROFILE%` or a leading `~`; a config file written on Windows still
+resolves on macOS.
 
 ## 4) API keys
 
@@ -46,7 +82,7 @@ browses your library — it simply shows no posters and no rating.
 
 Keys resolve **most specific first**:
 
-1. `appsettings.json`
+1. whichever `appsettings.json` was loaded, per the order above
 2. the `URDATABASE_TMDB_API_KEY` / `URDATABASE_OMDB_API_KEY` environment variables
 3. whatever was compiled in at build time
 

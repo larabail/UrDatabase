@@ -43,7 +43,7 @@ Avalonia replaces WPF. The differences that mattered during the port:
 
 | Service | Responsibility |
 | --- | --- |
-| `AppConfig` | Loads settings, resolves API keys, applies platform defaults. Never throws. |
+| `AppConfig` | Loads settings from the per-user data directory, resolves API keys, applies platform defaults. Never throws. |
 | `PlatformPaths` | Every filesystem location, resolved per platform. Expands `%APPDATA%` and `~`. |
 | `Database` | Opens the SQLite database and applies `Data/schema.sql` idempotently. |
 | `ScanService` | Walks watch folders and upserts the `files` table, skipping unreadable directories. |
@@ -63,9 +63,10 @@ Nothing may assume Windows. The specific decisions:
 
 - **Paths.** All app data lives under
   `Environment.GetFolderPath(SpecialFolder.ApplicationData)/UrDatabase`, which resolves to
-  `%APPDATA%\UrDatabase` on Windows and `~/.config/UrDatabase` on macOS. `PlatformPaths.Expand`
-  still understands `%APPDATA%`, `%LOCALAPPDATA%`, `%USERPROFILE%` and a leading `~`, and
-  rewrites backslashes, so a config file written by an older Windows install keeps working.
+  `%APPDATA%\UrDatabase` on Windows and `~/Library/Application Support/UrDatabase` on macOS.
+  `PlatformPaths.Expand` still understands `%APPDATA%`, `%LOCALAPPDATA%`, `%USERPROFILE%` and a
+  leading `~`, and rewrites backslashes, so a config file written by an older Windows install
+  keeps working.
 - **Watch folders.** The default is derived per platform — `~/Movies` on macOS, the Videos known
   folder on Windows. No drive letter is ever hardcoded.
 - **Launching a movie.** `UseShellExecute` cannot open documents on macOS, so `FileLauncher`
@@ -88,13 +89,27 @@ existing library.
 
 ## Configuration
 
-`appsettings.example.json` is tracked and ships next to the binary. `appsettings.json` is
-gitignored so a personal key or personal folders can never be committed. The app runs with
-neither file present, falling back to platform defaults.
+Settings are read from the first file that exists: an explicit path, then
+`appsettings.json` in the per-user data directory, then `appsettings.json` next to the
+executable, then the tracked `appsettings.example.json` that ships beside it. The per-user file
+is created from the example on first run, unless a build tree already has its own copy.
 
-API keys resolve most specific first: `appsettings.json`, then the `URDATABASE_TMDB_API_KEY` /
-`URDATABASE_OMDB_API_KEY` environment variables, then whatever was compiled in at build time.
-Compiled-in keys default to empty, so a local build needs no secrets.
+One refinement to that order: while the per-user file is still a byte-for-byte copy of the
+template it drops below a config next to the executable, because a copy nobody has edited states
+nothing. Otherwise a developer who ran the app once and wrote `appsettings.json` afterwards
+would find it silently ignored.
+
+The per-user location is not a preference. An installed macOS app runs from inside a signed,
+notarized bundle: a file written next to the executable invalidates the code signature, so
+Gatekeeper refuses to launch it, and an update discards it regardless. Nothing in `AppConfig`
+writes to `AppContext.BaseDirectory` under any circumstance.
+
+`appsettings.json` is gitignored so a personal key or personal folders can never be committed.
+The app runs with no file at all, falling back to platform defaults.
+
+API keys resolve most specific first: the loaded `appsettings.json`, then the
+`URDATABASE_TMDB_API_KEY` / `URDATABASE_OMDB_API_KEY` environment variables, then whatever was
+compiled in at build time. Compiled-in keys default to empty, so a local build needs no secrets.
 
 ## Attribution
 

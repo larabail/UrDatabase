@@ -346,6 +346,11 @@ ORDER BY rank";
             {
                 AppLog.Write("jellyfin.log", JellyfinClient.Redact($"sync failed: {ex.Message}"));
 
+                // Deliberately not awaited. It is one more request against a server that has just
+                // failed to answer, and on the timeout case that is another fifteen seconds; the
+                // person is owed the message they already have now, not after a second wait.
+                _ = LogConnectionDiagnosticAsync();
+
                 var cached = _remoteMovies.Count;
                 SetStatus(cached > 0
                     ? $"{ex.Message} Showing the {cached} films from the last sync."
@@ -366,6 +371,41 @@ ORDER BY rank";
             {
                 _syncing = false;
                 if (JellyfinButton is not null) JellyfinButton.IsEnabled = true;
+            }
+        }
+
+        /// <summary>
+        /// After a failed sync, asks the server to identify itself and writes what came back to
+        /// the log. One extra request, only ever on the failure path, and it is the difference
+        /// between a log that says the server could not be reached and one that says the name did
+        /// not resolve, the port refused the connection, or something answered that is not
+        /// Jellyfin. Failing to diagnose a failure must not itself raise anything.
+        /// </summary>
+        private async Task LogConnectionDiagnosticAsync()
+        {
+            if (_jellyfin is null) return;
+
+            // Its own deadline. A server that is dropping connections would otherwise hold this
+            // for the client's full timeout, long after anybody stopped caring.
+            using var deadline = CancellationTokenSource.CreateLinkedTokenSource(_cts.Token);
+            deadline.CancelAfter(TimeSpan.FromSeconds(6));
+
+            try
+            {
+                var report = await _jellyfin.TestConnectionAsync(deadline.Token);
+                AppLog.Write("jellyfin.log", JellyfinClient.Redact($"connection test: {report}"));
+            }
+            catch (OperationCanceledException) when (_cts.IsCancellationRequested)
+            {
+                // The window is closing.
+            }
+            catch (OperationCanceledException)
+            {
+                AppLog.Write("jellyfin.log", "connection test: no answer within six seconds.");
+            }
+            catch (Exception ex)
+            {
+                AppLog.Write("jellyfin.log", JellyfinClient.Redact($"connection test failed: {ex.Message}"));
             }
         }
 
@@ -429,10 +469,17 @@ ORDER BY rank";
             }
         }
 
-        private async void Settings_Click(object? sender, RoutedEventArgs e)
+        private async Task Settings_ShowAsync()
         {
+            // The settings file lives in the per-user data directory, never beside the executable:
+            // on macOS that is inside a signed bundle, where a written file breaks the signature.
+            var reading = _config.SourcePath;
+            var readingNote = reading is null || string.Equals(reading, AppConfig.UserConfigPath, StringComparison.Ordinal)
+                ? ""
+                : $"{Environment.NewLine}(currently reading {reading})";
+
             var message =
-                $"Configuration file:{Environment.NewLine}{Path.Combine(AppContext.BaseDirectory, AppConfig.FileName)}" +
+                $"Settings file:{Environment.NewLine}{AppConfig.UserConfigPath}{readingNote}" +
                 $"{Environment.NewLine}{Environment.NewLine}Database:{Environment.NewLine}{_dbPath}" +
                 $"{Environment.NewLine}{Environment.NewLine}Watch folders:{Environment.NewLine}{string.Join(Environment.NewLine, _config.WatchFolders)}" +
                 $"{Environment.NewLine}{Environment.NewLine}TMDB key: {(string.IsNullOrWhiteSpace(_config.TmdbApiKey) ? "not configured" : "configured")}" +
@@ -442,6 +489,8 @@ ORDER BY rank";
             await MessageBoxWindow.ShowAsync(this, "Settings", message);
         }
 
+        private async void Settings_Click(object? sender, RoutedEventArgs e) => await Settings_ShowAsync();
+
         /// <summary>
         /// What the settings box says about the server. Never the password, the API key or the
         /// session token — only whether one is present and which account it signs in as.
@@ -449,7 +498,7 @@ ORDER BY rank";
         private string DescribeJellyfin()
         {
             if (_jellyfin is null)
-                return "not configured (set Jellyfin.ServerUrl in the configuration file)";
+                return "not configured (set Jellyfin.ServerUrl in the settings file above)";
 
             var settings = _config.Jellyfin!;
             var credential = settings.UsesUserAccount

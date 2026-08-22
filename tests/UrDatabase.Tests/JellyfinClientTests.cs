@@ -459,8 +459,10 @@ namespace UrDatabase.Tests
 
             var error = await Assert.ThrowsAsync<JellyfinException>(() => client.ConnectAsync());
 
-            Assert.Contains("Could not reach", error.Message);
+            // Which failure it was is the point: see JellyfinDiagnosticsTests for the full set.
+            Assert.Contains("refused the connection", error.Message);
             Assert.Contains("media.invalid", error.Message);
+            Assert.DoesNotContain("SocketException", error.Message);
         }
 
         [Fact]
