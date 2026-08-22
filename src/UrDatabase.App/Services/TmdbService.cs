@@ -12,8 +12,15 @@ using Microsoft.Data.Sqlite;
 
 namespace UrDatabase.Services
 {
+    /// <summary>
+    /// The app's only external data source: TMDB (api.themoviedb.org for metadata,
+    /// image.tmdb.org for artwork). No other network calls are made anywhere in the app.
+    /// </summary>
     public sealed class TmdbService : IDisposable
     {
+        public const string ApiBaseUrl = "https://api.themoviedb.org/3";
+        public const string ImageBaseUrl = "https://image.tmdb.org/t/p";
+
         private readonly HttpClient _http;
         private readonly string _apiKey;
         private readonly string _posterCacheDir;
@@ -37,25 +44,51 @@ namespace UrDatabase.Services
         public TmdbService(string apiKey, string posterCacheDir, string imageSize, bool downloadPosters, HttpMessageHandler? handler = null)
         {
             _apiKey = apiKey ?? "";
-            _posterCacheDir = Environment.ExpandEnvironmentVariables(posterCacheDir ?? "");
+            _posterCacheDir = ResolveCacheDir(posterCacheDir);
             _imageSize = string.IsNullOrWhiteSpace(imageSize) ? "w342" : imageSize.Trim();
             _downloadPosters = downloadPosters;
 
             _http = handler is null ? new HttpClient() : new HttpClient(handler);
             _http.Timeout = TimeSpan.FromSeconds(15);
-            Directory.CreateDirectory(_posterCacheDir);
         }
 
-        // Search movie by title + (optional) year. Returns poster path like "/abc123.jpg" or null.
+        /// <summary>
+        /// Posters are only cached to disk on request, so the directory is created lazily —
+        /// creating it eagerly made construction fail whenever the setting was blank.
+        /// </summary>
+        private static string ResolveCacheDir(string? configured)
+        {
+            var expanded = PlatformPaths.Expand(configured);
+            return string.IsNullOrWhiteSpace(expanded) ? PlatformPaths.DefaultPosterCacheDir : expanded;
+        }
+
+        // ---------- URL construction ----------
+
+        public string BuildSearchUrl(string title, int? year)
+        {
+            var url = $"{ApiBaseUrl}/search/movie?api_key={Uri.EscapeDataString(_apiKey)}&query={Uri.EscapeDataString(title ?? "")}";
+            if (year.HasValue && year.Value > 1800) url += $"&year={year.Value}";
+            return url;
+        }
+
+        public string BuildDetailsUrl(int tmdbId) =>
+            $"{ApiBaseUrl}/movie/{tmdbId}?api_key={Uri.EscapeDataString(_apiKey)}&language=en-US";
+
+        public string BuildCreditsUrl(int tmdbId) =>
+            $"{ApiBaseUrl}/movie/{tmdbId}/credits?api_key={Uri.EscapeDataString(_apiKey)}&language=en-US";
+
+        public string BuildImageUrl(string posterPath) =>
+            $"{ImageBaseUrl}/{_imageSize}/{(posterPath ?? "").TrimStart('/')}";
+
+        // ---------- API calls ----------
+
+        /// <summary>Search a movie by title and optional year. Returns the TMDB id and poster path.</summary>
         public async Task<(int? TmdbId, string? PosterPath)> SearchPosterAsync(string title, int? year, CancellationToken ct)
         {
             if (string.IsNullOrWhiteSpace(_apiKey) || string.IsNullOrWhiteSpace(title))
                 return (null, null);
 
-            // TMDb search API (v3)
-            // https://api.themoviedb.org/3/search/movie?api_key=...&query=...&year=...
-            var url = $"https://api.themoviedb.org/3/search/movie?api_key={Uri.EscapeDataString(_apiKey)}&query={Uri.EscapeDataString(title)}";
-            if (year.HasValue && year.Value > 1800) url += $"&year={year.Value}";
+            var url = BuildSearchUrl(title, year);
 
             using var resp = await _http.GetAsync(url, ct);
             if (resp.StatusCode == (HttpStatusCode)429) // rate limited
@@ -78,11 +111,9 @@ namespace UrDatabase.Services
             }
         }
 
-        private string BuildImageUrl(string posterPath) =>
-            $"https://image.tmdb.org/t/p/{_imageSize}/{posterPath.TrimStart('/')}";
-
         private async Task<string?> DownloadAsync(string url, string fileName, CancellationToken ct)
         {
+            Directory.CreateDirectory(_posterCacheDir);
             var dst = Path.Combine(_posterCacheDir, fileName);
             if (File.Exists(dst)) return dst;
 
@@ -107,7 +138,7 @@ namespace UrDatabase.Services
                 ct.ThrowIfCancellationRequested();
 
                 progress?.Report($"TMDb: {m.Title} ({m.Year?.ToString() ?? "n/a"})");
-                var (tmdbId, posterPath) = await SearchPosterAsync(m.Title, m.Year, ct);
+                var (_, posterPath) = await SearchPosterAsync(m.Title, m.Year, ct);
 
                 if (!string.IsNullOrWhiteSpace(posterPath))
                 {
@@ -153,35 +184,36 @@ namespace UrDatabase.Services
             [JsonPropertyName("id")] public int Id { get; set; }
             [JsonPropertyName("poster_path")] public string? PosterPath { get; set; }
         }
+
         public sealed class TmdbDetails
         {
-            public int Id { get; set; }
-            public string? Title { get; set; }
-            public string? Overview { get; set; }
-            public string? BackdropPath { get; set; }
-            public int? Runtime { get; set; }
-            public double? VoteAverage { get; set; }
-            public List<TmdbGenre> Genres { get; set; } = new();
+            [JsonPropertyName("id")] public int Id { get; set; }
+            [JsonPropertyName("title")] public string? Title { get; set; }
+            [JsonPropertyName("overview")] public string? Overview { get; set; }
+            // TMDB returns snake_case; case-insensitive matching alone never bound these.
+            [JsonPropertyName("backdrop_path")] public string? BackdropPath { get; set; }
+            [JsonPropertyName("imdb_id")] public string? ImdbId { get; set; }
+            [JsonPropertyName("runtime")] public int? Runtime { get; set; }
+            [JsonPropertyName("vote_average")] public double? VoteAverage { get; set; }
+            [JsonPropertyName("genres")] public List<TmdbGenre> Genres { get; set; } = new();
         }
 
         public sealed class TmdbGenre
         {
-            public int Id { get; set; }
-            public string Name { get; set; } = "";
+            [JsonPropertyName("id")] public int Id { get; set; }
+            [JsonPropertyName("name")] public string Name { get; set; } = "";
         }
 
-        // Public helpers we already expose
         internal string BuildImageUrlPublic(string posterPath) => BuildImageUrl(posterPath);
         internal async Task<string?> DownloadForPublic(string url, string fileName, CancellationToken ct) => await DownloadAsync(url, fileName, ct);
 
-        // New: fetch full details (we’ll first Search to get tmdbId, then call details)
+        /// <summary>Search for the title, then fetch the full record for the first hit.</summary>
         public async Task<TmdbDetails?> GetDetailsByTitleAsync(string title, int? year, CancellationToken ct)
         {
             var (id, _) = await SearchPosterAsync(title, year, ct);
             if (id is null) return null;
 
-            var url = $"https://api.themoviedb.org/3/movie/{id}?api_key={Uri.EscapeDataString(_apiKey)}&language=en-US";
-            using var resp = await _http.GetAsync(url, ct);
+            using var resp = await _http.GetAsync(BuildDetailsUrl(id.Value), ct);
             if (!resp.IsSuccessStatusCode) return null;
             await using var s = await resp.Content.ReadAsStreamAsync(ct);
             var details = await JsonSerializer.DeserializeAsync<TmdbDetails>(s, _json, ct);
@@ -189,16 +221,12 @@ namespace UrDatabase.Services
             return details;
         }
 
-
         public async Task<TmdbCredits?> GetCreditsByIdAsync(int tmdbId, CancellationToken ct)
         {
-            var url = $"https://api.themoviedb.org/3/movie/{tmdbId}/credits?api_key={Uri.EscapeDataString(_apiKey)}&language=en-US";
-            using var resp = await _http.GetAsync(url, ct);
+            using var resp = await _http.GetAsync(BuildCreditsUrl(tmdbId), ct);
             if (!resp.IsSuccessStatusCode) return null;
             await using var s = await resp.Content.ReadAsStreamAsync(ct);
-            var credits = await JsonSerializer.DeserializeAsync<TmdbCredits>(s, _json, ct);
-            return credits;
+            return await JsonSerializer.DeserializeAsync<TmdbCredits>(s, _json, ct);
         }
-
     }
 }

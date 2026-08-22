@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Concurrent;
+using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Data.Sqlite;
@@ -86,17 +87,7 @@ namespace UrDatabase.Services
             }
             catch (Exception ex)
             {
-                // Optional: lightweight log to help diagnose rare cases
-                try
-                {
-                    var logDir = System.IO.Path.Combine(
-                        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-                        "UrDatabase", "logs");
-                    System.IO.Directory.CreateDirectory(logDir);
-                    var log = System.IO.Path.Combine(logDir, "posters.log");
-                    System.IO.File.AppendAllText(log, $"[{DateTime.Now:O}] movieId={movieId} {ex}\n");
-                }
-                catch { /* ignore logging errors */ }
+                AppLog.Write("posters.log", $"movieId={movieId} {ex}");
             }
             finally
             {
@@ -104,7 +95,6 @@ namespace UrDatabase.Services
                 _inflight.TryRemove(movieId, out _);
             }
         }
-
 
         public void Dispose() => _gate.Dispose();
     }

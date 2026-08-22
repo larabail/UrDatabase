@@ -1,0 +1,23 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="UrDatabase.Views.MessageBoxWindow"
+        Title="UrDatabase"
+        SizeToContent="Height"
+        Width="440"
+        CanResize="False"
+        Background="#0F0F10"
+        WindowStartupLocation="CenterOwner">
+    <StackPanel Margin="20">
+        <TextBlock x:Name="MessageText"
+                   Foreground="#EAEAEA"
+                   TextWrapping="Wrap"
+                   MaxHeight="320"/>
+        <Button x:Name="OkButton"
+                Content="OK"
+                Width="90"
+                HorizontalAlignment="Right"
+                HorizontalContentAlignment="Center"
+                Margin="0,18,0,0"
+                Click="Ok_Click"/>
+    </StackPanel>
+</Window>
