@@ -1,0 +1,178 @@
+name: Deploy the downloads site
+
+# `web/downloads/` is a static page that reads the GitHub releases API in the
+# browser. It is not built from a release and does not need to be redeployed
+# when one happens -- a release published five minutes ago shows up on it
+# without anybody touching this workflow.
+#
+# Which is exactly why it deploys on its own trigger. Tying it to the release
+# pipeline would mean the only way to fix a typo on a web page is to publish a
+# version of the application, and it would leave the site unreachable until the
+# first release existed, which is the wrong way round: the page is where people
+# are sent to find the first release.
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'web/downloads/**'
+      - 'firebase.json'
+      - '.firebaserc'
+      - '.github/workflows/deploy-downloads.yml'
+  # For redeploying after a Firebase-side change -- a new site, a restored
+  # project -- with no commit to make.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A Hosting deploy replaces the whole site, so two of them racing leaves
+# whichever finished last serving it, which is not necessarily the newer one.
+# Not cancelled in progress: a half-finished deploy is not something to
+# interrupt.
+concurrency:
+  group: deploy-downloads
+  cancel-in-progress: false
+
+env:
+  PROJECT: actordb-cf981
+  SITE: urdatabase-downloads
+
+jobs:
+  deploy:
+    name: Deploy to Firebase Hosting
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Checked before anything else, because this repository does not have the
+      # secret: `FIREBASE_SERVICE_ACCOUNT` was lost when the repository was
+      # rebuilt and has not been regenerated. So this is not a defensive branch
+      # for an unlikely case -- it is the path every run takes today, and the
+      # first deploy will land on it.
+      #
+      # Without this step the run gets as far as the Firebase CLI, which
+      # reports something like "Failed to authenticate, have you run firebase
+      # login?" from inside a deploy action several minutes in. That message is
+      # true and completely unhelpful: it does not name the secret, does not
+      # say which repository setting is empty, and reads like a broken action
+      # rather than a missing configuration value.
+      - name: Check the deploy credentials exist
+        env:
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${FIREBASE_SERVICE_ACCOUNT:-}" ]; then
+            echo '::error title=FIREBASE_SERVICE_ACCOUNT is not set::The repository secret FIREBASE_SERVICE_ACCOUNT is missing, so there is nothing to authenticate to Firebase with. See docs/releases.md.'
+            # Heredoc rather than a run of echoes so the backticks below are
+            # plainly Markdown and not something the shell has to be told to
+            # leave alone.
+            cat >> "$GITHUB_STEP_SUMMARY" <<'MISSING'
+          ### The downloads site was not deployed
+
+          The repository secret **`FIREBASE_SERVICE_ACCOUNT`** is not set on
+          `larabail/UrDatabase`. It was lost when the repository was rebuilt and
+          has to be regenerated — a key cannot be read back out of GitHub, so
+          there is no copy to recover.
+
+          It is a Google Cloud service account key, in JSON, for the Firebase
+          project `actordb-cf981`. `larabail/UrActorAPP` deploys its own
+          downloads site to that same project, so the project itself is set up
+          and working; only this repository's copy of the credential is
+          missing.
+
+          To fix it:
+
+          1. Firebase console → Project settings → Service accounts →
+             **Generate new private key** for `actordb-cf981`.
+          2. `larabail/UrDatabase` → Settings → Secrets and variables → Actions
+             → **New repository secret**.
+          3. Name it `FIREBASE_SERVICE_ACCOUNT` and paste the whole JSON file as
+             the value, outer braces included.
+          4. Re-run this workflow. It creates the Hosting site on the first
+             successful run, so nothing else needs setting up by hand.
+
+          Full instructions are in `docs/releases.md`.
+          MISSING
+            exit 1
+          fi
+
+          # A truncated or half-pasted key is the other way this goes wrong,
+          # and it fails much further in, so it is worth two lines to catch it
+          # here. Parsed with python rather than jq so nothing is echoed on
+          # failure -- jq prints the offending input, which is the secret.
+          if ! printf '%s' "$FIREBASE_SERVICE_ACCOUNT" \
+               | python3 -c 'import json,sys; d=json.load(sys.stdin); sys.exit(0 if d.get("type")=="service_account" and d.get("private_key") else 1)' \
+               2>/dev/null; then
+            echo '::error title=FIREBASE_SERVICE_ACCOUNT is not a service account key::The secret is set but is not JSON containing "type": "service_account" and a "private_key". Paste the whole downloaded key file, including the outer braces.'
+            exit 1
+          fi
+
+          echo 'A service account key is present.'
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      # The site's own tests, run against exactly what is about to be deployed.
+      # They are the same tests the pull request ran, but a deploy can also be
+      # triggered by hand from a branch, and shipping a page whose script
+      # cannot find its own elements is a silent failure: the page still
+      # renders, and simply lists no downloads.
+      - name: Test the site
+        run: node --test web/downloads/*.test.js
+
+      # A deploy against a Hosting site that does not exist fails outright, and
+      # creating one is a different API call than deploying to it -- so the
+      # first deploy of a new site can never succeed on its own. Done here
+      # rather than written down as a setup step, because a document cannot be
+      # re-read by the next person wondering why the first deploy failed. It is
+      # a no-op on every run after the first.
+      - name: Make sure the Hosting site exists
+        env:
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+        run: |
+          set -euo pipefail
+
+          # Written to a file rather than passed as an argument: a service
+          # account key on a command line is readable by every other process on
+          # the runner.
+          printf '%s' "$FIREBASE_SERVICE_ACCOUNT" > "$RUNNER_TEMP/service-account.json"
+          export GOOGLE_APPLICATION_CREDENTIALS="$RUNNER_TEMP/service-account.json"
+
+          npm install --global --no-fund --no-audit firebase-tools@13
+
+          if firebase hosting:sites:list --project "$PROJECT" --json \
+               | grep -q "/sites/${SITE}\""; then
+            echo "The $SITE site is already there."
+          else
+            echo "Creating the $SITE site."
+            firebase hosting:sites:create "$SITE" --project "$PROJECT"
+          fi
+
+          rm -f "$RUNNER_TEMP/service-account.json"
+
+      # `firebase.json` names the site, so this lands on `urdatabase-downloads`
+      # and cannot touch the UrActor site that shares the project.
+      - name: Deploy
+        uses: FirebaseExtended/action-hosting-deploy@v0
+        with:
+          repoToken: ${{ secrets.GITHUB_TOKEN }}
+          firebaseServiceAccount: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          projectId: ${{ env.PROJECT }}
+          channelId: live
+
+      - name: Say where it went
+        run: |
+          set -euo pipefail
+          {
+            echo '### Downloads site deployed'
+            echo ''
+            echo "- https://${SITE}.web.app"
+            echo "- https://${SITE}.firebaseapp.com"
+            echo ''
+            echo 'The page reads the GitHub releases API in the browser, so it'
+            echo 'shows new releases without being redeployed.'
+          } >> "$GITHUB_STEP_SUMMARY"
