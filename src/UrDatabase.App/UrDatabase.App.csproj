@@ -1,22 +1,63 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
-    <TargetFramework>net8.0-windows</TargetFramework>
-    <UseWPF>true</UseWPF>
-    <Nullable>enable</Nullable>
-    <ImplicitUsings>enable</ImplicitUsings>
+    <TargetFramework>net8.0</TargetFramework>
     <AssemblyName>UrDatabase.App</AssemblyName>
     <RootNamespace>UrDatabase</RootNamespace>
+    <BuiltInComInteropSupport>true</BuiltInComInteropSupport>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <!-- Dapper and System.Text.Json rely on reflection, so trimming stays off. -->
+    <PublishTrimmed>false</PublishTrimmed>
   </PropertyGroup>
+
+  <!--
+    API keys baked in at build time. CI passes them from repository secrets:
+      dotnet publish ... -p:TmdbApiKey=$TMDB_API_KEY -p:OmdbApiKey=$OMDB_API_KEY
+    Both default to empty so a local build with no keys still compiles, runs and tests.
+    Never commit a value here.
+  -->
+  <PropertyGroup>
+    <TmdbApiKey Condition="'$(TmdbApiKey)' == ''"></TmdbApiKey>
+    <OmdbApiKey Condition="'$(OmdbApiKey)' == ''"></OmdbApiKey>
+  </PropertyGroup>
+
   <ItemGroup>
-    <!-- Keep packages; not strictly needed for Hello World, but harmless -->
+    <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
+      <_Parameter1>TmdbApiKey</_Parameter1>
+      <_Parameter2>$(TmdbApiKey)</_Parameter2>
+    </AssemblyAttribute>
+    <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
+      <_Parameter1>OmdbApiKey</_Parameter1>
+      <_Parameter2>$(OmdbApiKey)</_Parameter2>
+    </AssemblyAttribute>
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Avalonia" Version="11.3.20" />
+    <PackageReference Include="Avalonia.Desktop" Version="11.3.20" />
+    <PackageReference Include="Avalonia.Themes.Fluent" Version="11.3.20" />
+    <PackageReference Include="Avalonia.Fonts.Inter" Version="11.3.20" />
+    <PackageReference Include="Avalonia.Diagnostics" Version="11.3.20" Condition="'$(Configuration)' == 'Debug'" />
     <PackageReference Include="Microsoft.Data.Sqlite" Version="8.0.7" />
     <PackageReference Include="Dapper" Version="2.1.28" />
     <PackageReference Include="CommunityToolkit.Mvvm" Version="8.2.2" />
   </ItemGroup>
+
   <ItemGroup>
-    <Content Include="appsettings.json">
+    <!-- Tracked template. Always shipped so a clean checkout has working defaults. -->
+    <Content Include="appsettings.example.json">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
+    <!-- Untracked local override. The condition keeps the build green when it is absent. -->
+    <Content Include="appsettings.json" Condition="Exists('$(MSBuildProjectDirectory)/appsettings.json')">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="Data/schema.sql">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="UrDatabase.Tests" />
   </ItemGroup>
 </Project>

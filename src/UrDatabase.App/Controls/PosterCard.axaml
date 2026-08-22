@@ -1,0 +1,20 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Class="UrDatabase.Controls.PosterCard"
+             MinWidth="120"
+             MinHeight="175">
+    <Border CornerRadius="18"
+            Background="#1E1E1E"
+            Padding="4"
+            ClipToBounds="True">
+        <Grid>
+            <!-- Source is assigned in code-behind: Avalonia will not turn a string
+                 path or URL into an image the way WPF did. -->
+            <Image x:Name="PosterImage"
+                   Stretch="UniformToFill"/>
+            <Border CornerRadius="18"
+                    BorderBrush="#333"
+                    BorderThickness="1"/>
+        </Grid>
+    </Border>
+</UserControl>

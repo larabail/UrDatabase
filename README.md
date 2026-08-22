@@ -5,7 +5,8 @@ a local SQLite catalogue, lays it out as poster art grouped by genre, and fills
 in the posters, plot, runtime, cast and crew from
 [TMDB](https://www.themoviedb.org/) as you look at them, with the IMDb rating
 fetched from [OMDb](https://www.omdbapi.com/). Nothing of yours leaves the
-machine: the only thing sent out is the title and year being looked up.
+machine: the only things sent out are the title being looked up and, for the
+rating, its IMDb id.
 
 It runs on Windows and macOS from one codebase, built with
 [Avalonia UI 11](https://avaloniaui.net/) on .NET 8.
@@ -21,8 +22,9 @@ It runs on Windows and macOS from one codebase, built with
   overview, runtime, genres, backdrop, the top ten billed cast with their
   characters, and up to three directors and three writers. The star rating
   beside it is the **IMDb** rating, looked up from OMDb using the IMDb id TMDB
-  returns; with no OMDb key configured the star is simply absent and the rest of
-  the page is unaffected (`Services/TmdbService`, `Views/MovieDetailsWindow`).
+  returns; if no OMDb key is available the star is simply absent and the rest
+  of the page is unaffected (`Services/TmdbService`,
+  `Views/MovieDetailsWindow`).
 - **Posters fill themselves in.** Any film in the catalogue with no poster is
   looked up in the background, four at a time, and the result is written back
   to the database so the next launch is instant. Posters are either referenced
@@ -50,8 +52,10 @@ several are thinner than they sound.
 | TMDB API v3 | Search, posters, plot, runtime, genres, cast and crew |
 | OMDb API | The IMDb rating, and nothing else |
 
-There is no server. There is no account. The only outbound traffic is to
-`api.themoviedb.org`, `image.tmdb.org` and `www.omdbapi.com`.
+There is no server, no account and no telemetry, and the app touches no
+Firebase: the only outbound traffic is to `api.themoviedb.org`,
+`image.tmdb.org` and `www.omdbapi.com`. It works fully offline, with metadata
+and ratings simply absent.
 
 ## Getting started
 
@@ -62,9 +66,9 @@ else. `dotnet --version` should print `8.` something. Avalonia needs no
 platform workload, no Visual Studio and no Xcode: any editor and the `dotnet`
 CLI are enough on both operating systems.
 
-No API key is needed to build the app or to run the tests, and none is needed
-to open it and browse a catalogue you already have. Keys only buy you metadata:
-a TMDB key for posters and details, an OMDb key for the IMDb rating. See
+No API key is needed to build the app or to run the tests, and a downloaded
+release needs none either — official builds carry both keys already. You only
+supply a key if you build from source and want live metadata. See
 [Configuration](#configuration).
 
 ### Build and run
@@ -114,17 +118,19 @@ configuration file written on one is not portable to the other.
 
 ### API keys
 
-Two services are involved, and both keys are yours rather than the project's.
-Nothing is compiled into the binary, nothing is committed, and a released
-archive carries no key at all — each user supplies their own.
+**If you downloaded a release, there is nothing to do here.** Official builds
+have both keys compiled in at release time, so metadata and ratings work out of
+the box with no configuration at all.
 
-| Service | Get a key from | Without it |
+Keys matter only when you build from source, because a build from source has
+none compiled in. Without them the app builds, runs and passes its full test
+suite — you simply get no posters, no details and no rating until you supply
+your own.
+
+| Service | Get a key from | What it buys |
 | --- | --- | --- |
-| TMDB | [your TMDB account settings](https://www.themoviedb.org/settings/api) | No posters and no details; browsing, genres and search still work |
-| OMDb | [omdbapi.com](https://www.omdbapi.com/apikey.aspx) | The IMDb star is hidden. Everything else is unaffected |
-
-Neither is needed to build the app or to run the tests, so a fresh clone is
-green with no configuration at all.
+| TMDB | [your TMDB account settings](https://www.themoviedb.org/settings/api) | Posters and details. Without it, browsing, genres and search still work |
+| OMDb | [omdbapi.com](https://www.omdbapi.com/apikey.aspx) | The IMDb star, and nothing else |
 
 Either key can be given in `appsettings.json`, as `TmdbApiKey` and
 `OmdbApiKey`, or in the environment:
@@ -136,14 +142,18 @@ $env:URDATABASE_TMDB_API_KEY = '...'     # Windows PowerShell
 $env:URDATABASE_OMDB_API_KEY = '...'
 ```
 
-The environment variable wins when it is set, which is how to run the app
-without a key ever being written to disk.
+Each key is resolved in the same order: the configuration file first, then the
+environment variable, then whatever was compiled in. So the file beats the
+environment, the environment beats the shipped default, and anyone running an
+official build can substitute their own key — to escape a shared quota, say —
+without rebuilding anything.
 
-Treat both as public, rate-limited credentials rather than secrets. A desktop
-app has no server to keep a key behind, so whichever way you supply it, it ends
-up readable on the machine running the app. That is precisely why UrDatabase
-asks each user for their own key instead of shipping one. Never commit a key —
-see [SECURITY.md](SECURITY.md) for the one that once was.
+Treat all of these as public, rate-limited credentials rather than secrets. A
+desktop app has no server to keep a key behind, so a key it can reach is a key
+its user can reach, whether you typed it in or we compiled it in. That is a
+deliberate tradeoff and [SECURITY.md](SECURITY.md) explains when it is an
+acceptable one. Never commit a key to this repository — see the same file for
+the one that once was.
 
 ### The catalogue
 
@@ -187,20 +197,27 @@ that one line is the source of truth for everything below. It starts at
   each runtime identifier and attach the archives to the run. You can download
   and try a branch before it merges.
 - **On a merge to `main`**, the version in `Directory.Build.props` is tagged
-  `v<version>`, a GitHub Release is created with
+  `v<version>`, the TMDB and OMDb keys are compiled in from the `TMDB_API_KEY`
+  and `OMDB_API_KEY` repository secrets, a GitHub Release is created with
   `UrDatabase-<version>-win-x64.zip`, `UrDatabase-<version>-osx-arm64.zip` and
   `UrDatabase-<version>-osx-x64.zip` attached, and the downloads site is
   deployed to Firebase Hosting.
+
+Compiling the keys in at release is what makes a downloaded build work with no
+setup. It is not a way of keeping them private, and nothing here pretends it
+is; [SECURITY.md](SECURITY.md) sets out why that is an acceptable trade for
+these two keys in particular and when it would not be.
 
 Because a merge releases, a pull request that changes anything under `src/` has
 to bump the version, or the release will collide with a tag that already
 exists. How far to bump is in
 [AGENTS.md](AGENTS.md#versioning).
 
-Hosting is the only Firebase product this project uses. There is no database,
-no authentication and no functions — the site is three static files describing
-where to get the binaries. The Firebase project is `actordb-cf981` and the
-hosting site is `urdatabase-downloads`.
+Hosting is the only Firebase product involved, and only CI touches it: the
+site is a few static files describing where to get the binaries. There is no
+database, no authentication and no functions, and nothing in `src/` talks to
+Firebase at all. The Firebase project is `actordb-cf981` and the hosting site
+is `urdatabase-downloads`.
 
 ## Repository layout
 
@@ -251,8 +268,13 @@ Stated plainly, so nobody has to find out by using it:
 ## Licence
 
 UrDatabase is **source-available, not open source**. The code is published so
-it can be read and audited; reading it grants no right to ship it. Reuse beyond
-quoting and evaluation needs written permission. See [LICENSE](LICENSE).
+it can be read and audited; reading it grants no right to ship it.
+
+You may download an official build and use it for your own personal,
+non-commercial purposes indefinitely, without asking — cataloguing your own
+film collection is exactly what it is for. Passing a build on to someone else,
+hosting it as a service, using it commercially, publishing a derivative or
+reusing its code elsewhere all need written permission. See [LICENSE](LICENSE).
 
 This product uses the TMDB API and the OMDb API but is not endorsed or
 certified by either. Film metadata and artwork remain subject to TMDB's terms,

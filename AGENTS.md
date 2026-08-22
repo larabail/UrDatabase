@@ -63,15 +63,23 @@ one of those gaps and the entry comes out in the same pull request.
 
 ### Never commit an API key
 
-Two keys are read at runtime and neither is ever compiled in: TMDB's, for
-search, posters and details, and OMDb's, for the IMDb rating. Each comes from
-either an environment variable — `URDATABASE_TMDB_API_KEY`,
-`URDATABASE_OMDB_API_KEY` — or the matching `TmdbApiKey` and `OmdbApiKey`
-fields of `appsettings.json`, and `appsettings.json` is gitignored precisely so
-a key cannot be committed by accident. What is tracked is
+Two keys are involved: TMDB's, for search, posters and details, and OMDb's, for
+the IMDb rating. At runtime each is resolved from the `TmdbApiKey` and
+`OmdbApiKey` fields of `appsettings.json`, then from the
+`URDATABASE_TMDB_API_KEY` and `URDATABASE_OMDB_API_KEY` environment variables,
+then from whatever was compiled in. `appsettings.json` is gitignored precisely
+so a key cannot be committed by accident. What is tracked is
 `src/UrDatabase.App/appsettings.example.json`, which holds placeholders and
 nothing else. Adding a setting means adding it to the example file, with an
 empty or obviously fake value.
+
+Only official release builds have anything compiled in, and it is CI that puts
+it there, from the `TMDB_API_KEY` and `OMDB_API_KEY` repository secrets, at
+release time. Your build has no keys in it. That distinction is the rule: a key
+belongs in one of those secrets or in your own ignored config file, and nowhere
+else. Never hardcode one as a default, a fallback or a constant "just to get it
+working" — that commits it, and the release workflow already handles the
+shipped case.
 
 Both keys are optional and neither is needed to build or test. Keep it that
 way: a test or a build step that fails without a key turns every fresh clone
@@ -79,15 +87,18 @@ red and pushes the next person towards pasting one somewhere it will be
 committed.
 
 Never edit the example file to hold a working key "just for a minute", and
-never paste one into a test, a workflow, an issue or a commit message. The key
-CI needs is the `TMDB_API_KEY` repository secret; reference it from a workflow
-rather than introducing a second copy anywhere.
+never paste one into a test, an issue or a commit message. A workflow that
+needs a key reads it from `TMDB_API_KEY` or `OMDB_API_KEY` rather than
+introducing a second copy anywhere. The repository's third secret,
+`FIREBASE_SERVICE_ACCOUNT`, deploys the downloads site and must never reach a
+build or an artifact — it is the one secret here that is actually secret.
 
 A key that reaches a desktop build is not private in any case — there is no
-server to keep it behind, so it sits in plain text next to the binary. The rule
-is not that a key is protected by being uncommitted, but that a committed key
-stays in git history forever and has to be rotated. This has already happened
-here once; see [SECURITY.md](SECURITY.md).
+server to keep it behind, so anyone holding the build can read it out. That is
+a deliberate trade for these two, and [SECURITY.md](SECURITY.md) explains when
+it stops being an acceptable one. The rule here is narrower: a key committed to
+this repository stays in its history forever and has to be rotated. That has
+already happened once.
 
 The same goes for your own data: `movies.db`, poster caches and absolute paths
 to your film folders are yours and are not repository content. `.gitignore`

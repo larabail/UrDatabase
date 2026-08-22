@@ -3,16 +3,18 @@ using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.IO;
 using System.Linq;
-using System.Windows;
-using System.Windows.Controls;
-using System.Windows.Controls.Primitives;
+using System.Threading;
+using System.Threading.Tasks;
+using Avalonia.Controls;
+using Avalonia.Controls.Primitives;
+using Avalonia.Input;
+using Avalonia.Interactivity;
+using Avalonia.Threading;
+using Avalonia.VisualTree;
 using Dapper;
 using Microsoft.Data.Sqlite;
 using UrDatabase.Models;
 using UrDatabase.Services;
-using System.Threading;
-using System.Threading.Tasks;
-using System.Diagnostics;
 
 namespace UrDatabase.Views
 {
@@ -26,12 +28,13 @@ namespace UrDatabase.Views
         public ObservableCollection<string> Genres { get; } = new();
         public string? SelectedGenre { get; set; } = "All";
         public ObservableCollection<GenreGroup> VisibleGroups { get; } = new();
+        public ObservableCollection<UiMovie> FlatResults { get; } = new();
 
         private List<UiMovie> _allMovies = new();
 
         private PosterAutoLoader? _posterLoader;
-        private readonly System.Threading.CancellationTokenSource _cts = new();
-
+        private readonly ImdbRatingService _ratings;
+        private readonly CancellationTokenSource _cts = new();
 
         public MainWindow()
         {
@@ -40,8 +43,12 @@ namespace UrDatabase.Views
             try { _config = AppConfig.Load(); } catch { _config = new AppConfig(); }
             _dbPath = _config.DatabasePath;
 
+            // Constructed eagerly but idle: no request is made until a movie is opened, and none
+            // at all when no OMDb key is available.
+            _ratings = new ImdbRatingService(new OmdbService(_config.OmdbApiKey), ownsLookup: true);
+
             _posterLoader = new PosterAutoLoader(_config, _dbPath, maxConcurrency: 4);
-            this.Closed += (_, __) => { _cts.Cancel(); _posterLoader?.Dispose(); };
+            Closed += (_, __) => { _cts.Cancel(); _posterLoader?.Dispose(); _ratings.Dispose(); };
 
             DataContext = this;
 
@@ -54,33 +61,56 @@ namespace UrDatabase.Views
         private void LoadMovies(string? query = null)
         {
             _allMovies.Clear();
-            if (!File.Exists(_dbPath)) return;
-
-            using var conn = new SqliteConnection($"Data Source={_dbPath};Cache=Shared");
-            conn.Open();
-
-            string sql;
-            object param;
-            if (string.IsNullOrWhiteSpace(query))
+            if (!File.Exists(_dbPath))
             {
-                sql = "SELECT id AS Id, title AS Title, year AS Year, genres AS Genres, poster_path AS PosterPath FROM movies ORDER BY COALESCE(year,0) DESC, title";
-                param = new { };
+                SetStatus($"No library yet. Expected a database at {_dbPath}.");
+                return;
             }
-            else
+
+            try
             {
-                sql = @"
+                using var conn = new SqliteConnection($"Data Source={_dbPath};Cache=Shared");
+                conn.Open();
+
+                string sql;
+                object param;
+                if (string.IsNullOrWhiteSpace(query))
+                {
+                    sql = "SELECT id AS Id, title AS Title, year AS Year, genres AS Genres, poster_path AS PosterPath FROM movies ORDER BY COALESCE(year,0) DESC, title";
+                    param = new { };
+                }
+                else
+                {
+                    sql = @"
 SELECT m.id AS Id, m.title AS Title, m.year AS Year, m.genres AS Genres, m.poster_path AS PosterPath
 FROM movies_fts f
 JOIN movies m ON m.id = f.rowid
 WHERE movies_fts MATCH @q
 ORDER BY rank";
-                param = new { q = query };
+                    param = new { q = query };
+                }
+
+                _allMovies = conn.Query<UiMovie>(sql, param).ToList();
+            }
+            catch (Exception ex)
+            {
+                // A database from an older build may lack the tables this query needs.
+                // Report it instead of taking the window down.
+                AppLog.Write("startup.log", $"LoadMovies failed: {ex}");
+                SetStatus($"Could not read the library: {ex.Message}");
+                _allMovies = new List<UiMovie>();
+                return;
             }
 
-            _allMovies = conn.Query<UiMovie>(sql, param).ToList();
             var hasPosters = _allMovies.Count(x => !string.IsNullOrWhiteSpace(x.PosterPath));
-            Title = $"UrDatabase — Posters present: {hasPosters}/{_allMovies.Count}";
+            SetStatus($"Posters present: {hasPosters}/{_allMovies.Count}");
             WarmPosters(_allMovies);
+        }
+
+        private void SetStatus(string message)
+        {
+            Title = $"UrDatabase — {message}";
+            if (StatusText is not null) StatusText.Text = message;
         }
 
         private void BuildGenres()
@@ -99,7 +129,7 @@ ORDER BY rank";
                 Genres.Add(g);
         }
 
-        private void WarmPosters(System.Collections.Generic.IEnumerable<UiMovie> movies)
+        private void WarmPosters(IEnumerable<UiMovie> movies)
         {
             if (_posterLoader is null) return;
             foreach (var m in movies)
@@ -109,17 +139,15 @@ ORDER BY rank";
                         movieId: m.Id,
                         title: m.Title,
                         year: m.Year,
-                        onFetched: path => Dispatcher.Invoke(() => m.PosterPath = path),
+                        onFetched: path => Dispatcher.UIThread.Post(() => m.PosterPath = path),
                         ct: _cts.Token);
             }
         }
-
 
         private void RebuildGroups()
         {
             VisibleGroups.Clear();
 
-            // Which genre buckets do we want to show?
             IEnumerable<string> buckets;
             if (string.Equals(SelectedGenre, "All", StringComparison.OrdinalIgnoreCase) || string.IsNullOrWhiteSpace(SelectedGenre))
                 buckets = Genres.Where(x => !string.Equals(x, "All", StringComparison.OrdinalIgnoreCase));
@@ -139,36 +167,39 @@ ORDER BY rank";
                 VisibleGroups.Add(new GenreGroup
                 {
                     Name = $"{genre} ({items.Count} items)",
-                    Items = new System.Collections.ObjectModel.ObservableCollection<UiMovie>(items)
+                    Items = new ObservableCollection<UiMovie>(items)
                 });
             }
 
-            // Warm posters for all visible groups (once)
             foreach (var group in VisibleGroups)
                 WarmPosters(group.Items);
         }
 
-        private void ScanButton_Click(object sender, RoutedEventArgs e)
+        private async void ScanButton_Click(object? sender, RoutedEventArgs e)
         {
             try
             {
                 using var conn = Database.Open(_dbPath);
                 var scanner = new ScanService();
-                var progress = new Progress<string>(msg => { /* you can show status somewhere */ });
-                scanner.ScanAsync(conn, _config.WatchFolders ?? Array.Empty<string>(), progress).ContinueWith(_ =>
-                {
-                    // no UI update required here for now
-                });
+                var progress = new Progress<string>(msg => Dispatcher.UIThread.Post(() => SetStatus(msg)));
+
+                var updated = await scanner.ScanAsync(conn, _config.WatchFolders ?? Array.Empty<string>(), progress, _cts.Token);
+
+                LoadMovies();
+                BuildGenres();
+                RebuildGroups();
+                ShowAllGenres();
+                SetStatus($"Scan complete. {updated} file entries updated.");
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"Scan failed: {ex.Message}", "UrDatabase", MessageBoxButton.OK, MessageBoxImage.Error);
+                await MessageBoxWindow.ShowAsync(this, "UrDatabase", $"Scan failed: {ex.Message}");
             }
         }
 
-        private void SearchBox_TextChanged(object sender, System.Windows.Controls.TextChangedEventArgs e)
+        private void SearchBox_TextChanged(object? sender, TextChangedEventArgs e)
         {
-            var q = (sender as System.Windows.Controls.TextBox)?.Text?.Trim();
+            var q = (sender as TextBox)?.Text?.Trim();
 
             if (string.IsNullOrWhiteSpace(q))
             {
@@ -176,16 +207,14 @@ ORDER BY rank";
                 LoadMovies(null);
                 BuildGenres();
                 RebuildGroups();
-                SetSearching(false);
+                ShowAllGenres();
                 return;
             }
 
             // searching → flat view
-            // searching → flat view
-            LoadMovies(q); // fills _allMovies from DB
+            LoadMovies(q);
             FlatResults.Clear();
 
-            // ensure no duplicates (by Id)
             foreach (var m in _allMovies
                     .GroupBy(x => x.Id)
                     .Select(g => g.First())
@@ -195,32 +224,20 @@ ORDER BY rank";
                 FlatResults.Add(m);
             }
 
-            // warm posters for the flat list once
             WarmPosters(FlatResults);
             ShowSearch();
         }
 
-        private void GenreChip_Click(object sender, RoutedEventArgs e)
+        private void GenreChip_Click(object? sender, RoutedEventArgs e)
         {
             if (sender is ToggleButton tb && tb.Content is string genreLabel)
             {
-                // Update the selected genre value
                 SelectedGenre = genreLabel;
 
-                // --- Toggle visual state: set only this chip to checked ---
-                // Find the ItemsControl that hosts the chips
-                var itemsControl = FindAncestor<ItemsControl>(tb);
-                if (itemsControl != null)
-                {
-                    foreach (var container in FindVisualChildren<ContentPresenter>(itemsControl))
-                    {
-                        var btn = FindDescendant<ToggleButton>(container);
-                        if (btn != null)
-                            btn.IsChecked = object.Equals(btn.Content as string, SelectedGenre);
-                    }
-                }
+                // Only the clicked chip stays checked.
+                foreach (var btn in GenreChips.GetVisualDescendants().OfType<ToggleButton>())
+                    btn.IsChecked = string.Equals(btn.Content as string, SelectedGenre, StringComparison.Ordinal);
 
-                // --- Switch content panel and (re)populate data ---
                 if (string.Equals(SelectedGenre, "All", StringComparison.OrdinalIgnoreCase))
                 {
                     RebuildGroups();
@@ -241,74 +258,43 @@ ORDER BY rank";
             }
         }
 
-        // ---------- visual tree helpers ----------
-        private static TAncestor? FindAncestor<TAncestor>(DependencyObject? child) where TAncestor : DependencyObject
+        private async void Settings_Click(object? sender, RoutedEventArgs e)
         {
-            while (child != null)
-            {
-                child = System.Windows.Media.VisualTreeHelper.GetParent(child);
-                if (child is TAncestor a) return a;
-            }
-            return null;
-        }
+            var message =
+                $"Configuration file:{Environment.NewLine}{Path.Combine(AppContext.BaseDirectory, AppConfig.FileName)}" +
+                $"{Environment.NewLine}{Environment.NewLine}Database:{Environment.NewLine}{_dbPath}" +
+                $"{Environment.NewLine}{Environment.NewLine}Watch folders:{Environment.NewLine}{string.Join(Environment.NewLine, _config.WatchFolders)}" +
+                $"{Environment.NewLine}{Environment.NewLine}TMDB key: {(string.IsNullOrWhiteSpace(_config.TmdbApiKey) ? "not configured" : "configured")}" +
+                $"{Environment.NewLine}IMDb ratings: {(_ratings.IsConfigured ? "available" : "unavailable")}";
 
-        private static IEnumerable<TChild> FindVisualChildren<TChild>(DependencyObject depObj) where TChild : DependencyObject
-        {
-            if (depObj == null) yield break;
-            int count = System.Windows.Media.VisualTreeHelper.GetChildrenCount(depObj);
-            for (int i = 0; i < count; i++)
-            {
-                var child = System.Windows.Media.VisualTreeHelper.GetChild(depObj, i);
-                if (child is TChild c) yield return c;
-                foreach (var c2 in FindVisualChildren<TChild>(child))
-                    yield return c2;
-            }
-        }
-
-        private static TDesc? FindDescendant<TDesc>(DependencyObject root) where TDesc : DependencyObject
-        {
-            foreach (var c in FindVisualChildren<TDesc>(root))
-                return c;
-            return null;
-        }
-
-        private void Settings_Click(object sender, RoutedEventArgs e)
-        {
-            MessageBox.Show("Settings coming soon.", "UrDatabase");
-        }
-
-        public ObservableCollection<UiMovie> FlatResults { get; } = new();
-
-        private void SetSearching(bool searching)
-        {
-            GroupPanel.Visibility = searching ? Visibility.Collapsed : Visibility.Visible;
-            SearchPanel.Visibility = searching ? Visibility.Visible : Visibility.Collapsed;
+            await MessageBoxWindow.ShowAsync(this, "Settings", message);
         }
 
         private void ShowSearch()
         {
-            SearchPanel.Visibility = Visibility.Visible;
-            GroupPanel.Visibility = Visibility.Collapsed;
-            SingleGenrePanel.Visibility = Visibility.Collapsed;
+            SearchPanel.IsVisible = true;
+            GroupPanel.IsVisible = false;
+            SingleGenrePanel.IsVisible = false;
         }
 
         private void ShowAllGenres()
         {
-            SearchPanel.Visibility = Visibility.Collapsed;
-            GroupPanel.Visibility = Visibility.Visible;
-            SingleGenrePanel.Visibility = Visibility.Collapsed;
+            SearchPanel.IsVisible = false;
+            GroupPanel.IsVisible = true;
+            SingleGenrePanel.IsVisible = false;
         }
 
         private void ShowSingleGenre()
         {
-            SearchPanel.Visibility = Visibility.Collapsed;
-            GroupPanel.Visibility = Visibility.Collapsed;
-            SingleGenrePanel.Visibility = Visibility.Visible;
+            SearchPanel.IsVisible = false;
+            GroupPanel.IsVisible = false;
+            SingleGenrePanel.IsVisible = true;
         }
 
-        private async void MovieCard_Click(object sender, System.Windows.Input.MouseButtonEventArgs e)
+        private async void MovieCard_Click(object? sender, PointerPressedEventArgs e)
         {
-            if ((sender as FrameworkElement)?.DataContext is not UiMovie m) return;
+            if (!e.GetCurrentPoint(sender as Control).Properties.IsLeftButtonPressed) return;
+            if ((sender as Control)?.DataContext is not UiMovie m) return;
 
             try
             {
@@ -318,7 +304,9 @@ ORDER BY rank";
                     imageSize: _config.TmdbImageSize ?? "w780",
                     downloadPosters: false);
 
-                var cts = new CancellationTokenSource(TimeSpan.FromSeconds(12));
+                using var cts = CancellationTokenSource.CreateLinkedTokenSource(_cts.Token);
+                cts.CancelAfter(TimeSpan.FromSeconds(12));
+
                 var details = await tmdb.GetDetailsByTitleAsync(m.Title, m.Year, cts.Token);
 
                 List<string> cast = new();
@@ -329,13 +317,11 @@ ORDER BY rank";
                     var credits = await tmdb.GetCreditsByIdAsync(tmdbId, cts.Token);
                     if (credits != null)
                     {
-                        // top 10 cast
                         foreach (var c in credits.Cast.Take(10))
                         {
                             if (!string.IsNullOrWhiteSpace(c.Name))
                                 cast.Add(string.IsNullOrWhiteSpace(c.Character) ? c.Name : $"{c.Name} ({c.Character})");
                         }
-                        // key crew: Director(s), Writer(s), Cinematography
                         foreach (var d in credits.Crew.Where(x => string.Equals(x.Job, "Director", StringComparison.OrdinalIgnoreCase)).Take(3))
                             crew.Add($"Director: {d.Name}");
                         foreach (var w in credits.Crew.Where(x => x.Job != null && x.Job.Contains("Writer", StringComparison.OrdinalIgnoreCase)).Take(3))
@@ -351,53 +337,54 @@ ORDER BY rank";
                     PosterPath = m.PosterPath,
                     Overview = details?.Overview ?? "",
                     Runtime = details?.Runtime,
-                    ImdbRating = details?.VoteAverage, // shows as ★ 7.3 etc.
+                    ImdbId = details?.ImdbId,
                     Genres = details is null ? m.Genres ?? "" : string.Join(", ", details.Genres?.Select(g => g.Name) ?? Array.Empty<string>()),
                     BackdropUrl = string.IsNullOrWhiteSpace(details?.BackdropPath) ? null
-                                  : tmdb.BuildImageUrlPublic(details!.BackdropPath!)
+                                  : tmdb.BuildImageUrl(details!.BackdropPath!)
                 };
                 vm.TopCast = cast;
                 vm.KeyCrew = crew;
-
+                vm.ImdbRating = await LoadImdbRatingAsync(vm.ImdbId, m.Id, cts.Token);
                 vm.FilePath = FindLocalFileForMovie(m);
 
-                var dlg = new MovieDetailsWindow(vm) { Owner = this };
-                dlg.ShowDialog();
+                var dlg = new MovieDetailsWindow(vm);
+                await dlg.ShowDialog(this);
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"Could not load details:\n{ex.Message}", "UrDatabase",
-                    MessageBoxButton.OK, MessageBoxImage.Error);
+                await MessageBoxWindow.ShowAsync(this, "UrDatabase", $"Could not load details:{Environment.NewLine}{ex.Message}");
             }
         }
 
-        // naive resolver; improve later when you have a files↔movies link
+        /// <summary>
+        /// IMDb ratings come from OMDb, matched on the IMDb id TMDB reports. Entirely optional: no
+        /// id, no key or no network simply means no rating, never a substitute from another source.
+        /// </summary>
+        private async Task<double?> LoadImdbRatingAsync(string? imdbId, long movieId, CancellationToken ct)
+        {
+            if (string.IsNullOrWhiteSpace(imdbId)) return null;
+
+            try
+            {
+                using var conn = Database.Open(_dbPath);
+                return await _ratings.GetRatingAsync(conn, imdbId, movieId, ct);
+            }
+            catch (Exception ex)
+            {
+                AppLog.Write("omdb.log", $"rating lookup failed for {imdbId}: {ex.Message}");
+                return null;
+            }
+        }
+
         private string? FindLocalFileForMovie(UiMovie m)
         {
             try
             {
                 using var conn = Database.Open(_dbPath);
-
-                // 1) If you already have a link (e.g., files.movie_id), use it:
-                // var p = conn.ExecuteScalar<string>("SELECT file_path FROM files WHERE movie_id=@id LIMIT 1", new { id = m.Id });
-
-                // 2) Fallback: heuristic filename search by title
                 var files = conn.Query<string>("SELECT file_path FROM files").ToList();
-                var title = m.Title.ToLowerInvariant();
-                string? best = null;
-                foreach (var f in files)
-                {
-                    var name = System.IO.Path.GetFileNameWithoutExtension(f)?.ToLowerInvariant() ?? "";
-                    if (name.Contains(title))
-                    {
-                        best = f;
-                        break;
-                    }
-                }
-                return best;
+                return MovieFileMatcher.FindBestMatch(files, m.Title);
             }
             catch { return null; }
         }
-
     }
 }

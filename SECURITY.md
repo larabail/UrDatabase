@@ -24,8 +24,10 @@ This repository holds the whole of UrDatabase: the Avalonia application in
 release archives, and the static downloads site in `web/`. Reports about any of
 those are in scope.
 
-The application is a local desktop app with no server and no account. There is
-nothing to authenticate to and nothing of yours is uploaded anywhere, so the
+The application is a local desktop app with no server, no account and no
+telemetry. It contacts TMDB and OMDb and nothing else — in particular it does
+not talk to Firebase, which appears in this project only as the host CI deploys
+the downloads site to. Nothing of yours is uploaded anywhere, so the
 interesting surface is narrower than it is for most projects and worth naming
 directly:
 
@@ -33,36 +35,53 @@ directly:
   writes their paths into a SQLite file. Opening a film hands a path to the
   operating system to launch. A path or filename that escapes either of those
   intentions is a real finding.
-- **What it does with the network.** It sends a title and a year to TMDB, and
-  an IMDb id to OMDb, and renders what comes back. Anything in either response
-  that can do more than be displayed is a real finding.
+- **What it does with the network.** It sends a title to TMDB and an IMDb id to
+  OMDb, and renders what comes back. Anything in either response that can do
+  more than be displayed is a real finding.
 - **What CI ships.** The release workflow produces the archives people
   download. A change to it that could place unintended content in a release, or
   read a secret it has no business reading, is a real finding.
 
-Out of scope: findings against TMDB, OMDb, Firebase Hosting or GitHub
-themselves, and reports produced by a scanner without a demonstrated impact on
-UrDatabase.
+Out of scope: findings against TMDB, OMDb, Firebase or GitHub themselves, and
+reports produced by a scanner without a demonstrated impact on UrDatabase.
 
 ## What is not a vulnerability
 
-**A user's own API key sitting on their machine.** UrDatabase talks to two
-services: TMDB for search, posters and details, and OMDb for the IMDb rating.
-It reads both keys at runtime, from `appsettings.json` beside the binary or
-from the `URDATABASE_TMDB_API_KEY` and `URDATABASE_OMDB_API_KEY` environment
-variables. Either way the key ends up readable on that machine.
+**The API keys inside an official build.** Released archives have the TMDB and
+OMDb keys compiled into them, and **a key compiled into a desktop binary is not
+secret**. Anyone holding a build can extract it. There is no server to keep it
+behind, so this is not a defect to be fixed by obfuscation, and reporting that
+you pulled a key out of a release tells us nothing we have not written here.
 
-This is the design rather than a gap in it. A desktop app has no server to keep
-a key behind: anything the binary can reach, whoever holds the binary can
-reach too, so a key shipped inside or alongside a build is recoverable by
-definition. Rather than pretend otherwise, UrDatabase ships no key at all and
-asks each user for their own. Both are public, rate-limited credentials, and
-neither is needed to build the app or run its tests.
+The keys live in the `TMDB_API_KEY` and `OMDB_API_KEY` repository secrets for
+two reasons, neither of which is that the shipped value stays private: to keep
+them out of the repository and its history, and to make rotating one a change
+to a single setting rather than a change to the source. If you are rotating
+either, those two secrets are the only place the value needs editing.
 
-The one key this project genuinely keeps private is the `TMDB_API_KEY`
-repository secret, which exists so CI can exercise the metadata paths. A way to
-read it out of a workflow run, or to make a pull request from a fork read it,
-*is* a vulnerability and is worth reporting.
+What makes that trade acceptable is the specific keys involved. Both are free,
+read-only metadata credentials. The worst an abuser achieves is exhausting a
+quota, at which point posters and ratings stop appearing until it is rotated —
+irritating, cheap to fix, and costing no user anything of theirs. A key that
+could write, spend money or reach personal data would not be shipped this way,
+and if one is ever needed it belongs behind a server rather than inside the
+app. That reasoning, rather than the conclusion, is the part worth carrying to
+the next key.
+
+Anyone who would rather not share the shipped quota can supply their own key
+in `appsettings.json` or in `URDATABASE_TMDB_API_KEY` /
+`URDATABASE_OMDB_API_KEY`; both take precedence over the compiled-in value. A
+build from source has no keys in it at all.
+
+Reading `TMDB_API_KEY` or `OMDB_API_KEY` out of a workflow run therefore gains
+an attacker nothing a published archive would not.
+
+The third secret is a different matter. `FIREBASE_SERVICE_ACCOUNT` is used only
+to deploy the downloads site and never enters a build, so unlike the other two
+it is genuinely private and nothing that ships contains it. Anything that could
+expose it — a workflow readable by a fork, a step that echoes it, a change that
+carries it into an artifact — is a real finding and worth reporting, as is any
+workflow change that could place unintended content into a release.
 
 **Unsigned macOS builds.** The macOS archives are not code-signed or notarized
 yet, so Gatekeeper reports them as damaged or from an unidentified developer.
