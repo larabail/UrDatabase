@@ -52,8 +52,14 @@ It runs on Windows and macOS from one codebase, built with
   gives you a library; re-scanning is idempotent, so two spellings of one title
   collapse onto a single film rather than multiplying
   (`Services/ScanService`, `Services/FilenameParser`, `Services/MovieIndex`).
-- **Play.** The details window hands the linked file to whatever the operating
-  system uses to open it. A file can also be linked by hand from a file picker.
+- **Play.** The details window opens the file the catalogue links to this film —
+  the link the scan wrote, not a guess at the filename — and hands it to whatever
+  the operating system uses. A film with no link, or whose only linked copy has
+  been moved or deleted, does not silently fall back to whichever file looks
+  closest: if something unclaimed on disk resembles the title it is offered by
+  name and Play asks first, and otherwise the window says plainly that nothing is
+  linked. Linking a file by hand from the file picker settles it, and is
+  remembered (`Services/PlayTargetResolver`, `Services/MovieFileMatcher`).
 - **Browse a Jellyfin server.** Optional, off until you configure it. Point the
   app at a server and its movie library appears alongside your local one, with
   every server film badged **Server** so you can tell at a glance what is not on
@@ -371,6 +377,20 @@ bracketed year over a bare one so `Blade Runner 2049 (2017)` resolves to the
 right film and year. One casualty of splitting dotted names: genuine full stops
 go with them, so `S.W.A.T.` arrives as `S W A T`.
 
+Each file the scan records gets `files.movie_id` pointing at the film it belongs
+to, and that column is the only thing Play consults. It matters that it is not
+the filename: names are ambiguous in ways that bite hardest on the shortest
+titles — "it" is inside "spirited", so a film called *It* used to open
+`Spirited Away.mkv` — and they say nothing at all about a file somebody renamed.
+
+A film with no usable link falls back to a suggestion rather than to a guess.
+The name has to match on whole words, must not name a year other than the film's
+own, and must be the only candidate of its strength; a title of five characters
+or less needs the year before a partial match counts at all. Whatever survives
+that is offered by name and opened only once you say so, and confirming it
+records the link. If two files are equally good, nothing is offered — a coin
+flip is not a match.
+
 ## Downloads
 
 Released builds for Windows and macOS are listed at
@@ -498,11 +518,17 @@ Stated plainly, so nobody has to find out by using it:
 - **One Jellyfin server.** There is no way to add a second. The setup screen
   configures the first one and tests it, but a household with two servers has to
   pick one.
-- **Files are matched to films by heuristic.** An exact filename stem wins,
-  otherwise the first name containing the title. Two films whose titles are
-  substrings of each other can still be confused.
-- **Linking a file by hand does not persist.** The file picker updates the open
-  window and nothing else; reopening the film forgets it.
+- **Files are matched to films by heuristic when nothing is linked.** The scan
+  records which film each file belongs to and Play uses only that, so the
+  heuristic no longer decides what opens. It still decides what gets *offered*
+  for a film with no link — a catalogue built before the scanner recorded one, or
+  a film whose copy has moved — and there it can still be wrong; it asks before
+  opening anything, and declines to answer rather than guess between two equally
+  good candidates.
+- **Two prints of one film, and the app picks.** When several linked files
+  survive, Play opens the largest, then the most recently written, then the first
+  by path. That is a guess at which is the better copy, not a preference you can
+  set.
 - **Settings covers where your films are, and nothing else.** The screen asks
   about watch folders, a Jellyfin server and the two API keys. `DatabasePath`,
   `PosterCacheDir`, `DownloadPosters` and `TmdbImageSize` are still file-only;

@@ -12,12 +12,24 @@
                    Foreground="#EAEAEA"
                    TextWrapping="Wrap"
                    MaxHeight="320"/>
-        <Button x:Name="OkButton"
-                Content="OK"
-                Width="90"
-                HorizontalAlignment="Right"
-                HorizontalContentAlignment="Center"
-                Margin="0,18,0,0"
-                Click="Ok_Click"/>
+        <StackPanel x:Name="Buttons"
+                    Orientation="Horizontal"
+                    HorizontalAlignment="Right"
+                    Margin="0,18,0,0">
+            <!-- Hidden unless this is a question. Ordered cancel-then-confirm so the safe
+                 answer is the one nearest the pointer's resting place. -->
+            <Button x:Name="CancelButton"
+                    Content="Cancel"
+                    Width="90"
+                    HorizontalContentAlignment="Center"
+                    Margin="0,0,10,0"
+                    IsVisible="False"
+                    Click="Cancel_Click"/>
+            <Button x:Name="OkButton"
+                    Content="OK"
+                    Width="90"
+                    HorizontalContentAlignment="Center"
+                    Click="Ok_Click"/>
+        </StackPanel>
     </StackPanel>
 </Window>

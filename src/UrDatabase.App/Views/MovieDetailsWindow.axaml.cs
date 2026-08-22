@@ -15,15 +15,23 @@ namespace UrDatabase.Views
     {
         public MovieDetailsVm Vm { get; }
 
+        /// <summary>
+        /// Where to record a file the user links by hand. Null when the window was opened without
+        /// one — a Jellyfin film, or the XAML designer — in which case linking still updates the
+        /// open window and simply does not outlive it.
+        /// </summary>
+        private readonly string? _dbPath;
+
         private readonly CancellationTokenSource _cts = new();
 
         public MovieDetailsWindow() : this(new MovieDetailsVm())
         {
         }
 
-        public MovieDetailsWindow(MovieDetailsVm vm)
+        public MovieDetailsWindow(MovieDetailsVm vm, string? dbPath = null)
         {
             Vm = vm;
+            _dbPath = dbPath;
             DataContext = Vm;
             InitializeComponent();
 
@@ -33,21 +41,11 @@ namespace UrDatabase.Views
             Closed += (_, __) => _cts.Cancel();
         }
 
-        private void UpdateFileNote()
-        {
-            if (Vm.IsRemote)
-            {
-                // Never the URL itself: it carries an access token.
-                FileNote.Text = string.IsNullOrWhiteSpace(Vm.StreamUrl)
-                    ? "On the Jellyfin server, which could not be reached. Play will not work until it is back."
-                    : "Streams from your Jellyfin server. Play opens it in VLC or IINA.";
-                return;
-            }
-
-            FileNote.Text = string.IsNullOrWhiteSpace(Vm.FilePath)
-                ? "No local file linked. Play will open nothing."
-                : $"File: {Path.GetFileName(Vm.FilePath)}";
-        }
+        /// <summary>
+        /// Says which file Play will open and how confident the app is about it. The wording lives
+        /// in <see cref="PlayPrompts"/>, where it can be asserted on.
+        /// </summary>
+        private void UpdateFileNote() => FileNote.Text = PlayPrompts.FileNote(Vm);
 
         private async void LoadArtwork()
         {
@@ -67,9 +65,15 @@ namespace UrDatabase.Views
 
             if (string.IsNullOrWhiteSpace(Vm.FilePath) || !File.Exists(Vm.FilePath))
             {
-                await MessageBoxWindow.ShowAsync(this, "UrDatabase", "No playable file found for this title.");
+                await MessageBoxWindow.ShowAsync(this, "UrDatabase", PlayPrompts.NothingToPlay);
                 return;
             }
+
+            // A guess gets a question. The whole bug was that it did not: a title short enough to
+            // appear inside another film's filename opened that other film, with the window still
+            // reporting the one you asked for.
+            if (PlayPrompts.NeedsConfirmation(Vm) && !await ConfirmSuggestionAsync())
+                return;
 
             try
             {
@@ -79,6 +83,27 @@ namespace UrDatabase.Views
             {
                 await MessageBoxWindow.ShowAsync(this, "UrDatabase", $"Could not launch file:{Environment.NewLine}{ex.Message}");
             }
+        }
+
+        /// <summary>
+        /// Asks before opening a file the app only guessed at, and records the answer when it is
+        /// yes so the question is asked once rather than every time.
+        /// </summary>
+        private async Task<bool> ConfirmSuggestionAsync()
+        {
+            var confirmed = await MessageBoxWindow.ConfirmAsync(
+                this,
+                "UrDatabase",
+                PlayPrompts.ConfirmationQuestion(Vm),
+                confirmText: "Play");
+
+            if (confirmed)
+            {
+                RememberLink(Vm.FilePath!);
+                UpdateFileNote();
+            }
+
+            return confirmed;
         }
 
         /// <summary>
@@ -136,7 +161,35 @@ namespace UrDatabase.Views
             if (string.IsNullOrWhiteSpace(path)) return;
 
             Vm.FilePath = path;
+            Vm.FileMatch = PlayTargetKind.Linked;
+            RememberLink(path);
             UpdateFileNote();
+        }
+
+        /// <summary>
+        /// Writes the link to the catalogue so it survives closing the window. It used to live
+        /// only in this object, so choosing a file fixed the problem until you reopened the film
+        /// and it was forgotten — which made the whole feature something you had to redo every
+        /// time.
+        ///
+        /// A failure here is reported to the log and not to the user: the file they picked is
+        /// already playable in this window, and interrupting them to say the choice will not be
+        /// remembered helps nobody mid-film.
+        /// </summary>
+        private void RememberLink(string path)
+        {
+            if (string.IsNullOrWhiteSpace(_dbPath) || Vm.LocalId <= 0) return;
+
+            try
+            {
+                using var conn = Database.Open(_dbPath);
+                PlayTargetResolver.LinkFile(conn, Vm.LocalId, path);
+                Vm.FileMatch = PlayTargetKind.Linked;
+            }
+            catch (Exception ex)
+            {
+                AppLog.Write("app.log", $"could not link {path} to movie {Vm.LocalId}: {ex.Message}");
+            }
         }
     }
 }
