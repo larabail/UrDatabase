@@ -12,8 +12,8 @@ namespace UrDatabase.Tests
     /// window closes under one.
     ///
     /// None of these reach TMDB. A key has to be present for the loader to get as far as the gate
-    /// at all — it returns early without one — so these set an obviously fake one and cancel
-    /// before any request could be made.
+    /// at all — it returns early without one — so these set an obviously fake key and hand the
+    /// loader a handler that refuses to make a request, then cancel.
     /// </summary>
     public class PosterAutoLoaderGateTests : IDisposable
     {
@@ -29,6 +29,16 @@ namespace UrDatabase.Tests
 
         private static AppConfig Configured() => new() { TmdbApiKey = "not-a-real-key" };
 
+        /// <summary>
+        /// Refuses every request. Nothing in this file should get as far as one, and saying so
+        /// loudly is better than a test that quietly starts depending on a network.
+        /// </summary>
+        private static FakeHttpMessageHandler Silent() =>
+            new(_ => throw new InvalidOperationException("no request should have been made"));
+
+        private PosterAutoLoader Loader(int maxConcurrency) =>
+            new(Configured(), DbPath, maxConcurrency, onFailure: null, handler: Silent());
+
         public void Dispose()
         {
             try { Directory.Delete(_dir, recursive: true); } catch { }
@@ -42,7 +52,7 @@ namespace UrDatabase.Tests
         [Fact]
         public async Task A_fetch_cancelled_before_it_starts_does_not_hand_back_a_slot_it_never_took()
         {
-            using var loader = new PosterAutoLoader(Configured(), DbPath, maxConcurrency: 2);
+            using var loader = Loader(maxConcurrency: 2);
             Assert.Equal(2, loader.AvailableSlots);
 
             using var cts = new CancellationTokenSource();
@@ -56,7 +66,7 @@ namespace UrDatabase.Tests
         [Fact]
         public async Task A_window_closing_on_several_queued_fetches_leaves_the_gate_where_it_started()
         {
-            using var loader = new PosterAutoLoader(Configured(), DbPath, maxConcurrency: 4);
+            using var loader = Loader(maxConcurrency: 4);
 
             using var cts = new CancellationTokenSource();
             cts.Cancel();
@@ -75,7 +85,7 @@ namespace UrDatabase.Tests
         [Fact]
         public async Task Disposing_the_loader_while_a_fetch_is_queued_does_not_throw()
         {
-            var loader = new PosterAutoLoader(Configured(), DbPath, maxConcurrency: 1);
+            var loader = Loader(maxConcurrency: 1);
 
             using var cts = new CancellationTokenSource();
             var queued = loader.EnsurePosterAsync(1, "Any Film", 1999, _ => { }, cts.Token);
@@ -89,7 +99,7 @@ namespace UrDatabase.Tests
         [Fact]
         public async Task A_disposed_loader_starts_nothing_new()
         {
-            var loader = new PosterAutoLoader(Configured(), DbPath, maxConcurrency: 2);
+            var loader = Loader(maxConcurrency: 2);
             loader.Dispose();
 
             await loader.EnsurePosterAsync(1, "Any Film", 1999, _ => Assert.Fail("should not have run"), CancellationToken.None);

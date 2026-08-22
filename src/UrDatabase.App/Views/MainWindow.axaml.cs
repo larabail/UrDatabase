@@ -75,11 +75,20 @@ namespace UrDatabase.Views
         private bool _scanning;
         private bool _syncing;
 
+        /// <summary>
+        /// Set once the poster loader has been given its chance to finish, so the close that
+        /// follows the drain is not deferred a second time.
+        /// </summary>
+        private bool _postersDrained;
+
         public MainWindow()
         {
             InitializeComponent();
 
             ApplyConfig();
+
+            // Runs after the poster drain in OnClosing, and has to: cancelling this first would
+            // cut short the very fetches the drain is there to let finish.
             Closed += (_, __) => { _cts.Cancel(); _posterLoader?.Dispose(); _ratings.Dispose(); _jellyfin?.Dispose(); };
 
             DataContext = this;
@@ -96,6 +105,60 @@ namespace UrDatabase.Views
             // absent server delays nothing anybody is looking at.
             if (_jellyfin is not null)
                 Dispatcher.UIThread.Post(() => _ = SyncJellyfinAsync(announceFailure: false));
+        }
+
+        /// <summary>
+        /// A close waits for the posters already being fetched instead of walking away from
+        /// them. Each one is a TMDB request that has been paid for; abandoning it at the last
+        /// moment loses the answer and asks the same question again on the next launch.
+        ///
+        /// The window is hidden first, so closing still looks instant, and the wait is bounded
+        /// by <see cref="PosterAutoLoader.DefaultStopTimeout"/> — a fetch that will not finish
+        /// is cancelled rather than allowed to hold the app open.
+        ///
+        /// Only a window being closed is deferred. An application or OS shutdown is not ours to
+        /// postpone: cancelling one to buy two seconds is how an app comes to look like it
+        /// refuses to quit.
+        /// </summary>
+        protected override void OnClosing(WindowClosingEventArgs e)
+        {
+            base.OnClosing(e);
+
+            if (e.Cancel || _postersDrained) return;
+            if (e.CloseReason != WindowCloseReason.WindowClosing) return;
+
+            var loader = _posterLoader;
+            if (loader is null) return;
+
+            e.Cancel = true;
+            Hide();
+            _ = DrainPostersThenCloseAsync(loader);
+        }
+
+        /// <summary>
+        /// Closes for real once the loader has stopped. Every path through this ends in a close:
+        /// a window that stayed open because a poster misbehaved would be a worse bug than the
+        /// one being fixed.
+        /// </summary>
+        private async Task DrainPostersThenCloseAsync(PosterAutoLoader loader)
+        {
+            try
+            {
+                if (!await loader.StopAsync())
+                    AppLog.Write("posters.log", "closed with poster fetches still running; they were cancelled.");
+            }
+            catch (Exception ex)
+            {
+                AppLog.Write("posters.log", $"draining posters on close: {ex}");
+            }
+            finally
+            {
+                Dispatcher.UIThread.Post(() =>
+                {
+                    _postersDrained = true;
+                    Close();
+                });
+            }
         }
 
         /// <summary>
@@ -387,7 +450,9 @@ ORDER BY rank";
 
         private void WarmPosters(IEnumerable<UiMovie> movies)
         {
-            if (_posterLoader is null) return;
+            var loader = _posterLoader;
+            if (loader is null) return;
+
             foreach (var m in movies)
             {
                 // A server film is already described by the server, artwork included. Sending it
@@ -396,13 +461,33 @@ ORDER BY rank";
                 if (m.IsRemote) continue;
                 if (!string.IsNullOrWhiteSpace(m.PosterPath)) continue;
 
-                _ = _posterLoader.EnsurePosterAsync(
-                        movieId: m.Id,
-                        title: m.Title,
-                        year: m.Year,
-                        onFetched: path => Dispatcher.UIThread.Post(() => m.PosterPath = path),
-                        ct: _cts.Token);
+                // Queued rather than discarded. The task used to be dropped on the floor here,
+                // which is what let a closing window walk away from work it had started: nothing
+                // held it, so nothing could wait for it or notice it had gone.
+                loader.Queue(
+                    movieId: m.Id,
+                    title: m.Title,
+                    year: m.Year,
+                    onFetched: path => ShowOnUiThread(() => m.PosterPath = path),
+                    ct: _cts.Token);
             }
+        }
+
+        /// <summary>
+        /// Runs <paramref name="update"/> on the UI thread, and only while there is still a
+        /// window to update. Checked on both sides of the hop: once here, to save posting work
+        /// that has already been abandoned, and again when it runs, because the window can close
+        /// in between.
+        /// </summary>
+        private void ShowOnUiThread(Action update)
+        {
+            if (_cts.IsCancellationRequested) return;
+
+            Dispatcher.UIThread.Post(() =>
+            {
+                if (_cts.IsCancellationRequested) return;
+                update();
+            });
         }
 
         /// <summary>
