@@ -34,6 +34,7 @@ Avalonia replaces WPF. The differences that mattered during the port:
 
 | View | Role |
 | --- | --- |
+| `Views/SetupWindow` | First-run setup, and the Settings screen thereafter: watch folders, a Jellyfin server, API keys. |
 | `Views/MainWindow` | Search, genre chips, and the grouped/flat/single-genre poster panels. |
 | `Views/MovieDetailsWindow` | Backdrop, poster, metadata, cast and crew, play and link actions. |
 | `Views/MessageBoxWindow` | Simple modal dialog. |
@@ -44,6 +45,8 @@ Avalonia replaces WPF. The differences that mattered during the port:
 | Service | Responsibility |
 | --- | --- |
 | `AppConfig` | Loads settings, resolves API keys, applies platform defaults. Never throws. |
+| `ConfigStore` | Where `appsettings.json` is read from and written to. Refuses to save a resolved config. |
+| `FirstRun` | Whether this launch has never been configured, and so whether to offer setup. |
 | `PlatformPaths` | Every filesystem location, resolved per platform. Expands `%APPDATA%` and `~`. |
 | `Database` | Opens the SQLite database and applies `Data/schema.sql` idempotently. |
 | `ScanService` | Walks watch folders and upserts the `files` table, skipping unreadable directories. |

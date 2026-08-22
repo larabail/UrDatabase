@@ -20,21 +20,26 @@ and never touches the network.
 
 ## 3) Point it at your movies
 
-The app creates its database on first use and needs no configuration to start. Everything below
-is optional.
+The app creates its database on first use and needs no configuration to start. The first launch
+opens a setup screen that writes `appsettings.json` for you — folders on this machine, a Jellyfin
+server, or both, plus the two optional API keys — and the **Settings** button reopens it later.
+Everything below is the same file, for anyone editing it directly.
 
 Copy `src/UrDatabase.App/appsettings.example.json` to `src/UrDatabase.App/appsettings.json` and
-edit it. That file is gitignored, so your key and your folders can never be committed.
+edit it. That file is gitignored, so your key and your folders can never be committed. A file you
+write by hand takes precedence over anything setup saved, and its presence is also what tells the
+app it has been configured already, so setup does not appear.
 
 | Setting | Meaning | Default when blank |
 | --- | --- | --- |
 | `DatabasePath` | Where the SQLite catalogue lives | `<app data>/UrDatabase/movies.db` |
-| `WatchFolders` | Absolute folders to scan | `~/Movies` on macOS, Videos on Windows |
+| `WatchFolders` | Absolute folders to scan | `~/Movies` on macOS, Videos on Windows — but nothing at all once `SetupCompleted` is set |
 | `PosterCacheDir` | Where downloaded posters are cached | `<app data>/UrDatabase/posters` |
 | `TmdbApiKey` | TMDB key for metadata and posters | none |
 | `OmdbApiKey` | OMDb key for the IMDb rating | none |
 | `DownloadPosters` | Cache posters to disk instead of loading them from TMDB | `false` |
 | `TmdbImageSize` | TMDB image size, e.g. `w185`, `w342`, `w500`, `original` | `w342` |
+| `SetupCompleted` | Written by the setup screen once answered; stops it being offered again | `false` |
 
 `<app data>` is `%APPDATA%` on Windows and `~/.config` on macOS. Paths may use `%APPDATA%`,
 `%USERPROFILE%` or a leading `~`; a config file written on Windows still resolves on macOS.

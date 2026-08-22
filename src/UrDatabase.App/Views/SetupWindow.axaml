@@ -1,0 +1,263 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="UrDatabase.Views.SetupWindow"
+        Title="UrDatabase — Setup"
+        Width="680"
+        Height="760"
+        MinWidth="560"
+        MinHeight="560"
+        Background="#0F0F10"
+        WindowStartupLocation="CenterScreen">
+
+    <Window.Resources>
+        <SolidColorBrush x:Key="TextBrush" Color="#EAEAEA"/>
+        <SolidColorBrush x:Key="MutedBrush" Color="#8A8A8E"/>
+        <SolidColorBrush x:Key="PanelBg" Color="#171718"/>
+        <SolidColorBrush x:Key="PanelBorder" Color="#2C2C2E"/>
+        <SolidColorBrush x:Key="AccentBrush" Color="#0A84FF"/>
+        <SolidColorBrush x:Key="WarnBrush" Color="#FFB340"/>
+        <SolidColorBrush x:Key="GoodBrush" Color="#4CD964"/>
+    </Window.Resources>
+
+    <Window.Styles>
+        <Style Selector="TextBlock.dark">
+            <Setter Property="Foreground" Value="{StaticResource TextBrush}"/>
+        </Style>
+
+        <Style Selector="TextBlock.muted">
+            <Setter Property="Foreground" Value="{StaticResource MutedBrush}"/>
+            <Setter Property="FontSize" Value="12"/>
+            <Setter Property="TextWrapping" Value="Wrap"/>
+        </Style>
+
+        <Style Selector="TextBlock.field">
+            <Setter Property="Foreground" Value="{StaticResource MutedBrush}"/>
+            <Setter Property="FontSize" Value="12"/>
+            <Setter Property="Margin" Value="0,0,0,4"/>
+        </Style>
+
+        <Style Selector="CheckBox.section">
+            <Setter Property="Foreground" Value="{StaticResource TextBrush}"/>
+            <Setter Property="FontSize" Value="15"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Cursor" Value="Hand"/>
+        </Style>
+
+        <Style Selector="Border.card">
+            <Setter Property="Background" Value="{StaticResource PanelBg}"/>
+            <Setter Property="BorderBrush" Value="{StaticResource PanelBorder}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="CornerRadius" Value="8"/>
+            <Setter Property="Padding" Value="16"/>
+            <Setter Property="Margin" Value="0,0,0,14"/>
+        </Style>
+
+        <Style Selector="Button.dark">
+            <Setter Property="Foreground" Value="{StaticResource TextBrush}"/>
+            <Setter Property="Background" Value="#262626"/>
+            <Setter Property="BorderBrush" Value="{StaticResource PanelBorder}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Padding" Value="12,6"/>
+            <Setter Property="Cursor" Value="Hand"/>
+        </Style>
+
+        <Style Selector="Button.primary /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="{StaticResource AccentBrush}"/>
+            <Setter Property="BorderBrush" Value="{StaticResource AccentBrush}"/>
+        </Style>
+
+        <Style Selector="Button.primary">
+            <Setter Property="Foreground" Value="White"/>
+            <Setter Property="Padding" Value="18,7"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+        </Style>
+    </Window.Styles>
+
+    <DockPanel Margin="22">
+
+        <StackPanel DockPanel.Dock="Top" Margin="0,0,0,16">
+            <TextBlock x:Name="HeadingText"
+                       Classes="dark"
+                       FontSize="22"
+                       FontWeight="SemiBold"
+                       Text="Welcome to UrDatabase"/>
+            <TextBlock x:Name="SubheadingText"
+                       Classes="muted"
+                       Margin="0,6,0,0"
+                       Text="Tell it where your films are. You can use folders on this computer, a Jellyfin server, or both."/>
+        </StackPanel>
+
+        <!-- Kept together at the bottom so the answer, the reason it is not accepted yet and
+             the button that accepts it are all in one place. -->
+        <StackPanel DockPanel.Dock="Bottom" Margin="0,14,0,0">
+            <TextBlock x:Name="ProblemText"
+                       Foreground="{StaticResource WarnBrush}"
+                       FontSize="12"
+                       TextWrapping="Wrap"
+                       Margin="0,0,0,10"/>
+            <Grid ColumnDefinitions="Auto,*,Auto">
+                <TextBlock x:Name="SavePathText"
+                           Grid.Column="0"
+                           Classes="muted"
+                           FontSize="11"
+                           VerticalAlignment="Center"
+                           MaxWidth="400"/>
+                <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="10">
+                    <Button x:Name="SkipButton"
+                            Classes="dark"
+                            Content="Skip"
+                            ToolTip.Tip="Goes straight to the library and does not ask again. The Settings button reopens this."
+                            Click="Skip_Click"/>
+                    <Button x:Name="FinishButton"
+                            Classes="primary"
+                            Content="Finish"
+                            Click="Finish_Click"/>
+                </StackPanel>
+            </Grid>
+        </StackPanel>
+
+        <ScrollViewer VerticalScrollBarVisibility="Auto">
+            <StackPanel>
+
+                <!-- Local folders -->
+                <Border Classes="card">
+                    <StackPanel>
+                        <CheckBox x:Name="LocalCheck"
+                                  Classes="section"
+                                  Content="Films on this computer"
+                                  IsCheckedChanged="Check_Changed"/>
+                        <TextBlock Classes="muted"
+                                   Margin="0,4,0,0"
+                                   Text="Folders are searched all the way down. Nothing is copied or moved — UrDatabase only records what it finds."/>
+
+                        <StackPanel x:Name="LocalPanel" Margin="0,12,0,0">
+                            <ListBox x:Name="FolderList"
+                                     Height="120"
+                                     Background="#101011"
+                                     Foreground="{StaticResource TextBrush}"
+                                     BorderBrush="{StaticResource PanelBorder}"
+                                     BorderThickness="1"
+                                     SelectionChanged="FolderList_SelectionChanged"/>
+                            <TextBlock x:Name="FolderNote"
+                                       Classes="muted"
+                                       Margin="0,6,0,0"/>
+                            <StackPanel Orientation="Horizontal" Spacing="10" Margin="0,10,0,0">
+                                <Button x:Name="AddFolderButton"
+                                        Classes="dark"
+                                        Content="Add folder…"
+                                        Click="AddFolder_Click"/>
+                                <Button x:Name="RemoveFolderButton"
+                                        Classes="dark"
+                                        Content="Remove"
+                                        IsEnabled="False"
+                                        Click="RemoveFolder_Click"/>
+                            </StackPanel>
+                        </StackPanel>
+                    </StackPanel>
+                </Border>
+
+                <!-- Jellyfin -->
+                <Border Classes="card">
+                    <StackPanel>
+                        <CheckBox x:Name="JellyfinCheck"
+                                  Classes="section"
+                                  Content="A Jellyfin server"
+                                  IsCheckedChanged="Check_Changed"/>
+                        <TextBlock Classes="muted"
+                                   Margin="0,4,0,0"
+                                   Text="Its films are streamed, never downloaded. Only the list and the artwork are cached here."/>
+
+                        <StackPanel x:Name="JellyfinPanel" Margin="0,12,0,0" Spacing="10">
+                            <StackPanel>
+                                <TextBlock Classes="field" Text="Server address"/>
+                                <TextBox x:Name="ServerUrlBox"
+                                         Watermark="media-box:8096"
+                                         TextChanged="Text_Changed"/>
+                                <TextBlock Classes="muted"
+                                           Margin="0,4,0,0"
+                                           Text="A bare host gets http:// added, since a server on a home network usually has no certificate."/>
+                            </StackPanel>
+
+                            <Grid ColumnDefinitions="*,12,*">
+                                <StackPanel Grid.Column="0">
+                                    <TextBlock Classes="field" Text="Username"/>
+                                    <TextBox x:Name="UsernameBox" TextChanged="Text_Changed"/>
+                                </StackPanel>
+                                <StackPanel Grid.Column="2">
+                                    <TextBlock Classes="field" Text="Password"/>
+                                    <TextBox x:Name="PasswordBox"
+                                             PasswordChar="•"
+                                             TextChanged="Text_Changed"/>
+                                </StackPanel>
+                            </Grid>
+
+                            <Grid ColumnDefinitions="*,12,*">
+                                <StackPanel Grid.Column="0">
+                                    <TextBlock Classes="field" Text="API key (instead of a username)"/>
+                                    <TextBox x:Name="ApiKeyBox"
+                                             PasswordChar="•"
+                                             TextChanged="Text_Changed"/>
+                                </StackPanel>
+                                <StackPanel Grid.Column="2">
+                                    <TextBlock Classes="field" Text="Library (blank picks the first)"/>
+                                    <TextBox x:Name="LibraryBox" TextChanged="Text_Changed"/>
+                                </StackPanel>
+                            </Grid>
+
+                            <TextBlock Classes="muted"
+                                       Text="Every Jellyfin API key is administrative, so signing in as your own account is the safer of the two."/>
+
+                            <TextBlock x:Name="PlayerNoteText"
+                                       Classes="muted"/>
+
+                            <StackPanel Orientation="Horizontal" Spacing="12">
+                                <Button x:Name="TestButton"
+                                        Classes="dark"
+                                        Content="Test connection"
+                                        Click="Test_Click"/>
+                                <TextBlock x:Name="TestResultText"
+                                           Classes="muted"
+                                           VerticalAlignment="Center"
+                                           MaxWidth="380"/>
+                            </StackPanel>
+                        </StackPanel>
+                    </StackPanel>
+                </Border>
+
+                <!-- Metadata keys -->
+                <Border Classes="card">
+                    <StackPanel>
+                        <TextBlock Classes="dark"
+                                   FontSize="15"
+                                   FontWeight="SemiBold"
+                                   Text="Posters and ratings (optional)"/>
+                        <TextBlock x:Name="KeyNoteText"
+                                   Classes="muted"
+                                   Margin="0,4,0,0"/>
+
+                        <Grid ColumnDefinitions="*,12,*" Margin="0,12,0,0">
+                            <StackPanel Grid.Column="0">
+                                <TextBlock Classes="field" Text="TMDB API key"/>
+                                <TextBox x:Name="TmdbKeyBox"
+                                         PasswordChar="•"
+                                         TextChanged="Text_Changed"/>
+                            </StackPanel>
+                            <StackPanel Grid.Column="2">
+                                <TextBlock Classes="field" Text="OMDb API key"/>
+                                <TextBox x:Name="OmdbKeyBox"
+                                         PasswordChar="•"
+                                         TextChanged="Text_Changed"/>
+                            </StackPanel>
+                        </Grid>
+
+                        <TextBlock Classes="muted"
+                                   Margin="0,10,0,0"
+                                   Text="Keys are written to this machine's settings file only. A Jellyfin library needs neither: the server describes its own films."/>
+                    </StackPanel>
+                </Border>
+
+            </StackPanel>
+        </ScrollViewer>
+    </DockPanel>
+</Window>

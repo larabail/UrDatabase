@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using System.Linq;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace UrDatabase.Services
 {
@@ -28,6 +29,23 @@ namespace UrDatabase.Services
         /// </summary>
         public JellyfinSettings Jellyfin { get; set; } = new();
 
+        /// <summary>
+        /// Set by the setup screen once the user has answered it, and the only thing that stops
+        /// it being offered again. It is written even when the user skips, because a person who
+        /// declined to answer a question has answered it.
+        /// </summary>
+        public bool SetupCompleted { get; set; } = false;
+
+        /// <summary>
+        /// True once <see cref="Normalize"/> has folded environment variables and compiled-in
+        /// keys into this instance. Such a config describes this machine at this moment rather
+        /// than what the user configured, and <see cref="ConfigStore.Save"/> refuses to write one:
+        /// doing so would copy an official build's TMDB key, or a password deliberately kept in
+        /// the environment, into a file that nobody put it in and nobody would think to clean out.
+        /// </summary>
+        [JsonIgnore]
+        internal bool IsResolved { get; private set; }
+
         /// <summary>File a user copies from the example to configure their own install.</summary>
         public const string FileName = "appsettings.json";
 
@@ -44,6 +62,28 @@ namespace UrDatabase.Services
             var config = ReadFile(path) ?? new AppConfig();
             Normalize(config);
             return config;
+        }
+
+        /// <summary>
+        /// The configuration exactly as the user's own file has it — no environment fallbacks, no
+        /// compiled-in keys, no platform paths substituted for blanks. This is what the setup
+        /// screen edits and what gets written back, so that saving changes only the answers the
+        /// user actually gave.
+        ///
+        /// Returns an empty configuration when there is no file yet, and deliberately never
+        /// reads the shipped example: its placeholders are not this user's answers.
+        /// </summary>
+        public static AppConfig ReadRaw(string? path = null)
+        {
+            var candidate = path ?? ConfigStore.ExistingPath;
+            var config = candidate is null ? null : ReadFile(candidate);
+
+            return config ?? new AppConfig
+            {
+                DatabasePath = "",
+                PosterCacheDir = "",
+                WatchFolders = Array.Empty<string>()
+            };
         }
 
         private static AppConfig? ReadFile(string? path)
@@ -77,11 +117,7 @@ namespace UrDatabase.Services
         {
             if (!string.IsNullOrWhiteSpace(path)) return new[] { path };
 
-            return new[]
-            {
-                Path.Combine(AppContext.BaseDirectory, FileName),
-                Path.Combine(AppContext.BaseDirectory, ExampleFileName)
-            };
+            return ConfigStore.ReadOrder.ToArray();
         }
 
         /// <summary>
@@ -98,7 +134,11 @@ namespace UrDatabase.Services
                 .Where(folder => !string.IsNullOrWhiteSpace(folder))
                 .ToArray();
 
-            if (config.WatchFolders.Length == 0)
+            // An install that has never been asked gets the platform's film folder, which is the
+            // only useful guess available. One that has been asked and named no folder meant it:
+            // substituting a default there would scan a folder the user had just declined, and a
+            // Jellyfin-only library would fill up with films from this disk.
+            if (config.WatchFolders.Length == 0 && !config.SetupCompleted)
                 config.WatchFolders = new[] { PlatformPaths.DefaultWatchFolder };
 
             config.TmdbImageSize = string.IsNullOrWhiteSpace(config.TmdbImageSize) ? "w342" : config.TmdbImageSize.Trim();
@@ -115,6 +155,8 @@ namespace UrDatabase.Services
 
             config.Jellyfin ??= new JellyfinSettings();
             config.Jellyfin.Normalize();
+
+            config.IsResolved = true;
         }
 
         /// <summary>
