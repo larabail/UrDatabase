@@ -395,6 +395,14 @@ that is offered by name and opened only once you say so, and confirming it
 records the link. If two files are equally good, nothing is offered — a coin
 flip is not a match.
 
+A scan, a Jellyfin sync and the poster fetches all write to that one file, and
+they run at the same time — so the app makes them take turns rather than
+collide, and browsing stays readable throughout. If a write genuinely cannot be
+made, the status line says so; it does not fail silently and leave you to
+wonder why a poster never arrived. Two copies of the app open on the same
+catalogue is the one case that is only handled rather than prevented: they wait
+for each other, and either may eventually give up and tell you.
+
 ## Downloads
 
 Released builds for Windows and macOS are listed at
