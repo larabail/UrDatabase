@@ -1,0 +1,26 @@
+# Every change needs review from the owner.
+#
+# This file only has teeth when branch protection requires review from code
+# owners; on its own it requests a review, it does not enforce one. The rule on
+# main is what enforces it.
+#
+# The last matching pattern wins, so the catch-all comes first and the narrower
+# paths below it are there to survive anyone adding a later pattern.
+
+* @larabail
+
+# Release and CI configuration: a change here can ship a build or leak a secret
+# without touching a line of application code.
+/.github/ @larabail
+/Directory.Build.props @larabail
+/scripts/ @larabail
+/tool/ @larabail
+
+# Where the downloads site is deployed, and to which Firebase project.
+/firebase.json @larabail
+/.firebaserc @larabail
+
+# The working agreement, the licence and the security policy.
+/AGENTS.md @larabail
+/LICENSE @larabail
+/SECURITY.md @larabail

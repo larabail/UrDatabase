@@ -1,58 +1,262 @@
-# UrDatabase (Windows, WPF, SQLite)
+# UrDatabase
 
-Personal movie database app for Windows. Offline-first with SQLite, fast file operations, and optional metadata fetch (TMDb/OMDb).
+A desktop app for browsing a film collection you already have on disk. It reads
+a local SQLite catalogue, lays it out as poster art grouped by genre, and fills
+in the posters, plot, runtime, cast and crew from
+[TMDB](https://www.themoviedb.org/) as you look at them, with the IMDb rating
+fetched from [OMDb](https://www.omdbapi.com/). Nothing of yours leaves the
+machine: the only thing sent out is the title and year being looked up.
+
+It runs on Windows and macOS from one codebase, built with
+[Avalonia UI 11](https://avaloniaui.net/) on .NET 8.
+
+## Features
+
+- **Browse by genre.** The library opens as rows of poster cards, one row per
+  genre, newest first within each row. Genre chips across the top narrow the
+  view to a single genre (`Views/MainWindow`).
+- **Search.** Typing in the search box queries the `movies_fts` full-text index
+  and replaces the grouped view with a flat, ranked list of hits.
+- **Details on click.** Opening a card fetches the film from TMDB and shows the
+  overview, runtime, genres, backdrop, the top ten billed cast with their
+  characters, and up to three directors and three writers. The star rating
+  beside it is the **IMDb** rating, looked up from OMDb using the IMDb id TMDB
+  returns; with no OMDb key configured the star is simply absent and the rest of
+  the page is unaffected (`Services/TmdbService`, `Views/MovieDetailsWindow`).
+- **Posters fill themselves in.** Any film in the catalogue with no poster is
+  looked up in the background, four at a time, and the result is written back
+  to the database so the next launch is instant. Posters are either referenced
+  at their TMDB URL or downloaded into a local cache directory, depending on
+  `DownloadPosters` (`Services/PosterAutoLoader`).
+- **Scan your watch folders.** The scan button walks the configured folders for
+  video files — `.mkv`, `.mp4`, `.avi`, `.mov`, `.wmv`, `.m4v`, `.mpg`, `.mpeg`
+  — and upserts each path, size and timestamp into the `files` table
+  (`Services/ScanService`).
+- **Play.** The details window hands the linked file to whatever the operating
+  system uses to open it. A file can also be linked by hand from a file picker.
+
+[Known gaps](#known-gaps) is worth reading before you judge any of the above;
+several are thinner than they sound.
 
 ## Tech stack
-- **WPF (.NET 8)** — native Windows GUI
-- **SQLite** — local database
-- **Dapper** (or EF Core) — data access
-- **TMDb API** (optional) — posters, cast/crew
-- **FileSystemWatcher** — watch & scan folders
-- **Process.Start** — launch movies with default player
 
-## Quick start
-1) **Install prerequisites**
-   - Git
-   - Visual Studio 2022+ with `.NET desktop development` *or* .NET 8 SDK
-2) **Create the repo on GitHub**
-   - Name `urdatabase` (private), add no files.
-3) **Initialize locally**
+| Piece | What it is for |
+| --- | --- |
+| Avalonia UI 11 | The interface, on Windows and macOS from one project |
+| .NET 8 | Runtime and SDK, target framework `net8.0` |
+| SQLite, via `Microsoft.Data.Sqlite` | The catalogue, a single file on disk |
+| Dapper | Data access — the queries are small and hand-written |
+| CommunityToolkit.Mvvm | Observable models behind the views |
+| TMDB API v3 | Search, posters, plot, runtime, genres, cast and crew |
+| OMDb API | The IMDb rating, and nothing else |
+
+There is no server. There is no account. The only outbound traffic is to
+`api.themoviedb.org`, `image.tmdb.org` and `www.omdbapi.com`.
+
+## Getting started
+
+### Prerequisites
+
+The [.NET 8 SDK](https://dotnet.microsoft.com/download/dotnet/8.0), and nothing
+else. `dotnet --version` should print `8.` something. Avalonia needs no
+platform workload, no Visual Studio and no Xcode: any editor and the `dotnet`
+CLI are enough on both operating systems.
+
+No API key is needed to build the app or to run the tests, and none is needed
+to open it and browse a catalogue you already have. Keys only buy you metadata:
+a TMDB key for posters and details, an OMDb key for the IMDb rating. See
+[Configuration](#configuration).
+
+### Build and run
+
+The same four commands work identically on Windows and macOS:
+
 ```bash
-git init
-git add .
-git commit -m "chore: repo scaffold"
-git branch -M main
-git remote add origin <YOUR_GITHUB_REMOTE_URL>
-git push -u origin main
-```
-4) **App config**
-   - Copy your SQLite DB to: `%APPDATA%\UrDatabase\movies.db` (create the folder).
-   - Or generate one from `/src/UrDatabase.App/Data/schema.sql` using your importer.
-   - Copy `src/UrDatabase.App/appsettings.example.json` → `appsettings.json` and edit values.
-5) **Build & run**
-```bash
-cd src/UrDatabase.App
+dotnet restore
 dotnet build
-dotnet run
+dotnet test
+dotnet run --project src/UrDatabase.App
 ```
 
-> **Note:** Do **not** commit your actual movie files or `movies.db`. This repo tracks source code and templates only.
+### Publish a standalone build
 
-## Folder layout
-```
-urdatabase/
-  src/
-    UrDatabase.App/       # WPF app
-      Data/schema.sql     # SQLite schema
-      appsettings.example.json
-  docs/                   # setup & design notes
-  scripts/                # local helper scripts
-  .github/                # CI and issue templates
+CI does this for you on release, but to produce one by hand, pick a runtime
+identifier — `win-x64`, `osx-arm64` or `osx-x64`:
+
+```bash
+dotnet publish src/UrDatabase.App -c Release -r osx-arm64
 ```
 
-## Roadmap
-- [ ] File scanner to populate `files` table from watch folders
-- [ ] Metadata service (TMDb) + caching of posters
-- [ ] Search UI (FTS)
-- [ ] Move/rename UI (atomic on same drive)
-- [ ] Optional embedded player (LibVLC)
+## Configuration
+
+Settings live next to the built app in `appsettings.json`. The file is
+gitignored, because it holds your API keys and the absolute paths to your own
+film folders. Copy the template and edit it:
+
+```bash
+cp src/UrDatabase.App/appsettings.example.json src/UrDatabase.App/appsettings.json
+```
+
+| Key | What it does |
+| --- | --- |
+| `DatabasePath` | The SQLite catalogue. Defaults to `UrDatabase/movies.db` under the user's application data directory |
+| `WatchFolders` | Absolute paths the scan button walks, searched recursively |
+| `TmdbApiKey` | Your TMDB v3 API key. Leave it empty to run without metadata |
+| `OmdbApiKey` | Your OMDb API key. Leave it empty to run without the IMDb rating |
+| `PosterCacheDir` | Where downloaded posters go |
+| `DownloadPosters` | `false` points the UI at TMDB's own image URLs; `true` caches each poster to disk |
+| `TmdbImageSize` | TMDB's poster width — `w185`, `w342`, `w500`, `original` |
+
+Paths may contain environment variables and are expanded on load, so
+`%APPDATA%\UrDatabase\movies.db` works on Windows. The application data
+directory .NET reports is `%APPDATA%` on Windows and `~/.config` on macOS, so a
+configuration file written on one is not portable to the other.
+
+### API keys
+
+Two services are involved, and both keys are yours rather than the project's.
+Nothing is compiled into the binary, nothing is committed, and a released
+archive carries no key at all — each user supplies their own.
+
+| Service | Get a key from | Without it |
+| --- | --- | --- |
+| TMDB | [your TMDB account settings](https://www.themoviedb.org/settings/api) | No posters and no details; browsing, genres and search still work |
+| OMDb | [omdbapi.com](https://www.omdbapi.com/apikey.aspx) | The IMDb star is hidden. Everything else is unaffected |
+
+Neither is needed to build the app or to run the tests, so a fresh clone is
+green with no configuration at all.
+
+Either key can be given in `appsettings.json`, as `TmdbApiKey` and
+`OmdbApiKey`, or in the environment:
+
+```bash
+export URDATABASE_TMDB_API_KEY=...       # macOS
+export URDATABASE_OMDB_API_KEY=...
+$env:URDATABASE_TMDB_API_KEY = '...'     # Windows PowerShell
+$env:URDATABASE_OMDB_API_KEY = '...'
+```
+
+The environment variable wins when it is set, which is how to run the app
+without a key ever being written to disk.
+
+Treat both as public, rate-limited credentials rather than secrets. A desktop
+app has no server to keep a key behind, so whichever way you supply it, it ends
+up readable on the machine running the app. That is precisely why UrDatabase
+asks each user for their own key instead of shipping one. Never commit a key —
+see [SECURITY.md](SECURITY.md) for the one that once was.
+
+### The catalogue
+
+The app **reads** a catalogue; it does not build one. It expects a SQLite
+database holding a `movies` table (`id`, `title`, `year`, `genres`,
+`poster_path`), a `files` table, and a `movies_fts` FTS5 index over the films.
+`src/UrDatabase.App/Data/schema.sql` is not a full schema — it adds the unique
+index on `files(file_path)` that the scanner's upsert depends on, and assumes
+the rest already exists. Point `DatabasePath` at a database you already have,
+or create those tables yourself before first run.
+
+## Downloads
+
+Released builds for Windows and macOS are listed at
+[urdatabase-downloads.web.app](https://urdatabase-downloads.web.app), a static
+page deployed to Firebase Hosting. Every asset is also on the
+[releases page](https://github.com/larabail/UrDatabase/releases), named
+`UrDatabase-<version>-<rid>.zip`.
+
+### macOS will refuse to open the download
+
+The macOS builds are **not code-signed or notarized**. Downloading one attaches
+a quarantine flag, and Gatekeeper then reports the app as damaged or from an
+unidentified developer. It is neither; it is unsigned. Either open it once from
+the Finder's right-click menu and confirm, or clear the flag:
+
+```bash
+xattr -dr com.apple.quarantine /Applications/UrDatabase.app
+```
+
+Building from source yourself avoids this entirely, since nothing was
+downloaded to quarantine.
+
+## CI and releases
+
+`Directory.Build.props` at the repository root holds a single `<Version>`, and
+that one line is the source of truth for everything below. It starts at
+`0.1.0`. Do not put a version in the `.csproj`.
+
+- **On a pull request**, the workflows restore, build and test, then publish
+  each runtime identifier and attach the archives to the run. You can download
+  and try a branch before it merges.
+- **On a merge to `main`**, the version in `Directory.Build.props` is tagged
+  `v<version>`, a GitHub Release is created with
+  `UrDatabase-<version>-win-x64.zip`, `UrDatabase-<version>-osx-arm64.zip` and
+  `UrDatabase-<version>-osx-x64.zip` attached, and the downloads site is
+  deployed to Firebase Hosting.
+
+Because a merge releases, a pull request that changes anything under `src/` has
+to bump the version, or the release will collide with a tag that already
+exists. How far to bump is in
+[AGENTS.md](AGENTS.md#versioning).
+
+Hosting is the only Firebase product this project uses. There is no database,
+no authentication and no functions — the site is three static files describing
+where to get the binaries. The Firebase project is `actordb-cf981` and the
+hosting site is `urdatabase-downloads`.
+
+## Repository layout
+
+```
+src/UrDatabase.App/          the application: one cross-platform project
+  Views/                     windows and their code-behind
+  Controls/                  reusable pieces, e.g. the poster card
+  Models/                    what the views bind to
+  Services/                  config, SQLite, scanning, TMDB, OMDb, posters
+  Data/schema.sql            the index the scanner's upsert relies on
+  appsettings.example.json   configuration template; the real file is ignored
+tests/UrDatabase.Tests/      xUnit suite
+Directory.Build.props        the single <Version> for the whole solution
+web/                         the downloads site served by Firebase Hosting
+docs/                        design notes
+scripts/                     local helper scripts
+.github/                     workflows, issue templates, the PR template
+```
+
+## Contributing
+
+Read [AGENTS.md](AGENTS.md) first: it is the working agreement for humans and
+agents alike, and it is short. The rules that catch people out are that `main`
+is never committed to directly, that commits carry no `Co-authored-by` trailer,
+and that a change under `src/` bumps the version.
+
+`dotnet build` and `dotnet test` must both be clean before you open a pull
+request.
+
+## Known gaps
+
+Stated plainly, so nobody has to find out by using it:
+
+- **Nothing populates `movies`.** Scanning fills the `files` table only. The
+  film records themselves have to come from somewhere else, which is why the
+  app is a reader of an existing catalogue rather than a way to create one.
+- **Files are matched to films by guesswork** — the first filename containing
+  the film's title, lower-cased. Two films whose titles are substrings of each
+  other will fool it.
+- **Linking a file by hand does not persist.** The file picker updates the open
+  window and nothing else; reopening the film forgets it.
+- **Settings is a placeholder** that says so when clicked. Configuration is
+  file-only for now.
+- **Search needs `movies_fts`.** Without that FTS5 index the search box throws
+  rather than falling back to a `LIKE` query.
+- **macOS builds are unsigned**, as described above.
+
+## Licence
+
+UrDatabase is **source-available, not open source**. The code is published so
+it can be read and audited; reading it grants no right to ship it. Reuse beyond
+quoting and evaluation needs written permission. See [LICENSE](LICENSE).
+
+This product uses the TMDB API and the OMDb API but is not endorsed or
+certified by either. Film metadata and artwork remain subject to TMDB's terms,
+and IMDb ratings to OMDb's.
+
+Security reports go through [SECURITY.md](SECURITY.md), privately — not through
+a public issue.
