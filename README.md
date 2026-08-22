@@ -197,10 +197,11 @@ that one line is the source of truth for everything below. It starts at
   each runtime identifier and attach the archives to the run. You can download
   and try a branch before it merges.
 - **On a merge to `main`**, the version in `Directory.Build.props` is tagged
-  `v<version>`, the TMDB and OMDb keys are compiled in from repository secrets,
-  a GitHub Release is created with `UrDatabase-<version>-win-x64.zip`,
-  `UrDatabase-<version>-osx-arm64.zip` and `UrDatabase-<version>-osx-x64.zip`
-  attached, and the downloads site is deployed to Firebase Hosting.
+  `v<version>`, the TMDB and OMDb keys are compiled in from the `TMDB_API_KEY`
+  and `OMDB_API_KEY` repository secrets, a GitHub Release is created with
+  `UrDatabase-<version>-win-x64.zip`, `UrDatabase-<version>-osx-arm64.zip` and
+  `UrDatabase-<version>-osx-x64.zip` attached, and the downloads site is
+  deployed to Firebase Hosting.
 
 Compiling the keys in at release is what makes a downloaded build work with no
 setup. It is not a way of keeping them private, and nothing here pretends it

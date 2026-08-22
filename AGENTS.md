@@ -74,11 +74,12 @@ nothing else. Adding a setting means adding it to the example file, with an
 empty or obviously fake value.
 
 Only official release builds have anything compiled in, and it is CI that puts
-it there, from repository secrets, at release time. Your build has no keys in
-it. That distinction is the rule: a key belongs in Actions secrets or in your
-own ignored config file, and nowhere else. Never hardcode one as a default, a
-fallback or a constant "just to get it working" — that commits it, and the
-release workflow already handles the shipped case.
+it there, from the `TMDB_API_KEY` and `OMDB_API_KEY` repository secrets, at
+release time. Your build has no keys in it. That distinction is the rule: a key
+belongs in one of those secrets or in your own ignored config file, and nowhere
+else. Never hardcode one as a default, a fallback or a constant "just to get it
+working" — that commits it, and the release workflow already handles the
+shipped case.
 
 Both keys are optional and neither is needed to build or test. Keep it that
 way: a test or a build step that fails without a key turns every fresh clone
@@ -87,8 +88,10 @@ committed.
 
 Never edit the example file to hold a working key "just for a minute", and
 never paste one into a test, an issue or a commit message. A workflow that
-needs a key reads it from the repository secret rather than introducing a
-second copy anywhere.
+needs a key reads it from `TMDB_API_KEY` or `OMDB_API_KEY` rather than
+introducing a second copy anywhere. The repository's third secret,
+`FIREBASE_SERVICE_ACCOUNT`, deploys the downloads site and must never reach a
+build or an artifact — it is the one secret here that is actually secret.
 
 A key that reaches a desktop build is not private in any case — there is no
 server to keep it behind, so anyone holding the build can read it out. That is

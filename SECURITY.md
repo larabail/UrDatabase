@@ -53,10 +53,11 @@ secret**. Anyone holding a build can extract it. There is no server to keep it
 behind, so this is not a defect to be fixed by obfuscation, and reporting that
 you pulled a key out of a release tells us nothing we have not written here.
 
-The keys live in GitHub Actions secrets for two reasons, neither of which is
-that the shipped value stays private: to keep them out of the repository and
-its history, and to make rotating one a change to a single setting rather than
-a change to the source.
+The keys live in the `TMDB_API_KEY` and `OMDB_API_KEY` repository secrets for
+two reasons, neither of which is that the shipped value stays private: to keep
+them out of the repository and its history, and to make rotating one a change
+to a single setting rather than a change to the source. If you are rotating
+either, those two secrets are the only place the value needs editing.
 
 What makes that trade acceptable is the specific keys involved. Both are free,
 read-only metadata credentials. The worst an abuser achieves is exhausting a
@@ -72,10 +73,15 @@ in `appsettings.json` or in `URDATABASE_TMDB_API_KEY` /
 `URDATABASE_OMDB_API_KEY`; both take precedence over the compiled-in value. A
 build from source has no keys in it at all.
 
-Reading these particular keys out of a workflow run therefore gains an attacker
-nothing a published archive would not. A workflow change that could leak some
-*other* secret, or place unintended content into a release, is a different
-matter and is worth reporting.
+Reading `TMDB_API_KEY` or `OMDB_API_KEY` out of a workflow run therefore gains
+an attacker nothing a published archive would not.
+
+The third secret is a different matter. `FIREBASE_SERVICE_ACCOUNT` is used only
+to deploy the downloads site and never enters a build, so unlike the other two
+it is genuinely private and nothing that ships contains it. Anything that could
+expose it — a workflow readable by a fork, a step that echoes it, a change that
+carries it into an artifact — is a real finding and worth reporting, as is any
+workflow change that could place unintended content into a release.
 
 **Unsigned macOS builds.** The macOS archives are not code-signed or notarized
 yet, so Gatekeeper reports them as damaged or from an unidentified developer.
