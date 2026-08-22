@@ -7,6 +7,7 @@ bin/
 obj/
 [Bb]uild/
 artifacts/
+publish/
 
 # User-specific
 *.user
@@ -19,6 +20,10 @@ artifacts/
 .idea/
 .vscode/
 *.local.json
+
+# Local configuration: holds a personal TMDb API key and personal folders.
+# Copy appsettings.example.json instead; the example stays tracked.
+src/UrDatabase.App/appsettings.json
 
 # Packages
 *.nupkg

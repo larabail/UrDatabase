@@ -1,0 +1,206 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:ctrls="clr-namespace:UrDatabase.Controls"
+        xmlns:conv="clr-namespace:UrDatabase.Converters"
+        xmlns:models="clr-namespace:UrDatabase.Models"
+        x:Class="UrDatabase.Views.MainWindow"
+        Title="UrDatabase"
+        Width="1400"
+        Height="900"
+        Background="#0F0F10"
+        WindowStartupLocation="CenterScreen">
+
+    <Window.Resources>
+        <conv:EqualsConverter x:Key="EqualsConverter"/>
+
+        <SolidColorBrush x:Key="TextBrush" Color="#EAEAEA"/>
+        <SolidColorBrush x:Key="MutedBrush" Color="#8A8A8E"/>
+        <SolidColorBrush x:Key="ChipBg" Color="#262626"/>
+        <SolidColorBrush x:Key="ChipBorder" Color="#3A3A3A"/>
+        <SolidColorBrush x:Key="ChipActive" Color="#0A84FF"/>
+
+        <!-- One card definition, reused by all three panels. -->
+        <DataTemplate x:Key="MovieCardTemplate" DataType="models:UiMovie">
+            <StackPanel Margin="6,0,6,12"
+                        Width="120"
+                        Background="Transparent"
+                        Cursor="Hand"
+                        PointerPressed="MovieCard_Click">
+                <ctrls:PosterCard SourcePath="{Binding PosterPath}"
+                                  Width="120"
+                                  Height="175"/>
+                <TextBlock Text="{Binding Title}"
+                           Foreground="#EAEAEA"
+                           TextWrapping="Wrap"
+                           Margin="2,6,2,0"
+                           FontSize="12"/>
+            </StackPanel>
+        </DataTemplate>
+    </Window.Resources>
+
+    <!-- Avalonia styles are selector based; WPF's keyed styles and Style.Triggers
+         become classes and pseudo-class selectors. -->
+    <Window.Styles>
+        <Style Selector="TextBlock.dark">
+            <Setter Property="Foreground" Value="{StaticResource TextBrush}"/>
+        </Style>
+
+        <Style Selector="TextBlock.sectionHeading">
+            <Setter Property="Foreground" Value="{StaticResource TextBrush}"/>
+            <Setter Property="FontSize" Value="18"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+        </Style>
+
+        <Style Selector="Button.dark">
+            <Setter Property="Foreground" Value="{StaticResource TextBrush}"/>
+            <Setter Property="Background" Value="{StaticResource ChipBg}"/>
+            <Setter Property="BorderBrush" Value="{StaticResource ChipBorder}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Padding" Value="8,6"/>
+            <Setter Property="Margin" Value="6,6,0,6"/>
+            <Setter Property="Cursor" Value="Hand"/>
+        </Style>
+
+        <Style Selector="ToggleButton.chip">
+            <Setter Property="Foreground" Value="{StaticResource TextBrush}"/>
+            <Setter Property="Background" Value="{StaticResource ChipBg}"/>
+            <Setter Property="BorderBrush" Value="{StaticResource ChipBorder}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Padding" Value="12,6"/>
+            <Setter Property="Margin" Value="6,6,0,6"/>
+            <Setter Property="Cursor" Value="Hand"/>
+        </Style>
+
+        <!-- The Fluent theme paints the ToggleButton background inside its template,
+             so the checked state has to be set there to win. -->
+        <Style Selector="ToggleButton.chip:checked /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="{StaticResource ChipActive}"/>
+            <Setter Property="BorderBrush" Value="{StaticResource ChipActive}"/>
+        </Style>
+        <Style Selector="ToggleButton.chip:checked:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="{StaticResource ChipActive}"/>
+            <Setter Property="BorderBrush" Value="{StaticResource ChipActive}"/>
+        </Style>
+    </Window.Styles>
+
+    <DockPanel Margin="16">
+
+        <!-- Top bar -->
+        <StackPanel DockPanel.Dock="Top">
+            <Grid Margin="0,0,0,10" ColumnDefinitions="*,Auto">
+                <StackPanel>
+                    <TextBlock Text="Search"
+                               Classes="dark"
+                               Margin="0,0,0,6"/>
+                    <TextBox Width="480"
+                             HorizontalAlignment="Left"
+                             x:Name="SearchBox"
+                             TextChanged="SearchBox_TextChanged"/>
+                </StackPanel>
+
+                <StackPanel Grid.Column="1"
+                            Orientation="Horizontal"
+                            VerticalAlignment="Top">
+                    <Button Classes="dark"
+                            Content="Scan Folders"
+                            Click="ScanButton_Click"/>
+                    <Button Classes="dark"
+                            Content="Settings"
+                            Click="Settings_Click"/>
+                </StackPanel>
+            </Grid>
+
+            <!-- Genre chips (with visual selection) -->
+            <ScrollViewer HorizontalScrollBarVisibility="Auto"
+                          VerticalScrollBarVisibility="Disabled">
+                <ItemsControl x:Name="GenreChips" ItemsSource="{Binding Genres}">
+                    <ItemsControl.ItemsPanel>
+                        <ItemsPanelTemplate>
+                            <StackPanel Orientation="Horizontal"/>
+                        </ItemsPanelTemplate>
+                    </ItemsControl.ItemsPanel>
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate>
+                            <ToggleButton Classes="chip"
+                                          Content="{Binding}"
+                                          Click="GenreChip_Click"/>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+            </ScrollViewer>
+        </StackPanel>
+
+        <!-- Attribution required by the TMDB API terms. -->
+        <StackPanel DockPanel.Dock="Bottom" Margin="6,10,0,0">
+            <TextBlock x:Name="StatusText"
+                       Foreground="{StaticResource MutedBrush}"
+                       FontSize="12"
+                       TextWrapping="Wrap"/>
+            <TextBlock Foreground="{StaticResource MutedBrush}"
+                       FontSize="11"
+                       TextWrapping="Wrap"
+                       Margin="0,4,0,0"
+                       Text="This product uses the TMDB API but is not endorsed or certified by TMDB. IMDb ratings are retrieved from the OMDb API; neither IMDb nor OMDb endorses this application."/>
+        </StackPanel>
+
+        <!-- Main content -->
+        <ScrollViewer VerticalScrollBarVisibility="Auto">
+            <StackPanel>
+
+                <!-- SEARCH RESULTS (flat) -->
+                <StackPanel x:Name="SearchPanel" IsVisible="False">
+                    <ItemsControl ItemsSource="{Binding FlatResults}"
+                                  ItemTemplate="{StaticResource MovieCardTemplate}">
+                        <ItemsControl.ItemsPanel>
+                            <ItemsPanelTemplate>
+                                <WrapPanel/>
+                            </ItemsPanelTemplate>
+                        </ItemsControl.ItemsPanel>
+                    </ItemsControl>
+                </StackPanel>
+
+                <!-- ALL GENRES (grouped with horizontal scrollers) -->
+                <StackPanel x:Name="GroupPanel" IsVisible="True">
+                    <ItemsControl ItemsSource="{Binding VisibleGroups}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate DataType="models:GenreGroup">
+                                <StackPanel Margin="0,8,0,22">
+                                    <TextBlock Text="{Binding Name}"
+                                               Classes="sectionHeading"
+                                               Margin="6,0,0,8"/>
+                                    <ScrollViewer HorizontalScrollBarVisibility="Auto"
+                                                  VerticalScrollBarVisibility="Disabled">
+                                        <ItemsControl ItemsSource="{Binding Items}"
+                                                      ItemTemplate="{StaticResource MovieCardTemplate}">
+                                            <ItemsControl.ItemsPanel>
+                                                <ItemsPanelTemplate>
+                                                    <StackPanel Orientation="Horizontal"/>
+                                                </ItemsPanelTemplate>
+                                            </ItemsControl.ItemsPanel>
+                                        </ItemsControl>
+                                    </ScrollViewer>
+                                </StackPanel>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+
+                <!-- SINGLE GENRE (vertical flow) -->
+                <StackPanel x:Name="SingleGenrePanel" IsVisible="False">
+                    <TextBlock Text="{Binding SelectedGenre}"
+                               Classes="sectionHeading"
+                               Margin="6,8,0,8"/>
+                    <ItemsControl ItemsSource="{Binding SingleGenreItems}"
+                                  ItemTemplate="{StaticResource MovieCardTemplate}">
+                        <ItemsControl.ItemsPanel>
+                            <ItemsPanelTemplate>
+                                <WrapPanel/>
+                            </ItemsPanelTemplate>
+                        </ItemsControl.ItemsPanel>
+                    </ItemsControl>
+                </StackPanel>
+
+            </StackPanel>
+        </ScrollViewer>
+    </DockPanel>
+</Window>
