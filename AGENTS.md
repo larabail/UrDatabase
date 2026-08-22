@@ -206,6 +206,33 @@ identifier on each pull request, and attach the archives to the run so a
 reviewer can try the change before merging. They do not release. A red pull
 request does not get merged; fix it rather than merging around it.
 
+That last sentence is enforced rather than encouraged. `main` is a protected
+branch, so a pull request is the only way into it, and four checks have to be
+green before the merge button works:
+
+```
+Build and test    Test builds    Version    Downloads site
+```
+
+Those names are matched literally. Renaming a job in `pr.yml` does not rename
+the requirement — it silently stops that job being required, and the rule it
+was enforcing quietly stops applying while everything still looks green. If you
+rename one, update the protection rule in the same breath.
+
+Three more things the rule does, in rough order of how often they catch people:
+
+- **Your branch has to be up to date with `main` before it can merge.** A
+  branch that has sat while `main` moved shows as behind and the button stays
+  down until you merge `main` into it, which re-runs the checks.
+- **A review from a code owner is required**, and `.github/CODEOWNERS` makes
+  that the owner for every path. Pushing after an approval dismisses it.
+- **Every conversation on the pull request has to be resolved.**
+
+Administrators can bypass all of it. That is a deliberate escape hatch for the
+day a required check is wedged, not an invitation — the rule against committing
+to `main` is a rule for the owner too, and the only thing enforcing it there is
+the owner.
+
 ## Before you open a pull request
 
 ```bash

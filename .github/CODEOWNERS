@@ -2,7 +2,8 @@
 #
 # This file only has teeth when branch protection requires review from code
 # owners; on its own it requests a review, it does not enforce one. The rule on
-# main is what enforces it.
+# main does enforce it, along with four required checks and a clean
+# conversation thread -- see the Checks section of AGENTS.md.
 #
 # The last matching pattern wins, so the catch-all comes first and the narrower
 # paths below it are there to survive anyone adding a later pattern.
