@@ -86,6 +86,14 @@
                        Classes="muted"
                        Margin="0,6,0,0"
                        Text="Tell it where your films are. You can use folders on this computer, a Jellyfin server, or both."/>
+            <!-- Hidden unless the settings file holds a key the app has no such thing as. This is
+                 the screen somebody opens to fix that, so it is the screen that has to say so. -->
+            <TextBlock x:Name="ConfigWarningText"
+                       Foreground="{StaticResource WarnBrush}"
+                       FontSize="12"
+                       TextWrapping="Wrap"
+                       IsVisible="False"
+                       Margin="0,8,0,0"/>
         </StackPanel>
 
         <!-- Kept together at the bottom so the answer, the reason it is not accepted yet and

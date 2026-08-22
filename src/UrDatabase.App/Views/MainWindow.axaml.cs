@@ -70,6 +70,10 @@ namespace UrDatabase.Views
             RebuildGroups();
             ShowAllGenres();
 
+            // Last of the four, because each of them writes the status line and a configuration
+            // the app could not understand is the more important thing for it to be saying.
+            ReportUnknownSettings();
+
             // The window is already painted from the cache by the time this runs, so a slow or
             // absent server delays nothing anybody is looking at.
             if (_jellyfin is not null)
@@ -221,6 +225,19 @@ ORDER BY rank";
         {
             Title = $"UrDatabase — {message}";
             if (StatusText is not null) StatusText.Text = message;
+        }
+
+        /// <summary>
+        /// Says so when the configuration file contains a key this app does not have. The log
+        /// alone would not do: the symptom is an empty library or an absent server, and nobody
+        /// opens <c>startup.log</c> to explain something that looks like it is working. The
+        /// status line is where the library already accounts for itself, so it is where the
+        /// reason it is empty belongs.
+        /// </summary>
+        private void ReportUnknownSettings()
+        {
+            var message = ConfigDiagnostics.Report(_config);
+            if (message is not null) SetStatus(message);
         }
 
         private void BuildGenres()
