@@ -1,0 +1,150 @@
+using System;
+using System.IO;
+using UrDatabase.Services;
+using Xunit;
+
+namespace UrDatabase.Tests
+{
+    public class AppConfigTests : IDisposable
+    {
+        private readonly string _dir;
+
+        public AppConfigTests()
+        {
+            _dir = Path.Combine(Path.GetTempPath(), "urdb-cfg-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(_dir);
+            Environment.SetEnvironmentVariable(PlatformPaths.TmdbApiKeyVariable, null);
+        }
+
+        public void Dispose()
+        {
+            Environment.SetEnvironmentVariable(PlatformPaths.TmdbApiKeyVariable, null);
+            try { Directory.Delete(_dir, recursive: true); } catch { }
+        }
+
+        private string WriteConfig(string json)
+        {
+            var path = Path.Combine(_dir, "appsettings.json");
+            File.WriteAllText(path, json);
+            return path;
+        }
+
+        [Fact]
+        public void Load_falls_back_to_defaults_when_the_file_is_missing()
+        {
+            var config = AppConfig.Load(Path.Combine(_dir, "does-not-exist.json"));
+
+            Assert.Equal(PlatformPaths.DefaultDatabasePath, config.DatabasePath);
+            Assert.Equal(PlatformPaths.DefaultPosterCacheDir, config.PosterCacheDir);
+            Assert.Equal("w342", config.TmdbImageSize);
+            Assert.Equal("", config.TmdbApiKey);
+        }
+
+        [Fact]
+        public void Load_falls_back_to_defaults_when_the_file_is_malformed()
+        {
+            var path = WriteConfig("{ this is not json ");
+
+            var config = AppConfig.Load(path);
+
+            Assert.Equal(PlatformPaths.DefaultDatabasePath, config.DatabasePath);
+        }
+
+        [Fact]
+        public void Load_reads_values_from_the_file()
+        {
+            var dbPath = Path.Combine(_dir, "movies.db");
+            var path = WriteConfig($@"{{
+                ""DatabasePath"": ""{dbPath.Replace("\\", "\\\\")}"",
+                ""TmdbApiKey"": ""from-file"",
+                ""TmdbImageSize"": ""w500"",
+                ""DownloadPosters"": true
+            }}");
+
+            var config = AppConfig.Load(path);
+
+            Assert.Equal(dbPath, config.DatabasePath);
+            Assert.Equal("from-file", config.TmdbApiKey);
+            Assert.Equal("w500", config.TmdbImageSize);
+            Assert.True(config.DownloadPosters);
+        }
+
+        [Fact]
+        public void Api_key_falls_back_to_the_environment_variable_when_the_file_value_is_empty()
+        {
+            Environment.SetEnvironmentVariable(PlatformPaths.TmdbApiKeyVariable, "from-environment");
+            var path = WriteConfig(@"{ ""TmdbApiKey"": """" }");
+
+            var config = AppConfig.Load(path);
+
+            Assert.Equal("from-environment", config.TmdbApiKey);
+        }
+
+        [Fact]
+        public void Api_key_in_the_file_wins_over_the_environment_variable()
+        {
+            Environment.SetEnvironmentVariable(PlatformPaths.TmdbApiKeyVariable, "from-environment");
+            var path = WriteConfig(@"{ ""TmdbApiKey"": ""from-file"" }");
+
+            var config = AppConfig.Load(path);
+
+            Assert.Equal("from-file", config.TmdbApiKey);
+        }
+
+        [Fact]
+        public void Api_key_is_empty_when_neither_the_file_nor_the_environment_supplies_one()
+        {
+            var config = AppConfig.Load(WriteConfig("{}"));
+
+            Assert.Equal("", config.TmdbApiKey);
+        }
+
+        [Fact]
+        public void Windows_style_appdata_paths_are_expanded_for_the_current_platform()
+        {
+            var path = WriteConfig(@"{
+                ""DatabasePath"": ""%APPDATA%\\UrDatabase\\movies.db"",
+                ""PosterCacheDir"": ""%APPDATA%\\UrDatabase\\posters""
+            }");
+
+            var config = AppConfig.Load(path);
+
+            Assert.DoesNotContain("%APPDATA%", config.DatabasePath);
+            Assert.Equal(PlatformPaths.DefaultDatabasePath, config.DatabasePath);
+            Assert.Equal(PlatformPaths.DefaultPosterCacheDir, config.PosterCacheDir);
+            Assert.DoesNotContain('\\', config.DatabasePath.Replace(Path.DirectorySeparatorChar, '/'));
+        }
+
+        [Fact]
+        public void Watch_folders_default_to_the_platform_movie_folder_when_none_are_configured()
+        {
+            var config = AppConfig.Load(WriteConfig(@"{ ""WatchFolders"": [] }"));
+
+            Assert.Equal(new[] { PlatformPaths.DefaultWatchFolder }, config.WatchFolders);
+        }
+
+        [Fact]
+        public void Watch_folders_are_expanded_and_blank_entries_dropped()
+        {
+            var path = WriteConfig(@"{ ""WatchFolders"": [ ""%USERPROFILE%\\Movies"", """" ] }");
+
+            var config = AppConfig.Load(path);
+
+            var only = Assert.Single(config.WatchFolders);
+            Assert.DoesNotContain("%USERPROFILE%", only);
+            Assert.Equal(Path.Combine(PlatformPaths.HomeDirectory, "Movies"), only);
+        }
+
+        [Fact]
+        public void Blank_paths_fall_back_to_platform_defaults()
+        {
+            var path = WriteConfig(@"{ ""DatabasePath"": """", ""PosterCacheDir"": """", ""TmdbImageSize"": """" }");
+
+            var config = AppConfig.Load(path);
+
+            Assert.Equal(PlatformPaths.DefaultDatabasePath, config.DatabasePath);
+            Assert.Equal(PlatformPaths.DefaultPosterCacheDir, config.PosterCacheDir);
+            Assert.Equal("w342", config.TmdbImageSize);
+        }
+    }
+}
