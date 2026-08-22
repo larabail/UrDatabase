@@ -44,6 +44,11 @@ It runs on Windows and macOS from one codebase, built with
 - **Search.** Typing in the search box queries the `movies_fts` full-text index
   and replaces the grouped view with a flat, ranked list of hits. Films from a
   Jellyfin server are matched alongside them, on title and genre.
+- **It says why something is missing.** A local film's plot, cast and crew come
+  from TMDB, so an install with no TMDB key has none — and the screen says that,
+  and says which setting fixes it, rather than reporting "none found" for a
+  question nobody asked. A server film says when the server itself supplied
+  nothing (`Services/MissingMetadata`).
 - **Details in place.** Opening a card fetches the film from TMDB and fills the
   whole window — not a dialog inside it — with the backdrop, overview, runtime,
   genres, the top ten billed cast set as name over character, and up to three
@@ -73,7 +78,8 @@ It runs on Windows and macOS from one codebase, built with
 - **Browse a Jellyfin server.** Optional, off until you configure it. Point the
   app at a server and its movie library appears alongside your local one, with
   every server film badged **Server** so you can tell at a glance what is not on
-  this machine. The library is cached in SQLite, so the window opens instantly
+  this machine. The server describes its own films, cast and crew included, so a
+  Jellyfin library is complete without a TMDB key. The library is cached in SQLite, so the window opens instantly
   and stays browsable with the server switched off or the laptop away from home
   — the films simply cannot play until it is reachable again. Playing one
   streams it, without transcoding, through VLC or IINA
@@ -452,11 +458,6 @@ Stated plainly, so nobody has to find out by using it:
   `Show.S01E02` becomes an oddly titled film rather than an episode. A mixed
   library will look wrong rather than broken. A Jellyfin server's series
   libraries are skipped outright for the same reason.
-- **A server film has no cast or crew.** The details screen fills those from
-  TMDB, and a Jellyfin film deliberately makes no TMDB call, so both lists are
-  empty for one. Jellyfin can report them; nothing asks yet. The screen now says
-  so under the heading rather than leaving it over a blank space, but the fact
-  is still missing.
 - **Playback position is not shared with the server.** A film played from
   Jellyfin does not resume where you left off and is not marked watched, because
   the app hands the stream to an external player and never hears from it again.

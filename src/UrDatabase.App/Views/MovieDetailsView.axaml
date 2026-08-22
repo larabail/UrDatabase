@@ -30,13 +30,21 @@
         </Style>
     </UserControl.Styles>
 
-    <Grid>
+    <!-- Opaque, and deliberately so. Every layer above this one is
+         semi-transparent, so without a solid base the library composites
+         straight through the backdrop: its shelves, its genre row and its
+         counts were all legible through the dark half of this screen. -->
+    <Grid Background="{StaticResource RoomBrush}">
         <!-- The backdrop. No blur anywhere: Avalonia has no per-element filter
              and does not need one here. If a soft backdrop is ever wanted, it
-             gets blurred once when it is cached to disk, not on every frame. -->
+             gets blurred once when it is cached to disk, not on every frame.
+
+             Full opacity: the two gradients below do all the darkening, and
+             they were designed against an undimmed photograph. Dimming the
+             image as well was a third veil that only made the picture side of
+             the screen muddy. -->
         <Image x:Name="BackdropImage"
-               Stretch="UniformToFill"
-               Opacity="0.35"/>
+               Stretch="UniformToFill"/>
 
         <!-- Darkens towards the foot, so the action bar has something to sit
              on whatever the photograph happens to be doing down there. -->

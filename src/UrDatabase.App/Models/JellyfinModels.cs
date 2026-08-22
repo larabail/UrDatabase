@@ -44,8 +44,48 @@ namespace UrDatabase.Models
 
         public string? TmdbId { get; set; }
 
+        /// <summary>
+        /// The billed cast, as <c>"Name (Role)"</c> — the same shape the TMDB path produces, so
+        /// the details screen takes both apart with the same parser and neither source needs a
+        /// second code path.
+        /// </summary>
+        public List<string> Cast { get; set; } = new();
+
+        /// <summary>Directors and writers, as <c>"Director: Name"</c>.</summary>
+        public List<string> Crew { get; set; } = new();
+
         /// <summary>Cache buster for the primary image; changes when the artwork does.</summary>
         public string? ImageTag { get; set; }
+    }
+
+    /// <summary>
+    /// One person on a Jellyfin item: an actor with a part, or a member of the crew with a job.
+    /// </summary>
+    public sealed class JellyfinPersonDto
+    {
+        [JsonPropertyName("Name")] public string? Name { get; set; }
+
+        /// <summary>The part played. Empty for crew, and for an uncredited actor.</summary>
+        [JsonPropertyName("Role")] public string? Role { get; set; }
+
+        /// <summary><c>Actor</c>, <c>Director</c>, <c>Writer</c>, <c>Producer</c>, and so on.</summary>
+        [JsonPropertyName("Type")] public string? Type { get; set; }
+
+        // Compared case-insensitively rather than against a literal. Jellyfin has shipped these
+        // capitalised and, in places, lowercased, and a film losing its whole cast over a capital
+        // A is the kind of failure nobody thinks to look for.
+        public bool IsActor => Is("Actor");
+
+        public bool IsDirector => Is("Director");
+
+        /// <summary>
+        /// Jellyfin uses a single "Writer" type where TMDB distinguishes screenplay from story,
+        /// so this matches on the substring the way the local path already does.
+        /// </summary>
+        public bool IsWriter =>
+            Type is not null && Type.Contains("Writer", StringComparison.OrdinalIgnoreCase);
+
+        private bool Is(string type) => string.Equals(Type?.Trim(), type, StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>The shape of a Jellyfin user as <c>/Users</c> returns it.</summary>
@@ -93,6 +133,13 @@ namespace UrDatabase.Models
         [JsonPropertyName("ImageTags")] public Dictionary<string, string>? ImageTags { get; set; }
 
         /// <summary>
+        /// Cast and crew, when <c>People</c> was among the requested fields. Jellyfin has always
+        /// been able to report these; for a long time nothing asked, and every film from a server
+        /// showed an empty cast list as though it had none.
+        /// </summary>
+        [JsonPropertyName("People")] public List<JellyfinPersonDto>? People { get; set; }
+
+        /// <summary>
         /// Turns the wire shape into the app's own, dropping anything unusable. Returns null for
         /// an item with no id or no title, which cannot be shown or played either way.
         /// </summary>
@@ -111,8 +158,52 @@ namespace UrDatabase.Models
                 CommunityRating = CommunityRating,
                 ImdbId = Lookup(ProviderIds, "Imdb"),
                 TmdbId = Lookup(ProviderIds, "Tmdb"),
+                Cast = BuildCast(People),
+                Crew = BuildCrew(People),
                 ImageTag = Lookup(ImageTags, "Primary")
             };
+        }
+
+        /// <summary>
+        /// The billed cast, in Jellyfin's own order, capped at ten to match what TMDB supplies for
+        /// a local film. A person with no name is dropped rather than shown as a blank row.
+        /// </summary>
+        internal static List<string> BuildCast(IEnumerable<JellyfinPersonDto>? people)
+        {
+            if (people is null) return new List<string>();
+
+            return people
+                .Where(p => p.IsActor && !string.IsNullOrWhiteSpace(p.Name))
+                .Take(10)
+                .Select(p => string.IsNullOrWhiteSpace(p.Role)
+                    ? p.Name!.Trim()
+                    : $"{p.Name!.Trim()} ({p.Role!.Trim()})")
+                .ToList();
+        }
+
+        /// <summary>
+        /// Up to three directors and three writers, in that order, matching the local path. A
+        /// server lists everyone from the gaffer down, and a details screen is not a call sheet.
+        /// </summary>
+        internal static List<string> BuildCrew(IEnumerable<JellyfinPersonDto>? people)
+        {
+            if (people is null) return new List<string>();
+
+            var materialised = people.Where(p => !string.IsNullOrWhiteSpace(p.Name)).ToList();
+
+            var crew = new List<string>();
+
+            crew.AddRange(materialised
+                .Where(p => p.IsDirector)
+                .Take(3)
+                .Select(p => $"Director: {p.Name!.Trim()}"));
+
+            crew.AddRange(materialised
+                .Where(p => p.IsWriter)
+                .Take(3)
+                .Select(p => $"Writer: {p.Name!.Trim()}"));
+
+            return crew;
         }
 
         /// <summary>

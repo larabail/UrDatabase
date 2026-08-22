@@ -52,7 +52,7 @@ Avalonia replaces WPF. The differences that mattered during the port:
 | `ConfigStore` | Where `appsettings.json` is read from and written to. Refuses to save a resolved config. |
 | `FirstRun` | Whether this launch has never been configured, and so whether to offer setup. |
 | `PlatformPaths` | Every filesystem location, resolved per platform. Expands `%APPDATA%` and `~`. |
-| `Database` | Opens the SQLite database and applies `Data/schema.sql` idempotently. |
+| `Database` | Opens the SQLite database, applies `Data/schema.sql` idempotently, and migrates an existing library. The schema script is all `CREATE ... IF NOT EXISTS`, so it cannot add a column to a table somebody already has — `Migrate` does that. |
 | `ScanService` | Walks watch folders and upserts the `files` table, skipping unreadable directories. |
 | `TmdbService` | TMDB search, details and credits; builds image URLs. |
 | `OmdbService` | Fetches an IMDb rating for one IMDb id. |

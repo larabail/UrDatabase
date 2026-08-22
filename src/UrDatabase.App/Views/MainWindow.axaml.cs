@@ -569,6 +569,30 @@ ORDER BY rank";
                 await SyncJellyfinAsync(announceFailure: true);
         }
 
+        /// <summary>
+        /// Opens the details screen over the library, and puts the library back when it closes.
+        /// </summary>
+        /// <remarks>
+        /// The library is hidden rather than merely covered. Every layer of the details screen
+        /// above its own background is semi-transparent, so a visible library composited straight
+        /// through the backdrop — shelves, genre row and counts were all legible through the dark
+        /// half of the screen. Hiding it also takes its buttons out of the tab order, which were
+        /// otherwise still reachable, and still clickable, behind a screen covering them.
+        /// </remarks>
+        private async Task ShowDetailsAsync(MovieDetailsVm vm)
+        {
+            LibraryRoot.IsVisible = false;
+
+            try
+            {
+                await DetailsView.ShowAsync(vm);
+            }
+            finally
+            {
+                LibraryRoot.IsVisible = true;
+            }
+        }
+
         private void ShowSearch()
         {
             SearchPanel.IsVisible = true;
@@ -655,14 +679,15 @@ ORDER BY rank";
                     ImdbId = details?.ImdbId,
                     Genres = details is null ? m.Genres ?? "" : string.Join(", ", details.Genres?.Select(g => g.Name) ?? Array.Empty<string>()),
                     BackdropUrl = string.IsNullOrWhiteSpace(details?.BackdropPath) ? null
-                                  : tmdb.BuildImageUrl(details!.BackdropPath!)
+                                  : tmdb.BuildImageUrl(details!.BackdropPath!),
+                    TmdbConfigured = !string.IsNullOrWhiteSpace(_config.TmdbApiKey)
                 };
                 vm.TopCast = cast;
                 vm.KeyCrew = crew;
                 vm.ImdbRating = await LoadImdbRatingAsync(vm.ImdbId, m.Id, cts.Token);
                 vm.FilePath = FindLocalFileForMovie(m);
 
-                await DetailsView.ShowAsync(vm);
+                await ShowDetailsAsync(vm);
             }
             catch (Exception ex)
             {
@@ -694,7 +719,13 @@ ORDER BY rank";
                     ImdbId = film.ImdbId,
                     PosterPath = m.PosterPath,
                     BackdropUrl = _jellyfin.BuildBackdropUrl(film.ItemId),
-                    IsRemote = true
+                    IsRemote = true,
+
+                    // The server has described its own cast and crew since the sync that cached
+                    // it. Nothing used to ask for them, so every film from a server showed an
+                    // empty list as though it genuinely had none.
+                    TopCast = film.Cast.ToList(),
+                    KeyCrew = film.Crew.ToList()
                 };
 
                 using var cts = CancellationTokenSource.CreateLinkedTokenSource(_cts.Token);
@@ -715,7 +746,7 @@ ORDER BY rank";
                 // not the community number beside it. No local movie row owns it.
                 vm.ImdbRating = await LoadImdbRatingAsync(vm.ImdbId, null, cts.Token);
 
-                await DetailsView.ShowAsync(vm);
+                await ShowDetailsAsync(vm);
             }
             catch (OperationCanceledException)
             {

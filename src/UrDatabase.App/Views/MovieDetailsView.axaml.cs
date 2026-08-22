@@ -101,10 +101,10 @@ namespace UrDatabase.Views
             GenresText.Text = vm.Genres ?? "";
             GenresText.IsVisible = !string.IsNullOrWhiteSpace(vm.Genres);
 
-            // A film TMDB knows nothing about has no plot, and an empty panel where the plot
-            // should be reads as a failed request rather than as a gap in the data.
+            // An empty panel where the plot should be reads as a failed request. Which sentence
+            // goes there depends on why it is empty — see MissingMetadata.
             OverviewText.Text = string.IsNullOrWhiteSpace(vm.Overview)
-                ? "No plot summary was available for this film."
+                ? MissingMetadata.OverviewNotice(vm.IsRemote, vm.TmdbConfigured)
                 : vm.Overview;
 
             var cast = vm.TopCast
@@ -122,7 +122,7 @@ namespace UrDatabase.Views
             CastList.ItemsSource = cast;
             CrewList.ItemsSource = crew;
 
-            ShowMissingCredits(cast, crew, vm.IsRemote);
+            ShowMissingCredits(cast, crew, vm);
 
             LinkFileButton.IsVisible = !vm.IsRemote;
 
@@ -134,15 +134,12 @@ namespace UrDatabase.Views
         }
 
         /// <summary>
-        /// Says why a credit list is empty instead of leaving a heading over nothing. Nothing
-        /// asks Jellyfin for a cast, so a server film has none — which is a fact about the app
-        /// rather than about the film, and the screen should not imply otherwise.
+        /// Says why a credit list is empty instead of leaving a heading over nothing, and says it
+        /// accurately: a film nobody asked TMDB about has not been "not found".
         /// </summary>
-        private void ShowMissingCredits(List<CreditEntry> cast, List<CreditEntry> crew, bool isRemote)
+        private void ShowMissingCredits(List<CreditEntry> cast, List<CreditEntry> crew, MovieDetailsVm vm)
         {
-            var reason = isRemote
-                ? "Not supplied for films on the server."
-                : "None found for this film.";
+            var reason = MissingMetadata.CreditsNotice(vm.IsRemote, vm.TmdbConfigured);
 
             NoCastText.Text = reason;
             NoCastText.IsVisible = cast.Count == 0;
