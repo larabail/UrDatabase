@@ -418,28 +418,32 @@ footer {
 
   <section class="band" id="first-run">
     <h2>The first time you open it</h2>
-    <p class="sub">These builds are not code signed. That is a statement of
-       fact, not a formality: both operating systems will stop you, and it is
-       better to know why before it happens than to conclude the download is
+    <p class="sub">These builds are not notarized by Apple, and Windows has not
+       seen them before. Both operating systems will stop you on first launch,
+       and it is better to know why beforehand than to conclude the download is
        broken.</p>
 
     <div class="cards">
       <div class="note">
-        <h3>macOS &mdash; &ldquo;damaged and can&rsquo;t be opened&rdquo;</h3>
-        <p>UrDatabase is <strong>not code signed and not notarized</strong>.
-           Apple charges for the developer account that makes those possible,
-           and this is a free project that does not have one.</p>
-        <p>macOS flags anything a browser downloaded, and for an unsigned app
-           it refuses to open it at all. The message says the app is damaged.
-           It is not &mdash; it is unsigned, and macOS says the same thing
-           either way.</p>
+        <h3>macOS &mdash; nothing happens at all</h3>
+        <p>The macOS builds are ad-hoc signed but <strong>not notarized</strong>,
+           and that is enough for Gatekeeper to refuse them. Notarizing needs a
+           paid Apple developer account, which this project does not have.</p>
+        <p>Downloading through a browser attaches a quarantine flag, and on
+           first launch macOS <strong>kills the process outright</strong> &mdash;
+           no dialog, no error, nothing in the interface. The app has not
+           crashed and the download is not corrupt. It looks broken because
+           macOS declined to say anything.</p>
         <ol>
           <li>Unzip the download.</li>
           <li>Run this in Terminal, against the folder that came out of it:</li>
         </ol>
         <pre><code id="quarantine-command">xattr -dr com.apple.quarantine ~/Downloads/UrDatabase-*</code></pre>
         <p>That clears the download flag from that one folder and nothing else.
-           Then open UrDatabase normally.</p>
+           There is no <code>.app</code> to drag to Applications: the folder
+           holds an executable called <code>UrDatabase.App</code>. Open that.</p>
+        <p>This step exists only because notarization does not, so treat it as a
+           gap rather than as how the project is meant to work.</p>
       </div>
 
       <div class="note">

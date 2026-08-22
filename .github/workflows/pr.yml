@@ -242,9 +242,10 @@ jobs:
             echo "| Mac, Intel | \`UrDatabase-$VERSION-osx-x64.zip\` |"
             echo "| Windows, 64-bit | \`UrDatabase-$VERSION-win-x64.zip\` |"
             echo ''
-            echo 'These are not code signed. macOS quarantines anything that'
-            echo 'arrives through a browser, so clear the flag before the first'
-            echo 'run:'
+            echo 'These are ad-hoc signed but not notarized, so macOS kills'
+            echo 'them on first launch with no dialog at all. Clear the'
+            echo 'quarantine flag before running, then open UrDatabase.App'
+            echo 'from inside the unzipped folder:'
             echo ''
             echo '```sh'
             echo "xattr -dr com.apple.quarantine ~/Downloads/UrDatabase-$VERSION-osx-arm64"

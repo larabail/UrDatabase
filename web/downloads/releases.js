@@ -353,10 +353,13 @@ const SAFE_ASSET_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 /**
  * The command that clears macOS's quarantine flag from [download].
  *
- * The builds are not code signed and not notarized, so Gatekeeper refuses to
- * open them with "UrDatabase is damaged and can't be opened" -- a message
- * describing a corrupt download rather than an unsigned one, which sends
- * people off re-downloading it instead of running this.
+ * The builds are ad-hoc signed -- the release pipeline verifies that with
+ * `codesign --verify` and refuses to publish without it -- but they are not
+ * notarized, and Gatekeeper refuses anything quarantined that Apple has not
+ * seen. It does so without saying anything: the process is killed on launch
+ * with no dialog and nothing in the interface, which reads as a crash. Somebody
+ * who thinks the app crashed never goes looking for a terminal command, so the
+ * page has to put this in front of them before they try.
  *
  * The path is the folder the archive expands to. The release workflow builds
  * each zip around exactly one top-level folder named after the archive, so

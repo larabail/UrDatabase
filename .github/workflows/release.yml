@@ -189,8 +189,8 @@ jobs:
           omdb-api-key: ${{ secrets.OMDB_API_KEY }}
 
       # Checksums, so somebody who cares can confirm the zip they downloaded is
-      # the zip this run built. Costs nothing and is the only answer available
-      # to "is this file safe?" for an unsigned build.
+      # the zip this run built. Costs nothing, and with no Developer ID and no
+      # notarization it is the only answer available to "is this file safe?".
       - name: Checksum the archives
         if: steps.gate.outputs.publish == 'true'
         run: |
@@ -307,14 +307,20 @@ jobs:
           | Mac, Intel | \`UrDatabase-$VERSION-osx-x64.zip\` |
           | Windows, 64-bit | \`UrDatabase-$VERSION-win-x64.zip\` |
 
-          These builds are **not code signed or notarized**. macOS quarantines
-          anything downloaded through a browser and refuses to open an unsigned
-          app outright, reporting it as damaged. It is not damaged. Clear the
-          flag once, after unzipping:
+          These builds are ad-hoc signed but **not notarized**, which is enough
+          for Gatekeeper to refuse them. Downloading through a browser attaches
+          a quarantine flag, and on first launch macOS **kills the process
+          outright** — no dialog, no error, nothing in the interface. The app
+          has not crashed and the download is not corrupt. Clear the flag once,
+          after unzipping:
 
           \`\`\`sh
           xattr -dr com.apple.quarantine ~/Downloads/UrDatabase-$VERSION-osx-arm64
           \`\`\`
+
+          There is no \`.app\` to drag to Applications. The folder holds an
+          executable called \`UrDatabase.App\` — open that. This step exists only
+          because notarization does not.
 
           On Windows, SmartScreen shows "Windows protected your PC". Choose
           **More info**, then **Run anyway**.

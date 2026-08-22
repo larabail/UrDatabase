@@ -395,7 +395,7 @@ describe('summariseNotes', () => {
       '| --- | --- |',
       '| Mac | `UrDatabase-0.2.0-osx-arm64.zip` |',
       '',
-      '### Unsigned builds',
+      '### Notarization',
       'Run xattr.',
       '',
       "## What's Changed",
