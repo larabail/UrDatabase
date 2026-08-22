@@ -27,8 +27,12 @@ It runs on Windows and macOS from one codebase, built with
   genre, newest first within each row. Genre chips across the top narrow the
   view to a single genre (`Views/MainWindow`).
 - **Search.** Typing in the search box queries the `movies_fts` full-text index
-  and replaces the grouped view with a flat, ranked list of hits. Films from a
-  Jellyfin server are matched alongside them, on title and genre.
+  and replaces the grouped view with a flat, ranked list of hits. What you type
+  is escaped into FTS5's own query language first, so a title with punctuation
+  in it — `Face/Off`, `Mission: Impossible`, an apostrophe — is searched for
+  literally instead of being read as search operators, and the word you are
+  still typing matches by prefix (`Services/FtsQuery`). Films from a Jellyfin
+  server are matched alongside them, on title and genre.
 - **Details on click.** Opening a card fetches the film from TMDB and shows the
   overview, runtime, genres, backdrop, the top ten billed cast with their
   characters, and up to three directors and three writers. The star rating
