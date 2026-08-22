@@ -29,6 +29,13 @@ It runs on Windows and macOS from one codebase, built with
   and picking one narrows the whole view to that genre. `Cmd+F` — `Ctrl+F` on
   Windows — puts the cursor in the search field, and the field says so
   (`Views/MainWindow`).
+- **Filter by where a film is.** When the library draws on both this computer
+  and a server, a row above the genres offers **Everywhere**, **On this
+  computer** and **On the server**, each with a count. Genre and location are
+  different questions: a scanned film has no genre until something enriches it,
+  so without this every local film sat in the Uncategorised bucket, which sorts
+  behind every genre a server library brings with it. The row is hidden entirely
+  when everything comes from one place (`Services/LibraryFilter`).
 - **It looks like a screening room.** Warm near-black rather than blue-black,
   because a blue surround makes every poster look faintly green; one brass
   accent, spent only on the focus ring, the primary action and progress that is
@@ -450,10 +457,11 @@ Stated plainly, so nobody has to find out by using it:
 
 - **A scanned library has no genres.** Nothing writes the `genres` column for a
   scanned film yet, so every film from a scan lands in a single
-  **Uncategorised** bucket. Since the grouped view is the main way to browse, a
-  freshly scanned library looks bare until TMDB enrichment fills genres in — and
-  no code does that yet. Films from a Jellyfin server are unaffected: the server
-  supplies their genres.
+  **Uncategorised** bucket, and a freshly scanned library looks bare until
+  something fills genres in — which no code does. The **On this computer**
+  filter means those films are still one click away rather than buried behind a
+  server library's genres, but they remain ungrouped. Films from a Jellyfin
+  server are unaffected: the server supplies their genres.
 - **Films only.** The filename parser has no concept of television, so
   `Show.S01E02` becomes an oddly titled film rather than an episode. A mixed
   library will look wrong rather than broken. A Jellyfin server's series

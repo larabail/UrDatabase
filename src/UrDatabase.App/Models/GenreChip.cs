@@ -16,5 +16,16 @@ namespace UrDatabase.Models
         public string Name { get; set; } = "";
 
         public int Count { get; set; }
+
+        /// <summary>
+        /// Whether this is the genre being shown.
+        /// </summary>
+        /// <remarks>
+        /// Bound, rather than set by walking the visual tree for ToggleButtons and ticking the
+        /// right one. That walk cannot find a button that has not been realised yet, so on the
+        /// very first render — before anybody has clicked anything — no chip appeared selected at
+        /// all, and the row silently disagreed with the shelves below it.
+        /// </remarks>
+        public bool IsSelected { get; set; }
     }
 }

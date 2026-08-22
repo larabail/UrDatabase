@@ -280,6 +280,14 @@
         <Setter Property="Foreground" Value="{DynamicResource BoneBrush}"/>
     </Style>
 
+    <!-- The source row selects where a film is rather than what it is, so its
+         underline is the server colour when it is the server being selected —
+         the same colour as the badge on those films and the button that syncs
+         them. One colour, one question: will this play away from home. -->
+    <Style Selector="ToggleButton.source.server:checked /template/ Border#PART_Rule">
+        <Setter Property="Background" Value="{DynamicResource AwayBrush}"/>
+    </Style>
+
     <!-- ============================================================== -->
     <!--  the facts row on the details screen                           -->
     <!-- ============================================================== -->

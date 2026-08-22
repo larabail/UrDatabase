@@ -198,21 +198,38 @@
                      counts are the point — a row without them tells you the
                      library has a Western bucket but not whether it holds two
                      films or two hundred. -->
+                <!-- Two different questions, on one line but not in one row:
+                     where a film is, and what it is. They are divided by a
+                     hairline because folding them together is what buried the
+                     local films in the first place — a scanned film has no
+                     genre, so all of them sat in a bucket that sorts last,
+                     behind every genre the server library brought with it. -->
                 <Border BorderBrush="{StaticResource EdgeBrush}"
                         BorderThickness="0,0,0,1">
-                    <ScrollViewer Classes="shelf" Height="40" Padding="24,0">
-                        <ItemsControl x:Name="GenreChipsList" ItemsSource="{Binding GenreChips}">
+                    <Grid ColumnDefinitions="Auto,Auto,*">
+
+                        <!-- Hidden entirely unless films come from more than one
+                             place, so an install with only local films — or only
+                             a server — grows no furniture it has no use for. -->
+                        <ItemsControl x:Name="SourceChipsList"
+                                      Grid.Column="0"
+                                      ItemsSource="{Binding SourceChips}"
+                                      IsVisible="False"
+                                      Margin="24,0,0,0"
+                                      VerticalAlignment="Center">
                             <ItemsControl.ItemsPanel>
                                 <ItemsPanelTemplate>
                                     <StackPanel Orientation="Horizontal"/>
                                 </ItemsPanelTemplate>
                             </ItemsControl.ItemsPanel>
                             <ItemsControl.ItemTemplate>
-                                <DataTemplate DataType="models:GenreChip">
-                                    <ToggleButton Classes="genre"
-                                                  Margin="0,0,24,0"
+                                <DataTemplate DataType="models:SourceChip">
+                                    <ToggleButton Classes="genre source"
+                                                  Classes.server="{Binding IsServer}"
+                                                  IsChecked="{Binding IsSelected}"
+                                                  Margin="0,0,20,0"
                                                   VerticalAlignment="Center"
-                                                  Click="GenreChip_Click">
+                                                  Click="SourceChip_Click">
                                         <StackPanel Orientation="Horizontal">
                                             <TextBlock Classes="genreLabel"
                                                        Text="{Binding Name}"
@@ -227,7 +244,46 @@
                                 </DataTemplate>
                             </ItemsControl.ItemTemplate>
                         </ItemsControl>
-                    </ScrollViewer>
+
+                        <Rectangle x:Name="SourceDivider"
+                                   Grid.Column="1"
+                                   Width="1"
+                                   Height="16"
+                                   IsVisible="False"
+                                   Margin="4,0,20,0"
+                                   Fill="{StaticResource EdgeBrush}"
+                                   VerticalAlignment="Center"/>
+
+                        <ScrollViewer Grid.Column="2" Classes="shelf" Height="40" Padding="24,0">
+                            <ItemsControl x:Name="GenreChipsList" ItemsSource="{Binding GenreChips}">
+                                <ItemsControl.ItemsPanel>
+                                    <ItemsPanelTemplate>
+                                        <StackPanel Orientation="Horizontal"/>
+                                    </ItemsPanelTemplate>
+                                </ItemsControl.ItemsPanel>
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate DataType="models:GenreChip">
+                                        <ToggleButton Classes="genre"
+                                                      IsChecked="{Binding IsSelected}"
+                                                      Margin="0,0,24,0"
+                                                      VerticalAlignment="Center"
+                                                      Click="GenreChip_Click">
+                                            <StackPanel Orientation="Horizontal">
+                                                <TextBlock Classes="genreLabel"
+                                                           Text="{Binding Name}"
+                                                           FontSize="12.5"/>
+                                                <TextBlock Classes="mono"
+                                                           Text="{Binding Count}"
+                                                           FontSize="10"
+                                                           Margin="6,0,0,0"
+                                                           VerticalAlignment="Center"/>
+                                            </StackPanel>
+                                        </ToggleButton>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </ScrollViewer>
+                    </Grid>
                 </Border>
             </StackPanel>
 

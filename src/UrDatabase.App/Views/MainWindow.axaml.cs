@@ -10,7 +10,6 @@ using Avalonia.Controls.Primitives;
 using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Threading;
-using Avalonia.VisualTree;
 using Dapper;
 using Microsoft.Data.Sqlite;
 using UrDatabase.Models;
@@ -31,11 +30,27 @@ namespace UrDatabase.Views
         /// it holds two films or two hundred is telling you the least useful half of the fact.
         /// </summary>
         public ObservableCollection<GenreChip> GenreChips { get; } = new();
+
+        /// <summary>
+        /// Where films are, as opposed to what they are. Empty unless the library actually draws
+        /// on more than one place, so a single-source install grows no controls it cannot use.
+        /// </summary>
+        public ObservableCollection<SourceChip> SourceChips { get; } = new();
+
+        private LibrarySource _source = LibrarySource.Everywhere;
         public string? SelectedGenre { get; set; } = LibraryGrouping.AllGenres;
         public ObservableCollection<GenreGroup> VisibleGroups { get; } = new();
         public ObservableCollection<UiMovie> FlatResults { get; } = new();
 
         private List<UiMovie> _allMovies = new();
+
+        /// <summary>
+        /// The library as the window is currently showing it: everything, or only what is on this
+        /// machine, or only what is on the server. Genre counts, the shelves and the search
+        /// results are all built from this rather than from <c>_allMovies</c>, so a filtered view
+        /// is filtered consistently rather than in the one place somebody remembered.
+        /// </summary>
+        private IReadOnlyList<UiMovie> VisibleMovies => LibraryFilter.Apply(_allMovies, _source);
         private List<UiMovie> _localMovies = new();
 
         /// <summary>The server's whole library as cards, unfiltered. Empty when Jellyfin is off.</summary>
@@ -276,15 +291,87 @@ ORDER BY rank";
 
         private void BuildGenres()
         {
+            BuildSources();
+
             GenreChips.Clear();
-            foreach (var chip in LibraryGrouping.BuildGenreChips(_allMovies))
+            foreach (var chip in LibraryGrouping.BuildGenreChips(VisibleMovies))
+            {
+                chip.IsSelected = string.Equals(chip.Name, SelectedGenre, StringComparison.OrdinalIgnoreCase);
                 GenreChips.Add(chip);
+            }
 
             // The search field says how much it is about to search, which is the cheapest
             // possible answer to "did the scan actually find anything".
             var total = GenreChips.Count > 0 ? GenreChips[0].Count : 0;
             if (SearchBox is not null)
                 SearchBox.Watermark = total == 1 ? "Search 1 film" : $"Search {total:N0} films";
+        }
+
+        /// <summary>
+        /// Rebuilds the source row, and hides it when the library comes from a single place.
+        /// </summary>
+        /// <remarks>
+        /// The counts come from the whole library rather than the filtered view, or selecting
+        /// "On this computer" would leave the server's own control reading zero and there would
+        /// be nothing to say how to get back.
+        /// </remarks>
+        private void BuildSources()
+        {
+            var available = LibraryFilter.Available(_allMovies);
+
+            SourceChips.Clear();
+            foreach (var source in available)
+            {
+                SourceChips.Add(new SourceChip
+                {
+                    Source = source,
+                    Count = LibraryFilter.Count(_allMovies, source),
+                    IsSelected = source == _source
+                });
+            }
+
+            var show = SourceChips.Count > 0;
+            if (SourceChipsList is not null) SourceChipsList.IsVisible = show;
+            if (SourceDivider is not null) SourceDivider.IsVisible = show;
+
+            // A source that has just stopped existing — the last local film removed, or a server
+            // switched off — must not leave the window filtered to nothing with no way back.
+            if (!show && _source != LibrarySource.Everywhere) _source = LibrarySource.Everywhere;
+        }
+
+        /// <summary>
+        /// Narrows the library to one place, or widens it again. Genre stays as it was: the two
+        /// are different questions and answering one should not silently discard the other.
+        /// </summary>
+        private void SourceChip_Click(object? sender, RoutedEventArgs e)
+        {
+            if (sender is not ToggleButton tb || tb.DataContext is not SourceChip chip) return;
+
+            _source = chip.Source;
+
+            // A genre that only the other source had would otherwise stay selected and show an
+            // empty page.
+            var stillThere = LibraryGrouping.BuildGenreChips(VisibleMovies)
+                                            .Any(c => string.Equals(c.Name, SelectedGenre, StringComparison.OrdinalIgnoreCase));
+            if (!stillThere) SelectedGenre = LibraryGrouping.AllGenres;
+
+            BuildGenres();
+            RebuildGroups();
+
+            if (string.Equals(SelectedGenre, LibraryGrouping.AllGenres, StringComparison.OrdinalIgnoreCase))
+            {
+                ShowAllGenres();
+            }
+            else
+            {
+                SingleGenreItems.Clear();
+                foreach (var m in LibraryGrouping.ItemsForGenre(VisibleMovies, SelectedGenre))
+                    SingleGenreItems.Add(m);
+
+                SingleGenreCountText.Text = LibraryGrouping.CountLabel(SingleGenreItems.Count);
+                WarmPosters(SingleGenreItems);
+                ShowSingleGenre();
+            }
         }
 
         private void WarmPosters(IEnumerable<UiMovie> movies)
@@ -320,7 +407,7 @@ ORDER BY rank";
 
             foreach (var genre in buckets)
             {
-                var items = LibraryGrouping.ItemsForGenre(_allMovies, genre);
+                var items = LibraryGrouping.ItemsForGenre(VisibleMovies, genre);
                 if (items.Count == 0) continue;
 
                 VisibleGroups.Add(new GenreGroup
@@ -493,7 +580,7 @@ ORDER BY rank";
 
             // Grouped on Key rather than Id: every server film carries id 0, so grouping on the
             // local id would collapse the whole remote half of the results into one card.
-            foreach (var m in _allMovies
+            foreach (var m in VisibleMovies
                     .GroupBy(x => x.Key)
                     .Select(g => g.First())
                     .OrderByDescending(x => x.Year ?? 0)
@@ -521,10 +608,9 @@ ORDER BY rank";
             {
                 SelectedGenre = chip.Name;
 
-                // Only the clicked chip stays checked.
-                foreach (var btn in GenreChipsList.GetVisualDescendants().OfType<ToggleButton>())
-                    btn.IsChecked = btn.DataContext is GenreChip c
-                                    && string.Equals(c.Name, SelectedGenre, StringComparison.Ordinal);
+                // Rebuilt rather than ticked in place: the chips carry their own selected state,
+                // so this is also what makes the right one appear selected on the first render.
+                BuildGenres();
 
                 if (string.Equals(SelectedGenre, LibraryGrouping.AllGenres, StringComparison.OrdinalIgnoreCase))
                 {
@@ -534,7 +620,7 @@ ORDER BY rank";
                 else
                 {
                     SingleGenreItems.Clear();
-                    foreach (var m in LibraryGrouping.ItemsForGenre(_allMovies, SelectedGenre))
+                    foreach (var m in LibraryGrouping.ItemsForGenre(VisibleMovies, SelectedGenre))
                         SingleGenreItems.Add(m);
 
                     SingleGenreCountText.Text = LibraryGrouping.CountLabel(SingleGenreItems.Count);
@@ -608,7 +694,7 @@ ORDER BY rank";
         /// </summary>
         private void ShowAllGenres()
         {
-            var empty = _allMovies.Count == 0;
+            var empty = VisibleMovies.Count == 0;
 
             SearchPanel.IsVisible = false;
             GroupPanel.IsVisible = !empty;
