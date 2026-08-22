@@ -614,9 +614,12 @@ ORDER BY rank";
                 vm.TopCast = cast;
                 vm.KeyCrew = crew;
                 vm.ImdbRating = await LoadImdbRatingAsync(vm.ImdbId, m.Id, cts.Token);
-                vm.FilePath = FindLocalFileForMovie(m);
 
-                var dlg = new MovieDetailsWindow(vm);
+                var target = FindPlayTargetForMovie(m);
+                vm.FilePath = target.FilePath;
+                vm.FileMatch = target.Kind;
+
+                var dlg = new MovieDetailsWindow(vm, _dbPath);
                 await dlg.ShowDialog(this);
             }
             catch (Exception ex)
@@ -704,15 +707,28 @@ ORDER BY rank";
             }
         }
 
-        private string? FindLocalFileForMovie(UiMovie m)
+        /// <summary>
+        /// What Play will open for a local film, and on what evidence. The catalogue's own
+        /// <c>files.movie_id</c> link decides it; a filename is only ever a suggestion the user
+        /// gets to confirm. This used to load every path in the table and return the first name
+        /// containing the title, which is how a film called <em>It</em> played
+        /// <c>Spirited Away.mkv</c>.
+        ///
+        /// A failure to read the database is not worth a dialog: the details window says the film
+        /// has no file linked, which is the same thing from where the user is standing.
+        /// </summary>
+        private PlayTarget FindPlayTargetForMovie(UiMovie m)
         {
             try
             {
                 using var conn = Database.Open(_dbPath);
-                var files = conn.Query<string>("SELECT file_path FROM files").ToList();
-                return MovieFileMatcher.FindBestMatch(files, m.Title);
+                return PlayTargetResolver.Resolve(conn, m.Id, m.Title, m.Year);
             }
-            catch { return null; }
+            catch (Exception ex)
+            {
+                AppLog.Write("app.log", $"could not resolve a file for movie {m.Id}: {ex.Message}");
+                return PlayTarget.None;
+            }
         }
     }
 }
