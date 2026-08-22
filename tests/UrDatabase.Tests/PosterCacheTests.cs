@@ -80,6 +80,66 @@ namespace UrDatabase.Tests
             Assert.Single(Directory.GetFiles(_cacheDir));
         }
 
+        // ---------- wreckage this process never saw ----------
+
+        /// <summary>
+        /// A force quit or a lost power supply leaves a staging file no catch block ever ran
+        /// for. Nothing reads one, so it is invisible rather than harmful — but a cache that
+        /// only grows is one somebody eventually finds and wonders about.
+        /// </summary>
+        [Fact]
+        public async Task A_staging_file_left_by_a_process_that_died_is_cleared_out()
+        {
+            var abandoned = Path.Combine(_cacheDir, "3.jpg.abcdef.part");
+            await File.WriteAllBytesAsync(abandoned, Jpeg[..4]);
+            File.SetLastWriteTimeUtc(abandoned, DateTime.UtcNow - TimeSpan.FromDays(2));
+
+            using var svc = Create(Responds(() => Body(Jpeg, "image/jpeg")));
+            await svc.DownloadForPublic(PosterUrl, "7.jpg", CancellationToken.None);
+
+            Assert.False(File.Exists(abandoned));
+            Assert.True(File.Exists(Destination("7.jpg")));
+        }
+
+        /// <summary>
+        /// The other half, and the reason the sweep goes by age rather than by name: a second
+        /// copy of the app may be part way through writing into the same cache directory, and
+        /// deleting its staging file would break a download that was going perfectly well.
+        /// </summary>
+        [Fact]
+        public async Task A_staging_file_somebody_is_still_writing_is_left_alone()
+        {
+            var live = Path.Combine(_cacheDir, "9.jpg.fedcba.part");
+            await File.WriteAllBytesAsync(live, Jpeg[..4]);
+
+            using var svc = Create(Responds(() => Body(Jpeg, "image/jpeg")));
+            await svc.DownloadForPublic(PosterUrl, "7.jpg", CancellationToken.None);
+
+            Assert.True(File.Exists(live));
+        }
+
+        [Fact]
+        public void The_sweep_reports_what_it_removed_and_spares_finished_posters()
+        {
+            var stale = Path.Combine(_cacheDir, "1.jpg.aaa.part");
+            var fresh = Path.Combine(_cacheDir, "2.jpg.bbb.part");
+            var poster = Path.Combine(_cacheDir, "3.jpg");
+
+            foreach (var path in new[] { stale, fresh, poster }) File.WriteAllBytes(path, Jpeg);
+            File.SetLastWriteTimeUtc(stale, DateTime.UtcNow - TimeSpan.FromHours(3));
+
+            var removed = TmdbService.SweepStaleStaging(_cacheDir, TimeSpan.FromHours(1));
+
+            Assert.Equal(1, removed);
+            Assert.False(File.Exists(stale));
+            Assert.True(File.Exists(fresh));
+            Assert.True(File.Exists(poster));
+        }
+
+        [Fact]
+        public void The_sweep_says_nothing_about_a_cache_directory_that_does_not_exist()
+            => Assert.Equal(0, TmdbService.SweepStaleStaging(Path.Combine(_cacheDir, "not-here"), TimeSpan.Zero));
+
         [Fact]
         public async Task A_poster_already_in_the_cache_is_returned_without_asking_tmdb()
         {

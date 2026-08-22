@@ -269,7 +269,7 @@ namespace UrDatabase.Services
         /// </summary>
         public async Task<bool> StopAsync(TimeSpan? timeout = null, CancellationToken ct = default)
         {
-            _disposed = true;
+            MarkStopped();
 
             var settled = await DrainAsync(timeout ?? DefaultStopTimeout, ct).ConfigureAwait(false);
 
@@ -282,6 +282,24 @@ namespace UrDatabase.Services
             if (Volatile.Read(ref _active) == 0) ReleaseClient();
 
             return settled;
+        }
+
+        /// <summary>
+        /// Publishes the stop, and makes sure the read of <c>_active</c> that follows it cannot
+        /// be ordered ahead of it.
+        ///
+        /// A volatile write only has release semantics, which does not stop a later read of a
+        /// different field moving in front of it. Without the fence, this and a fetch finishing
+        /// at the same instant can both conclude the other will release the client: the fetch
+        /// decrements <c>_active</c> to zero and reads a stale <c>false</c> here, while this
+        /// reads the count before the decrement lands. Neither releases, and the shared client —
+        /// the resource this whole change exists to bound — is leaked for the life of the
+        /// process. The fetch's own side is already fenced by its interlocked decrement.
+        /// </summary>
+        private void MarkStopped()
+        {
+            _disposed = true;
+            Thread.MemoryBarrier();
         }
 
         /// <summary>
@@ -311,7 +329,7 @@ namespace UrDatabase.Services
         /// </summary>
         public void Dispose()
         {
-            _disposed = true;
+            MarkStopped();
 
             if (Volatile.Read(ref _active) == 0) ReleaseClient();
         }

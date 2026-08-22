@@ -444,11 +444,13 @@ what is left — the window disappears immediately either way, and the fetches
 that did finish are not asked for again on the next launch.
 
 A poster being cached is a promise that it is readable, because nothing ever
-re-checks one: the file existing is the whole of the lookup from then on. So a
-download is written to a staging file beside its destination, checked for being
-an image at all rather than an error page some proxy answered with, and only
-then moved into place. Anything interrupted leaves nothing behind and is simply
-fetched again.
+re-checks one: the file existing is the whole of the lookup from then on, and
+both the cards and the details page decode straight from it. So a download is
+written to a staging file beside its destination, checked for being an image at
+all rather than an error page some proxy answered with, and only then moved into
+place. Anything interrupted leaves nothing behind and is simply fetched again;
+anything left by a process that was killed outright is cleared out an hour
+later, once it is old enough to be certainly nobody's.
 
 ## Downloads
 

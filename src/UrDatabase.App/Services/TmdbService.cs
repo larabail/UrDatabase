@@ -21,6 +21,18 @@ namespace UrDatabase.Services
         public const string ApiBaseUrl = "https://api.themoviedb.org/3";
         public const string ImageBaseUrl = "https://image.tmdb.org/t/p";
 
+        /// <summary>What a download is called before it is a poster.</summary>
+        internal const string StagingSuffix = ".part";
+
+        /// <summary>
+        /// How long a staging file has to have sat untouched before it is treated as wreckage.
+        /// Comfortably longer than any request can take, so a live download — including one in
+        /// another copy of the app sharing this cache — is never swept away.
+        /// </summary>
+        internal static readonly TimeSpan StaleStagingAge = TimeSpan.FromHours(1);
+
+        private int _swept;
+
         private readonly HttpClient _http;
         private readonly string _apiKey;
         private readonly string _posterCacheDir;
@@ -125,6 +137,8 @@ namespace UrDatabase.Services
         private async Task<string?> DownloadAsync(string url, string fileName, CancellationToken ct)
         {
             Directory.CreateDirectory(_posterCacheDir);
+            SweepOnce();
+
             var dst = Path.Combine(_posterCacheDir, fileName);
             if (File.Exists(dst)) return dst;
 
@@ -141,7 +155,7 @@ namespace UrDatabase.Services
             // atomic within one volume, and a cache configured onto another disk would quietly
             // turn the move back into the copy this exists to avoid. The GUID keeps two fetches
             // of the same poster — or a second copy of the app — off each other's staging file.
-            var staging = Path.Combine(_posterCacheDir, $"{fileName}.{Guid.NewGuid():N}.part");
+            var staging = Path.Combine(_posterCacheDir, $"{fileName}.{Guid.NewGuid():N}{StagingSuffix}");
 
             try
             {
@@ -206,6 +220,61 @@ namespace UrDatabase.Services
         private static void TryDelete(string path)
         {
             try { if (File.Exists(path)) File.Delete(path); } catch { }
+        }
+
+        /// <summary>
+        /// Clears out staging files nothing is going to finish, once per service. Every failure
+        /// this process can see is already cleaned up where it happens; this is for the ones it
+        /// cannot — a force quit, a lost power supply, a delete refused by a virus scanner that
+        /// happened to be reading the file. Nothing ever reads a staging file, so what is left
+        /// is invisible rather than harmful, but a cache that only ever grows is still a cache
+        /// somebody eventually finds and wonders about.
+        /// </summary>
+        private void SweepOnce()
+        {
+            if (Interlocked.Exchange(ref _swept, 1) != 0) return;
+
+            SweepStaleStaging(_posterCacheDir, StaleStagingAge);
+        }
+
+        /// <summary>
+        /// Deletes <c>*.part</c> files in <paramref name="directory"/> last written more than
+        /// <paramref name="olderThan"/> ago, and reports how many went.
+        /// </summary>
+        /// <remarks>
+        /// The age is what makes this safe to run while another copy of the app is downloading
+        /// into the same cache. A request is abandoned after fifteen seconds, so a staging file
+        /// untouched for an hour cannot belong to a download anybody is still waiting on;
+        /// sweeping on name alone would delete a live one out from under it.
+        /// </remarks>
+        internal static int SweepStaleStaging(string directory, TimeSpan olderThan)
+        {
+            var removed = 0;
+
+            try
+            {
+                var cutoff = DateTime.UtcNow - olderThan;
+
+                foreach (var file in Directory.EnumerateFiles(directory, $"*{StagingSuffix}"))
+                {
+                    try
+                    {
+                        if (File.GetLastWriteTimeUtc(file) >= cutoff) continue;
+                        File.Delete(file);
+                        removed++;
+                    }
+                    catch
+                    {
+                        // Locked, vanished, or not ours to delete. The next run tries again.
+                    }
+                }
+            }
+            catch
+            {
+                // No cache directory, or one that cannot be listed. Not worth a word.
+            }
+
+            return removed;
         }
 
         // Bulk updater: fill movies.poster_path where missing.
