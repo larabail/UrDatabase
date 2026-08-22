@@ -17,5 +17,23 @@ namespace UrDatabase.Models
         public string? FilePath { get; set; }        // first playable file we can 
         public List<string> TopCast { get; set; } = new();     // “Actor (Role)”
         public List<string> KeyCrew { get; set; } = new();     // “Director: Name”
+
+        /// <summary>True when the film lives on a Jellyfin server and is streamed, not opened.</summary>
+        public bool IsRemote { get; set; }
+
+        /// <summary>
+        /// The direct play URL, resolved when the details were opened. Null when the server could
+        /// not be reached, which is what lets Play explain itself instead of failing obscurely.
+        ///
+        /// It carries an access token, so it is never shown, logged or put in a message.
+        /// </summary>
+        public string? StreamUrl { get; set; }
+
+        /// <summary>
+        /// Jellyfin's own community rating, shown under Jellyfin's name and nobody else's. It is a
+        /// different measurement, of a different population, from the IMDb rating above, and this
+        /// repository has already shipped one bug from labelling one service's number as another's.
+        /// </summary>
+        public double? CommunityRating { get; set; }
     }
 }

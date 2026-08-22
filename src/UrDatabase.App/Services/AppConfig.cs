@@ -21,6 +21,13 @@ namespace UrDatabase.Services
 
         public string PosterCacheDir { get; set; } = PlatformPaths.DefaultPosterCacheDir;
 
+        /// <summary>
+        /// An optional Jellyfin server to browse alongside the local library. Left blank the app
+        /// makes no network call for it and shows nothing about it, which is how every install
+        /// that predates this setting behaves.
+        /// </summary>
+        public JellyfinSettings Jellyfin { get; set; } = new();
+
         /// <summary>File a user copies from the example to configure their own install.</summary>
         public const string FileName = "appsettings.json";
 
@@ -105,6 +112,9 @@ namespace UrDatabase.Services
                 config.OmdbApiKey,
                 Environment.GetEnvironmentVariable(PlatformPaths.OmdbApiKeyVariable),
                 BuildKeys.Omdb);
+
+            config.Jellyfin ??= new JellyfinSettings();
+            config.Jellyfin.Normalize();
         }
 
         /// <summary>

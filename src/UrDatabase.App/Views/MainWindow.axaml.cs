@@ -31,11 +31,27 @@ namespace UrDatabase.Views
         public ObservableCollection<UiMovie> FlatResults { get; } = new();
 
         private List<UiMovie> _allMovies = new();
+        private List<UiMovie> _localMovies = new();
+
+        /// <summary>The server's whole library as cards, unfiltered. Empty when Jellyfin is off.</summary>
+        private List<UiMovie> _remoteMovies = new();
+
+        /// <summary>
+        /// The same films keyed by item id, holding the fields a card does not show. Jellyfin
+        /// already supplies the overview, runtime, rating and IMDb id, so opening a server film
+        /// needs no request at all — which is what makes it work with no TMDB key configured.
+        /// </summary>
+        private Dictionary<string, JellyfinMovie> _remoteById = new(StringComparer.OrdinalIgnoreCase);
 
         private PosterAutoLoader? _posterLoader;
         private readonly ImdbRatingService _ratings;
+
+        /// <summary>Null unless a server is configured, which is what keeps this feature off by default.</summary>
+        private readonly JellyfinClient? _jellyfin;
+
         private readonly CancellationTokenSource _cts = new();
         private bool _scanning;
+        private bool _syncing;
 
         public MainWindow()
         {
@@ -48,25 +64,91 @@ namespace UrDatabase.Views
             // at all when no OMDb key is available.
             _ratings = new ImdbRatingService(new OmdbService(_config.OmdbApiKey), ownsLookup: true);
 
+            // Nothing is constructed, and no database is touched, when no server is configured.
+            if (_config.Jellyfin?.IsConfigured == true)
+            {
+                _jellyfin = new JellyfinClient(
+                    _config.Jellyfin,
+                    JellyfinDeviceId.Resolve(),
+                    version: typeof(MainWindow).Assembly.GetName().Version?.ToString());
+            }
+
             _posterLoader = new PosterAutoLoader(_config, _dbPath, maxConcurrency: 4);
-            Closed += (_, __) => { _cts.Cancel(); _posterLoader?.Dispose(); _ratings.Dispose(); };
+            Closed += (_, __) => { _cts.Cancel(); _posterLoader?.Dispose(); _ratings.Dispose(); _jellyfin?.Dispose(); };
 
             DataContext = this;
 
+            if (JellyfinButton is not null) JellyfinButton.IsVisible = _jellyfin is not null;
+
+            LoadRemoteCache();
             LoadMovies();
             BuildGenres();
             RebuildGroups();
             ShowAllGenres();
+
+            // The window is already painted from the cache by the time this runs, so a slow or
+            // absent server delays nothing anybody is looking at.
+            if (_jellyfin is not null)
+                Dispatcher.UIThread.Post(() => _ = SyncJellyfinAsync(announceFailure: false));
+        }
+
+        /// <summary>
+        /// Reads the last synced server library out of SQLite. Only ever called when a server is
+        /// configured, so an install without one neither opens nor creates a database it would
+        /// not otherwise have touched.
+        /// </summary>
+        private void LoadRemoteCache()
+        {
+            _remoteMovies = new List<UiMovie>();
+            _remoteById = new Dictionary<string, JellyfinMovie>(StringComparer.OrdinalIgnoreCase);
+
+            if (_jellyfin is null) return;
+
+            try
+            {
+                using var conn = Database.Open(_dbPath);
+                var cached = JellyfinCache.Load(conn);
+
+                foreach (var movie in cached) _remoteById[movie.ItemId] = movie;
+
+                _remoteMovies = JellyfinLibrary
+                    .ToUiMovies(cached, m => _jellyfin.BuildPrimaryImageUrl(m.ItemId, m.ImageTag))
+                    .ToList();
+            }
+            catch (Exception ex)
+            {
+                AppLog.Write("jellyfin.log", $"could not read the cached server library: {ex.Message}");
+            }
         }
 
         private void LoadMovies(string? query = null)
         {
-            _allMovies.Clear();
-            if (!File.Exists(_dbPath))
-            {
-                SetStatus($"No library yet. Expected a database at {_dbPath}.");
-                return;
-            }
+            _localMovies = LoadLocalMovies(query);
+
+            var remote = string.IsNullOrWhiteSpace(query)
+                ? (IReadOnlyList<UiMovie>)_remoteMovies
+                : JellyfinLibrary.Search(_remoteMovies, query);
+
+            _allMovies = JellyfinLibrary.Merge(_localMovies, remote).ToList();
+
+            SetStatus(LibraryStatus.Describe(
+                localCount: _localMovies.Count,
+                localWithPosters: _localMovies.Count(x => !string.IsNullOrWhiteSpace(x.PosterPath)),
+                remoteCount: remote.Count,
+                hasLocalDatabase: File.Exists(_dbPath),
+                databasePath: _dbPath));
+
+            WarmPosters(_allMovies);
+        }
+
+        /// <summary>
+        /// The local half of the library. Returns an empty list rather than throwing for any
+        /// reason it might fail, because a server library still has to be browsable when the
+        /// local catalogue is missing or was written by an older schema.
+        /// </summary>
+        private List<UiMovie> LoadLocalMovies(string? query)
+        {
+            if (!File.Exists(_dbPath)) return new List<UiMovie>();
 
             try
             {
@@ -94,7 +176,7 @@ ORDER BY rank";
                     param = new { q = query };
                 }
 
-                _allMovies = conn.Query<UiMovie>(sql, param).ToList();
+                return conn.Query<UiMovie>(sql, param).ToList();
             }
             catch (Exception ex)
             {
@@ -102,13 +184,8 @@ ORDER BY rank";
                 // Report it instead of taking the window down.
                 AppLog.Write("startup.log", $"LoadMovies failed: {ex}");
                 SetStatus($"Could not read the library: {ex.Message}");
-                _allMovies = new List<UiMovie>();
-                return;
+                return new List<UiMovie>();
             }
-
-            var hasPosters = _allMovies.Count(x => !string.IsNullOrWhiteSpace(x.PosterPath));
-            SetStatus($"Posters present: {hasPosters}/{_allMovies.Count}");
-            WarmPosters(_allMovies);
         }
 
         private void SetStatus(string message)
@@ -129,7 +206,12 @@ ORDER BY rank";
             if (_posterLoader is null) return;
             foreach (var m in movies)
             {
+                // A server film is already described by the server, artwork included. Sending it
+                // to TMDB would ask for an answer the app already has, and would make a Jellyfin
+                // library depend on a TMDB key it has no reason to need.
+                if (m.IsRemote) continue;
                 if (!string.IsNullOrWhiteSpace(m.PosterPath)) continue;
+
                 _ = _posterLoader.EnsurePosterAsync(
                         movieId: m.Id,
                         title: m.Title,
@@ -166,9 +248,9 @@ ORDER BY rank";
         }
 
         /// <summary>
-        /// The UI boundary for a scan, and the only <c>async void</c> in the class. It owns the
-        /// button state and the error reporting; the work itself is an awaited Task, so the
-        /// connection stays open for as long as the scan needs it.
+        /// The UI boundary for a scan, and one of the two <c>async void</c> handlers in the class.
+        /// It owns the button state and the error reporting; the work itself is an awaited Task,
+        /// so the connection stays open for as long as the scan needs it.
         /// </summary>
         private async void ScanButton_Click(object? sender, RoutedEventArgs e)
         {
@@ -218,6 +300,75 @@ ORDER BY rank";
             return Task.Run(() => ScanService.ScanLibraryAsync(_dbPath, folders, progress, ct), ct);
         }
 
+        private async void JellyfinSyncButton_Click(object? sender, RoutedEventArgs e)
+            => await SyncJellyfinAsync(announceFailure: true);
+
+        /// <summary>
+        /// Refreshes the cached server library.
+        /// </summary>
+        /// <param name="announceFailure">
+        /// True when somebody pressed the button and is owed an answer. False for the refresh at
+        /// startup, which must never greet a person with a dialog because their laptop is not at
+        /// home — the status line says so and the cached library carries on working.
+        /// </param>
+        private async Task SyncJellyfinAsync(bool announceFailure)
+        {
+            if (_jellyfin is null || _syncing) return;
+
+            _syncing = true;
+            if (JellyfinButton is not null) JellyfinButton.IsEnabled = false;
+
+            try
+            {
+                SetStatus("Jellyfin: contacting the server…");
+
+                var progress = new Progress<string>(msg => Dispatcher.UIThread.Post(() => SetStatus(msg)));
+
+                var count = await Task.Run(async () =>
+                {
+                    using var conn = Database.Open(_dbPath);
+                    return await JellyfinSync.RefreshAsync(_jellyfin, conn, progress, _cts.Token);
+                }, _cts.Token);
+
+                LoadRemoteCache();
+                LoadMovies();
+                BuildGenres();
+                RebuildGroups();
+                ShowAllGenres();
+
+                SetStatus($"Jellyfin: {count} {(count == 1 ? "film" : "films")} from the server.");
+            }
+            catch (OperationCanceledException)
+            {
+                // The window is closing.
+            }
+            catch (JellyfinException ex)
+            {
+                AppLog.Write("jellyfin.log", JellyfinClient.Redact($"sync failed: {ex.Message}"));
+
+                var cached = _remoteMovies.Count;
+                SetStatus(cached > 0
+                    ? $"{ex.Message} Showing the {cached} films from the last sync."
+                    : ex.Message);
+
+                if (announceFailure)
+                    await MessageBoxWindow.ShowAsync(this, "Jellyfin", ex.Message);
+            }
+            catch (Exception ex)
+            {
+                AppLog.Write("jellyfin.log", JellyfinClient.Redact($"sync failed: {ex}"));
+                SetStatus($"Jellyfin sync failed: {ex.Message}");
+
+                if (announceFailure)
+                    await MessageBoxWindow.ShowAsync(this, "Jellyfin", $"Jellyfin sync failed: {ex.Message}");
+            }
+            finally
+            {
+                _syncing = false;
+                if (JellyfinButton is not null) JellyfinButton.IsEnabled = true;
+            }
+        }
+
         private void SearchBox_TextChanged(object? sender, TextChangedEventArgs e)
         {
             var q = (sender as TextBox)?.Text?.Trim();
@@ -236,8 +387,10 @@ ORDER BY rank";
             LoadMovies(q);
             FlatResults.Clear();
 
+            // Grouped on Key rather than Id: every server film carries id 0, so grouping on the
+            // local id would collapse the whole remote half of the results into one card.
             foreach (var m in _allMovies
-                    .GroupBy(x => x.Id)
+                    .GroupBy(x => x.Key)
                     .Select(g => g.First())
                     .OrderByDescending(x => x.Year ?? 0)
                     .ThenBy(x => x.Title))
@@ -283,9 +436,33 @@ ORDER BY rank";
                 $"{Environment.NewLine}{Environment.NewLine}Database:{Environment.NewLine}{_dbPath}" +
                 $"{Environment.NewLine}{Environment.NewLine}Watch folders:{Environment.NewLine}{string.Join(Environment.NewLine, _config.WatchFolders)}" +
                 $"{Environment.NewLine}{Environment.NewLine}TMDB key: {(string.IsNullOrWhiteSpace(_config.TmdbApiKey) ? "not configured" : "configured")}" +
-                $"{Environment.NewLine}IMDb ratings: {(_ratings.IsConfigured ? "available" : "unavailable")}";
+                $"{Environment.NewLine}IMDb ratings: {(_ratings.IsConfigured ? "available" : "unavailable")}" +
+                $"{Environment.NewLine}{Environment.NewLine}Jellyfin:{Environment.NewLine}{DescribeJellyfin()}";
 
             await MessageBoxWindow.ShowAsync(this, "Settings", message);
+        }
+
+        /// <summary>
+        /// What the settings box says about the server. Never the password, the API key or the
+        /// session token — only whether one is present and which account it signs in as.
+        /// </summary>
+        private string DescribeJellyfin()
+        {
+            if (_jellyfin is null)
+                return "not configured (set Jellyfin.ServerUrl in the configuration file)";
+
+            var settings = _config.Jellyfin!;
+            var credential = settings.UsesUserAccount
+                ? $"signed in as {settings.Username}"
+                : "using an API key";
+
+            var player = MediaPlayerLauncher.Find();
+            var playerNote = player is null
+                ? "no video player installed — install VLC or IINA to play"
+                : $"plays in {player.Name}";
+
+            return $"{settings.ServerUrl} ({credential}){Environment.NewLine}" +
+                   $"{_remoteMovies.Count} films cached · {playerNote}";
         }
 
         private void ShowSearch()
@@ -313,6 +490,12 @@ ORDER BY rank";
         {
             if (!e.GetCurrentPoint(sender as Control).Properties.IsLeftButtonPressed) return;
             if ((sender as Control)?.DataContext is not UiMovie m) return;
+
+            if (m.IsRemote)
+            {
+                await ShowRemoteDetailsAsync(m);
+                return;
+            }
 
             try
             {
@@ -375,10 +558,69 @@ ORDER BY rank";
         }
 
         /// <summary>
-        /// IMDb ratings come from OMDb, matched on the IMDb id TMDB reports. Entirely optional: no
-        /// id, no key or no network simply means no rating, never a substitute from another source.
+        /// Opens a server film. Everything on the page comes from the cache, so the window opens
+        /// instantly and opens at all with the server down; the network is needed only for the
+        /// play URL, and failing to get one is reported as "cannot play right now" rather than as
+        /// an error.
         /// </summary>
-        private async Task<double?> LoadImdbRatingAsync(string? imdbId, long movieId, CancellationToken ct)
+        private async Task ShowRemoteDetailsAsync(UiMovie m)
+        {
+            if (_jellyfin is null || string.IsNullOrWhiteSpace(m.RemoteId)) return;
+            if (!_remoteById.TryGetValue(m.RemoteId, out var film)) return;
+
+            try
+            {
+                var vm = new MovieDetailsVm
+                {
+                    Title = film.Title,
+                    Year = film.Year,
+                    Genres = film.Genres,
+                    Overview = film.Overview,
+                    Runtime = film.RuntimeMinutes,
+                    CommunityRating = film.CommunityRating,
+                    ImdbId = film.ImdbId,
+                    PosterPath = m.PosterPath,
+                    BackdropUrl = _jellyfin.BuildBackdropUrl(film.ItemId),
+                    IsRemote = true
+                };
+
+                using var cts = CancellationTokenSource.CreateLinkedTokenSource(_cts.Token);
+                cts.CancelAfter(TimeSpan.FromSeconds(12));
+
+                try
+                {
+                    await _jellyfin.ConnectAsync(cts.Token);
+                    vm.StreamUrl = _jellyfin.BuildStreamUrl(film.ItemId);
+                }
+                catch (JellyfinException ex)
+                {
+                    // Leaves StreamUrl null, which the details window explains for itself.
+                    AppLog.Write("jellyfin.log", JellyfinClient.Redact($"no stream url: {ex.Message}"));
+                }
+
+                // The IMDb id came from Jellyfin's own metadata, so this is a real IMDb rating and
+                // not the community number beside it. No local movie row owns it.
+                vm.ImdbRating = await LoadImdbRatingAsync(vm.ImdbId, null, cts.Token);
+
+                var dlg = new MovieDetailsWindow(vm);
+                await dlg.ShowDialog(this);
+            }
+            catch (OperationCanceledException)
+            {
+                // The window is closing.
+            }
+            catch (Exception ex)
+            {
+                await MessageBoxWindow.ShowAsync(this, "UrDatabase", $"Could not load details:{Environment.NewLine}{ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// IMDb ratings come from OMDb, matched on the IMDb id TMDB or Jellyfin reports. Entirely
+        /// optional: no id, no key or no network simply means no rating, never a substitute from
+        /// another source.
+        /// </summary>
+        private async Task<double?> LoadImdbRatingAsync(string? imdbId, long? movieId, CancellationToken ct)
         {
             if (string.IsNullOrWhiteSpace(imdbId)) return null;
 

@@ -1,13 +1,15 @@
 # UrDatabase
 
-A desktop app for cataloguing a film collection you already have on disk. Point
-it at your folders and scan: it reads the titles out of your filenames, builds
-a local SQLite catalogue, lays it out as poster art grouped by genre, and fills
-in the posters, plot, runtime, cast and crew from
-[TMDB](https://www.themoviedb.org/) as you look at them, with the IMDb rating
-fetched from [OMDb](https://www.omdbapi.com/). Nothing of yours leaves the
-machine: the only things sent out are the title being looked up and, for the
-rating, its IMDb id.
+A desktop app for cataloguing a film collection. Point it at your folders and
+scan: it reads the titles out of your filenames, builds a local SQLite
+catalogue, lays it out as poster art grouped by genre, and fills in the posters,
+plot, runtime, cast and crew from [TMDB](https://www.themoviedb.org/) as you
+look at them, with the IMDb rating fetched from
+[OMDb](https://www.omdbapi.com/). If your films live on a
+[Jellyfin](https://jellyfin.org/) server instead of on this disk, point it at
+that too and browse and play them from the same window. Nothing of yours leaves
+the machine: the only things sent out are the title being looked up, its IMDb id
+for the rating, and whatever your own server is asked for.
 
 It runs on Windows and macOS from one codebase, built with
 [Avalonia UI 11](https://avaloniaui.net/) on .NET 8.
@@ -18,7 +20,8 @@ It runs on Windows and macOS from one codebase, built with
   genre, newest first within each row. Genre chips across the top narrow the
   view to a single genre (`Views/MainWindow`).
 - **Search.** Typing in the search box queries the `movies_fts` full-text index
-  and replaces the grouped view with a flat, ranked list of hits.
+  and replaces the grouped view with a flat, ranked list of hits. Films from a
+  Jellyfin server are matched alongside them, on title and genre.
 - **Details on click.** Opening a card fetches the film from TMDB and shows the
   overview, runtime, genres, backdrop, the top ten billed cast with their
   characters, and up to three directors and three writers. The star rating
@@ -40,6 +43,15 @@ It runs on Windows and macOS from one codebase, built with
   (`Services/ScanService`, `Services/FilenameParser`, `Services/MovieIndex`).
 - **Play.** The details window hands the linked file to whatever the operating
   system uses to open it. A file can also be linked by hand from a file picker.
+- **Browse a Jellyfin server.** Optional, off until you configure it. Point the
+  app at a server and its movie library appears alongside your local one, with
+  every server film badged **Server** so you can tell at a glance what is not on
+  this machine. The library is cached in SQLite, so the window opens instantly
+  and stays browsable with the server switched off or the laptop away from home
+  — the films simply cannot play until it is reachable again. Playing one
+  streams it, without transcoding, through VLC or IINA
+  (`Services/JellyfinClient`, `Services/JellyfinCache`,
+  `Services/MediaPlayerLauncher`).
 
 [Known gaps](#known-gaps) is worth reading before you judge any of the above;
 several are thinner than they sound.
@@ -55,11 +67,12 @@ several are thinner than they sound.
 | CommunityToolkit.Mvvm | Observable models behind the views |
 | TMDB API v3 | Search, posters, plot, runtime, genres, cast and crew |
 | OMDb API | The IMDb rating, and nothing else |
+| Jellyfin API | Optional: a remote movie library, its artwork and its stream |
 
-There is no server, no account and no telemetry, and the app touches no
+There is no server of ours, no account and no telemetry, and the app touches no
 Firebase: the only outbound traffic is to `api.themoviedb.org`,
-`image.tmdb.org` and `www.omdbapi.com`. It works fully offline, with metadata
-and ratings simply absent.
+`image.tmdb.org`, `www.omdbapi.com` and, if you configure one, your own Jellyfin
+server. It works fully offline, with metadata and ratings simply absent.
 
 ## Getting started
 
@@ -114,6 +127,7 @@ cp src/UrDatabase.App/appsettings.example.json src/UrDatabase.App/appsettings.js
 | `PosterCacheDir` | Where downloaded posters go |
 | `DownloadPosters` | `false` points the UI at TMDB's own image URLs; `true` caches each poster to disk |
 | `TmdbImageSize` | TMDB's poster width — `w185`, `w342`, `w500`, `original` |
+| `Jellyfin` | An optional server to browse. Empty, as it ships, means the feature is off entirely — see [A Jellyfin server](#a-jellyfin-server) |
 
 Paths may contain environment variables and are expanded on load, so
 `%APPDATA%\UrDatabase\movies.db` works on Windows. The application data
@@ -159,13 +173,88 @@ deliberate tradeoff and [SECURITY.md](SECURITY.md) explains when it is an
 acceptable one. Never commit a key to this repository — see the same file for
 the one that once was.
 
+### A Jellyfin server
+
+Entirely optional, and off unless you fill it in. Leave `ServerUrl` empty — as
+it ships — and the app makes no request, opens no extra panel and behaves
+exactly as it did before this existed.
+
+```jsonc
+"Jellyfin": {
+  "ServerUrl": "http://media-box:8096",  // a bare host gets http:// added
+  "Username": "you",
+  "Password": "your password",
+  "ApiKey": "",                          // the alternative to a username
+  "LibraryName": ""                      // blank picks the first movie library
+}
+```
+
+| Key | What it does |
+| --- | --- |
+| `ServerUrl` | Where the server is. A host with no scheme is assumed to be `http://`, since a server on a home network usually has no certificate |
+| `Username`, `Password` | The preferred sign-in. Exchanged for a session token at startup |
+| `ApiKey` | A Jellyfin API key, used when no username and password are given |
+| `LibraryName` | Which movie library to read, when a server has more than one |
+
+Any of the four can come from the environment instead, which is the way to keep
+a password out of a file:
+
+```bash
+export URDATABASE_JELLYFIN_URL=http://media-box:8096
+export URDATABASE_JELLYFIN_USERNAME=you
+export URDATABASE_JELLYFIN_PASSWORD=...
+export URDATABASE_JELLYFIN_API_KEY=...
+```
+
+**Prefer the username and password.** A Jellyfin API key is server-scoped and
+administrative — Jellyfin has no narrower kind — whereas a session token is
+scoped to one account, which is the smaller thing to keep on a laptop. The key
+is offered because some setups only have one, not because it is the better
+option.
+
+Nothing is discovered automatically. Jellyfin's UDP discovery is off in many
+deployments, including behind a reverse proxy, so the address is something you
+type once rather than something the app guesses at.
+
+Once configured, **Sync Jellyfin** appears next to the scan button. The app also
+syncs quietly at startup, after the window has already painted from the cache,
+so a slow or absent server never delays anything you are looking at. A sync that
+fails leaves the last good library in place and says so in the status line;
+only a sync you asked for interrupts you with a dialog.
+
+Server films are described entirely by the server — title, year, genres,
+overview, runtime, artwork and the IMDb id — so **a Jellyfin library needs no
+TMDB key at all**, and no title is ever run through the filename parser. Because
+Jellyfin supplies real genres, its films group properly instead of piling into
+the **Uncategorised** bucket a scanned library falls into.
+
+The rating badge on a server film says `Jellyfin` when it is Jellyfin's own
+community rating, and `IMDb` only for the IMDb rating from OMDb. They are
+different numbers from different populations and are never shown under each
+other's name.
+
+#### Playing a server film
+
+Films are streamed, never downloaded, and Jellyfin direct-plays most of them as
+Matroska. The system's default opener answers an `http://` URL by launching a
+browser, which cannot play that, so the app needs a real video player and looks
+for **[VLC](https://www.videolan.org/vlc/)** or
+**[IINA](https://iina.io/)** — either will do, and VLC exists on every platform
+this app runs on. With neither installed, Play says so and names them both
+rather than failing silently.
+
+The stream URL carries an access token, because a player is handed a bare URL
+and has nowhere to put a header. The app therefore never logs it, shows it or
+puts it in a message; anything written to `jellyfin.log` has the token redacted
+out of it first.
+
 ### The catalogue
 
 Point `DatabasePath` anywhere and the app creates what it needs on first
 launch. `src/UrDatabase.App/Data/schema.sql` is the full schema — the `movies`
-and `files` tables, the `movies_fts` FTS5 index and the triggers that keep it
-current — and every statement is `IF NOT EXISTS`, so it runs against a library
-you already have without touching your data.
+and `files` tables, the `jellyfin_movies` cache, the `movies_fts` FTS5 index and
+the triggers that keep it current — and every statement is `IF NOT EXISTS`, so
+it runs against a library you already have without touching your data.
 
 From there, filling the catalogue is a scan. Set `WatchFolders`, press the scan
 button, and the films appear.
@@ -252,7 +341,7 @@ src/UrDatabase.App/          the application: one cross-platform project
   Views/                     windows and their code-behind
   Controls/                  reusable pieces, e.g. the poster card
   Models/                    what the views bind to
-  Services/                  config, SQLite, scanning, TMDB, OMDb, posters
+  Services/                  config, SQLite, scanning, TMDB, OMDb, Jellyfin, posters
   Data/schema.sql            the full schema, applied on first launch
   appsettings.example.json   configuration template; the real file is ignored
 tests/UrDatabase.Tests/      xUnit suite
@@ -277,13 +366,25 @@ request.
 
 Stated plainly, so nobody has to find out by using it:
 
-- **A scanned library has no genres.** Nothing writes the `genres` column yet,
-  so every film from a scan lands in a single **Uncategorised** bucket. Since
-  the grouped view is the main way to browse, a freshly scanned library looks
-  bare until TMDB enrichment fills genres in — and no code does that yet.
+- **A scanned library has no genres.** Nothing writes the `genres` column for a
+  scanned film yet, so every film from a scan lands in a single
+  **Uncategorised** bucket. Since the grouped view is the main way to browse, a
+  freshly scanned library looks bare until TMDB enrichment fills genres in — and
+  no code does that yet. Films from a Jellyfin server are unaffected: the server
+  supplies their genres.
 - **Films only.** The filename parser has no concept of television, so
   `Show.S01E02` becomes an oddly titled film rather than an episode. A mixed
-  library will look wrong rather than broken.
+  library will look wrong rather than broken. A Jellyfin server's series
+  libraries are skipped outright for the same reason.
+- **A server film has no cast or crew.** The details window fills those from
+  TMDB, and a Jellyfin film deliberately makes no TMDB call, so both lists are
+  empty for one. Jellyfin can report them; nothing asks yet.
+- **Playback position is not shared with the server.** A film played from
+  Jellyfin does not resume where you left off and is not marked watched, because
+  the app hands the stream to an external player and never hears from it again.
+- **One Jellyfin server, chosen in a file.** There is no way to add a second, and
+  no in-app form for the first: the address and credentials are configuration,
+  edited by hand.
 - **Files are matched to films by heuristic.** An exact filename stem wins,
   otherwise the first name containing the title. Two films whose titles are
   substrings of each other can still be confused.

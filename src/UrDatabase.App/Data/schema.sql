@@ -33,6 +33,28 @@ CREATE TABLE IF NOT EXISTS imdb_ratings (
     source     TEXT NOT NULL DEFAULT 'omdb'
 );
 
+-- The movie library of a Jellyfin server, as of the last successful sync. Metadata only:
+-- nothing here is a file, and playing one of these streams from the server.
+--
+-- Cached so the window can open instantly and stay readable on a laptop that is nowhere near
+-- the server. Replaced wholesale by each sync, so a film removed upstream disappears here too.
+CREATE TABLE IF NOT EXISTS jellyfin_movies (
+    item_id          TEXT PRIMARY KEY,
+    title            TEXT NOT NULL,
+    year             INTEGER,
+    genres           TEXT,
+    overview         TEXT,
+    runtime_minutes  INTEGER,
+    -- Jellyfin's own community rating, which is not an IMDb rating and is never shown as one.
+    community_rating REAL,
+    imdb_id          TEXT,
+    tmdb_id          TEXT,
+    image_tag        TEXT,
+    synced_at        TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS ix_jellyfin_movies_title ON jellyfin_movies(title);
+
 -- Full text search over the catalogue, kept in sync with movies by triggers.
 CREATE VIRTUAL TABLE IF NOT EXISTS movies_fts USING fts5(
     title,

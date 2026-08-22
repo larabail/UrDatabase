@@ -18,6 +18,15 @@ namespace UrDatabase.Tests
         public List<string> Requests { get; } = new();
         public List<string?> RequestBodies { get; } = new();
         public List<string?> AuthorizationHeaders { get; } = new();
+
+        /// <summary>
+        /// The <c>Authorization</c> header exactly as it went out. Jellyfin's scheme carries
+        /// several comma separated parameters, which <see cref="HttpRequestMessage.Headers"/>
+        /// will not always parse back into an <c>AuthenticationHeaderValue</c>, so asserting on
+        /// the parsed form above would quietly see null.
+        /// </summary>
+        public List<string?> RawAuthorizationHeaders { get; } = new();
+
         public int CallCount => Requests.Count;
 
         public FakeHttpMessageHandler(Func<HttpRequestMessage, HttpResponseMessage> responder)
@@ -53,6 +62,10 @@ namespace UrDatabase.Tests
         {
             Requests.Add(request.RequestUri?.ToString() ?? "");
             AuthorizationHeaders.Add(request.Headers.Authorization?.ToString());
+            RawAuthorizationHeaders.Add(
+                request.Headers.TryGetValues("Authorization", out var authorization)
+                    ? string.Join(", ", authorization)
+                    : null);
             RequestBodies.Add(request.Content is null ? null : await request.Content.ReadAsStringAsync(cancellationToken));
 
             return _responder(request);
