@@ -9,27 +9,25 @@ namespace UrDatabase.Tests
     /// The key resolution chain is the part most likely to break silently, so each step is
     /// asserted directly as well as through <see cref="AppConfig.Load"/>.
     /// </summary>
+    [Collection(EnvironmentVariables.CollectionName)]
     public class ApiKeyResolutionTests : IDisposable
     {
         private readonly string _dir;
+        private readonly EnvironmentVariableScope _environment;
 
         public ApiKeyResolutionTests()
         {
             _dir = Path.Combine(Path.GetTempPath(), "urdb-keys-" + Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(_dir);
-            ClearEnvironment();
+            _environment = new EnvironmentVariableScope(
+                PlatformPaths.TmdbApiKeyVariable,
+                PlatformPaths.OmdbApiKeyVariable);
         }
 
         public void Dispose()
         {
-            ClearEnvironment();
+            _environment.Dispose();
             try { Directory.Delete(_dir, recursive: true); } catch { }
-        }
-
-        private static void ClearEnvironment()
-        {
-            Environment.SetEnvironmentVariable(PlatformPaths.TmdbApiKeyVariable, null);
-            Environment.SetEnvironmentVariable(PlatformPaths.OmdbApiKeyVariable, null);
         }
 
         [Fact]

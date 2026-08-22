@@ -1,6 +1,7 @@
 # UrDatabase
 
-A desktop app for browsing a film collection you already have on disk. It reads
+A desktop app for cataloguing a film collection you already have on disk. Point
+it at your folders and scan: it reads the titles out of your filenames, builds
 a local SQLite catalogue, lays it out as poster art grouped by genre, and fills
 in the posters, plot, runtime, cast and crew from
 [TMDB](https://www.themoviedb.org/) as you look at them, with the IMDb rating
@@ -32,8 +33,11 @@ It runs on Windows and macOS from one codebase, built with
   `DownloadPosters` (`Services/PosterAutoLoader`).
 - **Scan your watch folders.** The scan button walks the configured folders for
   video files — `.mkv`, `.mp4`, `.avi`, `.mov`, `.wmv`, `.m4v`, `.mpg`, `.mpeg`
-  — and upserts each path, size and timestamp into the `files` table
-  (`Services/ScanService`).
+  — parses a title and year out of each filename, creates or reuses a canonical
+  row in `movies`, and links the file to it. Scanning an empty database is what
+  gives you a library; re-scanning is idempotent, so two spellings of one title
+  collapse onto a single film rather than multiplying
+  (`Services/ScanService`, `Services/FilenameParser`, `Services/MovieIndex`).
 - **Play.** The details window hands the linked file to whatever the operating
   system uses to open it. A file can also be linked by hand from a file picker.
 
@@ -157,13 +161,23 @@ the one that once was.
 
 ### The catalogue
 
-The app **reads** a catalogue; it does not build one. It expects a SQLite
-database holding a `movies` table (`id`, `title`, `year`, `genres`,
-`poster_path`), a `files` table, and a `movies_fts` FTS5 index over the films.
-`src/UrDatabase.App/Data/schema.sql` is not a full schema — it adds the unique
-index on `files(file_path)` that the scanner's upsert depends on, and assumes
-the rest already exists. Point `DatabasePath` at a database you already have,
-or create those tables yourself before first run.
+Point `DatabasePath` anywhere and the app creates what it needs on first
+launch. `src/UrDatabase.App/Data/schema.sql` is the full schema — the `movies`
+and `files` tables, the `movies_fts` FTS5 index and the triggers that keep it
+current — and every statement is `IF NOT EXISTS`, so it runs against a library
+you already have without touching your data.
+
+From there, filling the catalogue is a scan. Set `WatchFolders`, press the scan
+button, and the films appear.
+
+Filenames come in every shape, so the parser copes with the common ones:
+`The Matrix (1999) 1080p.mkv`, `the.matrix.1999.BluRay.x264-GROUP.mkv`,
+`The Matrix [1999].mp4`, underscores, junk brackets, and both Windows and macOS
+paths. It strips resolution, source, codec, audio and release group from the end
+of a name, keeps the hyphen inside a real title like `Spider-Man`, and prefers a
+bracketed year over a bare one so `Blade Runner 2049 (2017)` resolves to the
+right film and year. One casualty of splitting dotted names: genuine full stops
+go with them, so `S.W.A.T.` arrives as `S W A T`.
 
 ## Downloads
 
@@ -239,7 +253,7 @@ src/UrDatabase.App/          the application: one cross-platform project
   Controls/                  reusable pieces, e.g. the poster card
   Models/                    what the views bind to
   Services/                  config, SQLite, scanning, TMDB, OMDb, posters
-  Data/schema.sql            the index the scanner's upsert relies on
+  Data/schema.sql            the full schema, applied on first launch
   appsettings.example.json   configuration template; the real file is ignored
 tests/UrDatabase.Tests/      xUnit suite
 Directory.Build.props        the single <Version> for the whole solution
@@ -263,18 +277,20 @@ request.
 
 Stated plainly, so nobody has to find out by using it:
 
-- **Nothing populates `movies`.** Scanning fills the `files` table only. The
-  film records themselves have to come from somewhere else, which is why the
-  app is a reader of an existing catalogue rather than a way to create one.
-- **Files are matched to films by guesswork** — the first filename containing
-  the film's title, lower-cased. Two films whose titles are substrings of each
-  other will fool it.
+- **A scanned library has no genres.** Nothing writes the `genres` column yet,
+  so every film from a scan lands in a single **Uncategorised** bucket. Since
+  the grouped view is the main way to browse, a freshly scanned library looks
+  bare until TMDB enrichment fills genres in — and no code does that yet.
+- **Films only.** The filename parser has no concept of television, so
+  `Show.S01E02` becomes an oddly titled film rather than an episode. A mixed
+  library will look wrong rather than broken.
+- **Files are matched to films by heuristic.** An exact filename stem wins,
+  otherwise the first name containing the title. Two films whose titles are
+  substrings of each other can still be confused.
 - **Linking a file by hand does not persist.** The file picker updates the open
   window and nothing else; reopening the film forgets it.
 - **Settings is a placeholder** that says so when clicked. Configuration is
   file-only for now.
-- **Search needs `movies_fts`.** Without that FTS5 index the search box throws
-  rather than falling back to a `LIKE` query.
 - **macOS builds are not notarized**, so the first launch needs one `xattr`
   command, as described above.
 

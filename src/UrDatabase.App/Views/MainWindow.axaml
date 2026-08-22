@@ -102,6 +102,7 @@
                             Orientation="Horizontal"
                             VerticalAlignment="Top">
                     <Button Classes="dark"
+                            x:Name="ScanButton"
                             Content="Scan Folders"
                             Click="ScanButton_Click"/>
                     <Button Classes="dark"

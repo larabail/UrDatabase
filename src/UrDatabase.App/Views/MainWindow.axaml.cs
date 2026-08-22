@@ -26,7 +26,7 @@ namespace UrDatabase.Views
         private string _dbPath = "";
 
         public ObservableCollection<string> Genres { get; } = new();
-        public string? SelectedGenre { get; set; } = "All";
+        public string? SelectedGenre { get; set; } = LibraryGrouping.AllGenres;
         public ObservableCollection<GenreGroup> VisibleGroups { get; } = new();
         public ObservableCollection<UiMovie> FlatResults { get; } = new();
 
@@ -35,6 +35,7 @@ namespace UrDatabase.Views
         private PosterAutoLoader? _posterLoader;
         private readonly ImdbRatingService _ratings;
         private readonly CancellationTokenSource _cts = new();
+        private bool _scanning;
 
         public MainWindow()
         {
@@ -69,7 +70,10 @@ namespace UrDatabase.Views
 
             try
             {
-                using var conn = new SqliteConnection($"Data Source={_dbPath};Cache=Shared");
+                // Read-only, and deliberately not Cache=Shared: a scan holds a write transaction,
+                // and shared cache would fail this query outright instead of reading the last
+                // committed snapshot.
+                using var conn = new SqliteConnection($"Data Source={_dbPath}");
                 conn.Open();
 
                 string sql;
@@ -116,17 +120,8 @@ ORDER BY rank";
         private void BuildGenres()
         {
             Genres.Clear();
-            Genres.Add("All");
-
-            var all = _allMovies
-                .SelectMany(m => m.GenresList)
-                .Select(g => g.Trim())
-                .Where(g => !string.IsNullOrWhiteSpace(g))
-                .Distinct(StringComparer.OrdinalIgnoreCase)
-                .OrderBy(g => g);
-
-            foreach (var g in all)
-                Genres.Add(g);
+            foreach (var genre in LibraryGrouping.BuildGenreList(_allMovies))
+                Genres.Add(genre);
         }
 
         private void WarmPosters(IEnumerable<UiMovie> movies)
@@ -149,19 +144,14 @@ ORDER BY rank";
             VisibleGroups.Clear();
 
             IEnumerable<string> buckets;
-            if (string.Equals(SelectedGenre, "All", StringComparison.OrdinalIgnoreCase) || string.IsNullOrWhiteSpace(SelectedGenre))
-                buckets = Genres.Where(x => !string.Equals(x, "All", StringComparison.OrdinalIgnoreCase));
+            if (string.Equals(SelectedGenre, LibraryGrouping.AllGenres, StringComparison.OrdinalIgnoreCase) || string.IsNullOrWhiteSpace(SelectedGenre))
+                buckets = Genres.Where(x => !string.Equals(x, LibraryGrouping.AllGenres, StringComparison.OrdinalIgnoreCase));
             else
                 buckets = new[] { SelectedGenre! };
 
             foreach (var genre in buckets)
             {
-                var items = _allMovies
-                    .Where(m => m.HasGenre(genre))
-                    .OrderByDescending(m => m.Year ?? 0)
-                    .ThenBy(m => m.Title)
-                    .ToList();
-
+                var items = LibraryGrouping.ItemsForGenre(_allMovies, genre);
                 if (items.Count == 0) continue;
 
                 VisibleGroups.Add(new GenreGroup
@@ -175,26 +165,57 @@ ORDER BY rank";
                 WarmPosters(group.Items);
         }
 
+        /// <summary>
+        /// The UI boundary for a scan, and the only <c>async void</c> in the class. It owns the
+        /// button state and the error reporting; the work itself is an awaited Task, so the
+        /// connection stays open for as long as the scan needs it.
+        /// </summary>
         private async void ScanButton_Click(object? sender, RoutedEventArgs e)
         {
+            if (_scanning) return;
+
+            _scanning = true;
+            if (ScanButton is not null) ScanButton.IsEnabled = false;
+
             try
             {
-                using var conn = Database.Open(_dbPath);
-                var scanner = new ScanService();
-                var progress = new Progress<string>(msg => Dispatcher.UIThread.Post(() => SetStatus(msg)));
-
-                var updated = await scanner.ScanAsync(conn, _config.WatchFolders ?? Array.Empty<string>(), progress, _cts.Token);
+                SetStatus("Scanning…");
+                var updated = await RunScanAsync(_cts.Token);
 
                 LoadMovies();
                 BuildGenres();
                 RebuildGroups();
                 ShowAllGenres();
-                SetStatus($"Scan complete. {updated} file entries updated.");
+                SetStatus($"Scan complete. {updated} file entries updated, {_allMovies.Count} movies in the library.");
+            }
+            catch (OperationCanceledException)
+            {
+                // The window is closing. Nothing left to report to.
             }
             catch (Exception ex)
             {
+                AppLog.Write("scan.log", $"scan failed: {ex}");
+                SetStatus($"Scan failed: {ex.Message}");
                 await MessageBoxWindow.ShowAsync(this, "UrDatabase", $"Scan failed: {ex.Message}");
             }
+            finally
+            {
+                _scanning = false;
+                if (ScanButton is not null) ScanButton.IsEnabled = true;
+            }
+        }
+
+        /// <summary>
+        /// Runs the scan off the UI thread, on a connection that lives exactly as long as the scan.
+        /// Enumerating a film folder and writing thousands of rows is synchronous work underneath;
+        /// left on the dispatcher it froze the window and no progress message ever painted.
+        /// </summary>
+        private Task<int> RunScanAsync(CancellationToken ct)
+        {
+            var folders = _config.WatchFolders ?? Array.Empty<string>();
+            var progress = new Progress<string>(msg => Dispatcher.UIThread.Post(() => SetStatus(msg)));
+
+            return Task.Run(() => ScanService.ScanLibraryAsync(_dbPath, folders, progress, ct), ct);
         }
 
         private void SearchBox_TextChanged(object? sender, TextChangedEventArgs e)
@@ -238,7 +259,7 @@ ORDER BY rank";
                 foreach (var btn in GenreChips.GetVisualDescendants().OfType<ToggleButton>())
                     btn.IsChecked = string.Equals(btn.Content as string, SelectedGenre, StringComparison.Ordinal);
 
-                if (string.Equals(SelectedGenre, "All", StringComparison.OrdinalIgnoreCase))
+                if (string.Equals(SelectedGenre, LibraryGrouping.AllGenres, StringComparison.OrdinalIgnoreCase))
                 {
                     RebuildGroups();
                     ShowAllGenres();
@@ -246,10 +267,7 @@ ORDER BY rank";
                 else
                 {
                     SingleGenreItems.Clear();
-                    foreach (var m in _allMovies
-                                .Where(m => m.HasGenre(SelectedGenre))
-                                .OrderByDescending(m => m.Year ?? 0)
-                                .ThenBy(m => m.Title))
+                    foreach (var m in LibraryGrouping.ItemsForGenre(_allMovies, SelectedGenre))
                         SingleGenreItems.Add(m);
 
                     WarmPosters(SingleGenreItems);
