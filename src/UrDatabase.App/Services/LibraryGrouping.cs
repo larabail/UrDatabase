@@ -63,5 +63,57 @@ namespace UrDatabase.Services
                 .ThenBy(m => m.Title, StringComparer.CurrentCultureIgnoreCase)
                 .ToList();
         }
+
+        /// <summary>
+        /// The genre row across the top, each entry carrying how many films are behind it.
+        /// </summary>
+        /// <remarks>
+        /// The counts are the point. A genre row without them tells you a library has a Western
+        /// bucket but not whether it holds two films or two hundred, and the first thing anyone
+        /// wants from a catalogue is its shape. "All" counts distinct films, not the sum of the
+        /// buckets: a film with three genres appears on three shelves, so adding the buckets up
+        /// reports a library several times larger than it is.
+        /// </remarks>
+        public static IReadOnlyList<GenreChip> BuildGenreChips(IEnumerable<UiMovie>? movies)
+        {
+            var materialised = movies as IReadOnlyCollection<UiMovie> ?? movies?.ToList();
+
+            if (materialised is null || materialised.Count == 0)
+                return new List<GenreChip> { new() { Name = AllGenres, Count = 0 } };
+
+            var chips = new List<GenreChip>
+            {
+                new()
+                {
+                    Name = AllGenres,
+                    // Distinct on Key: every server film carries local id 0, so counting on the
+                    // id alone would report the whole remote library as a single film.
+                    Count = materialised.Select(m => m.Key).Distinct(StringComparer.Ordinal).Count()
+                }
+            };
+
+            foreach (var genre in BuildGenreList(materialised))
+            {
+                if (string.Equals(genre, AllGenres, StringComparison.OrdinalIgnoreCase)) continue;
+
+                chips.Add(new GenreChip
+                {
+                    Name = genre,
+                    Count = ItemsForGenre(materialised, genre).Count
+                });
+            }
+
+            return chips;
+        }
+
+        /// <summary>
+        /// The count as it is printed beside a shelf heading: <c>"12 FILMS"</c>, <c>"1 FILM"</c>.
+        /// </summary>
+        /// <remarks>
+        /// Singular and plural are handled here rather than in a format string in the view,
+        /// because "1 films" is the sort of thing that survives review for years.
+        /// </remarks>
+        public static string CountLabel(int count)
+            => count == 1 ? "1 FILM" : $"{count} FILMS";
     }
 }

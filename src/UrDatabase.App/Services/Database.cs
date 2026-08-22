@@ -110,9 +110,71 @@ namespace UrDatabase.Services
             var sql = ReadSchemaScript();
             if (string.IsNullOrWhiteSpace(sql)) return;
 
+            using (var cmd = conn.CreateCommand())
+            {
+                cmd.CommandText = sql;
+                cmd.ExecuteNonQuery();
+            }
+
+            Migrate(conn);
+        }
+
+        /// <summary>
+        /// Brings an existing database up to the current shape.
+        /// </summary>
+        /// <remarks>
+        /// Every statement in the schema script is <c>CREATE ... IF NOT EXISTS</c>, which builds a
+        /// correct database from nothing and does absolutely nothing to one that already exists.
+        /// A column added to a table in that script therefore never appears in anybody's actual
+        /// library — the table is already there, so the statement is skipped, and the app then
+        /// fails on "no such column" against a database it just declared up to date.
+        /// </remarks>
+        internal static void Migrate(SqliteConnection conn)
+        {
+            // Cast and crew from a Jellyfin server. Text rather than a table of people: they are
+            // only ever read back whole, for one film, to be printed.
+            AddColumnIfMissing(conn, "jellyfin_movies", "cast_list", "TEXT");
+            AddColumnIfMissing(conn, "jellyfin_movies", "crew_list", "TEXT");
+        }
+
+        /// <summary>
+        /// Adds a column when it is absent, and does nothing when it is already there. SQLite has
+        /// no <c>ADD COLUMN IF NOT EXISTS</c>, so the table is inspected first.
+        /// </summary>
+        internal static void AddColumnIfMissing(SqliteConnection conn, string table, string column, string type)
+        {
+            if (!TableExists(conn, table)) return;
+            if (ColumnExists(conn, table, column)) return;
+
             using var cmd = conn.CreateCommand();
-            cmd.CommandText = sql;
+            // The names here are compile-time constants from Migrate, never user input.
+            cmd.CommandText = $"ALTER TABLE {table} ADD COLUMN {column} {type}";
             cmd.ExecuteNonQuery();
+        }
+
+        internal static bool TableExists(SqliteConnection conn, string table)
+        {
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = "SELECT 1 FROM sqlite_master WHERE type='table' AND name=@name LIMIT 1";
+            cmd.Parameters.AddWithValue("@name", table);
+
+            return cmd.ExecuteScalar() is not null;
+        }
+
+        internal static bool ColumnExists(SqliteConnection conn, string table, string column)
+        {
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = $"PRAGMA table_info({table})";
+
+            using var reader = cmd.ExecuteReader();
+            while (reader.Read())
+            {
+                // Column 1 of table_info is the column's name.
+                if (string.Equals(reader.GetString(1), column, StringComparison.OrdinalIgnoreCase))
+                    return true;
+            }
+
+            return false;
         }
 
         private static string ReadSchemaScript()
@@ -160,6 +222,8 @@ CREATE TABLE IF NOT EXISTS jellyfin_movies (
     community_rating REAL,
     imdb_id          TEXT,
     tmdb_id          TEXT,
+    cast_list        TEXT,
+    crew_list        TEXT,
     image_tag        TEXT,
     synced_at        TEXT NOT NULL
 );

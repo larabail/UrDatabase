@@ -39,9 +39,9 @@ namespace UrDatabase.Services
                 insert.Transaction = tx;
                 insert.CommandText = @"
 INSERT INTO jellyfin_movies
-    (item_id, title, year, genres, overview, runtime_minutes, community_rating, imdb_id, tmdb_id, image_tag, synced_at)
+    (item_id, title, year, genres, overview, runtime_minutes, community_rating, imdb_id, tmdb_id, cast_list, crew_list, image_tag, synced_at)
 VALUES
-    (@item, @title, @year, @genres, @overview, @runtime, @rating, @imdb, @tmdb, @tag, @synced)
+    (@item, @title, @year, @genres, @overview, @runtime, @rating, @imdb, @tmdb, @cast, @crew, @tag, @synced)
 ON CONFLICT(item_id) DO UPDATE SET
     title            = excluded.title,
     year             = excluded.year,
@@ -51,6 +51,8 @@ ON CONFLICT(item_id) DO UPDATE SET
     community_rating = excluded.community_rating,
     imdb_id          = excluded.imdb_id,
     tmdb_id          = excluded.tmdb_id,
+    cast_list        = excluded.cast_list,
+    crew_list        = excluded.crew_list,
     image_tag        = excluded.image_tag,
     synced_at        = excluded.synced_at;";
 
@@ -63,6 +65,8 @@ ON CONFLICT(item_id) DO UPDATE SET
                 var rating = insert.Parameters.Add("@rating", SqliteType.Real);
                 var imdb = insert.Parameters.Add("@imdb", SqliteType.Text);
                 var tmdb = insert.Parameters.Add("@tmdb", SqliteType.Text);
+                var cast = insert.Parameters.Add("@cast", SqliteType.Text);
+                var crew = insert.Parameters.Add("@crew", SqliteType.Text);
                 var tag = insert.Parameters.Add("@tag", SqliteType.Text);
                 var synced = insert.Parameters.Add("@synced", SqliteType.Text);
 
@@ -79,6 +83,8 @@ ON CONFLICT(item_id) DO UPDATE SET
                     rating.Value = (object?)movie.CommunityRating ?? DBNull.Value;
                     imdb.Value = (object?)movie.ImdbId ?? DBNull.Value;
                     tmdb.Value = (object?)movie.TmdbId ?? DBNull.Value;
+                    cast.Value = JoinCredits(movie.Cast);
+                    crew.Value = JoinCredits(movie.Crew);
                     tag.Value = (object?)movie.ImageTag ?? DBNull.Value;
                     synced.Value = now;
 
@@ -97,7 +103,7 @@ ON CONFLICT(item_id) DO UPDATE SET
 
             using var cmd = conn.CreateCommand();
             cmd.CommandText = @"
-SELECT item_id, title, year, genres, overview, runtime_minutes, community_rating, imdb_id, tmdb_id, image_tag
+SELECT item_id, title, year, genres, overview, runtime_minutes, community_rating, imdb_id, tmdb_id, cast_list, crew_list, image_tag
 FROM jellyfin_movies
 ORDER BY COALESCE(year, 0) DESC, title";
 
@@ -115,12 +121,31 @@ ORDER BY COALESCE(year, 0) DESC, title";
                     CommunityRating = reader.IsDBNull(6) ? null : reader.GetDouble(6),
                     ImdbId = reader.IsDBNull(7) ? null : reader.GetString(7),
                     TmdbId = reader.IsDBNull(8) ? null : reader.GetString(8),
-                    ImageTag = reader.IsDBNull(9) ? null : reader.GetString(9)
+                    Cast = SplitCredits(reader.IsDBNull(9) ? null : reader.GetString(9)),
+                    Crew = SplitCredits(reader.IsDBNull(10) ? null : reader.GetString(10)),
+                    ImageTag = reader.IsDBNull(11) ? null : reader.GetString(11)
                 });
             }
 
             return movies;
         }
+
+        /// <summary>
+        /// Credits are stored one per line. They are only ever read back whole, for one film, to
+        /// be printed, so a table of people would buy nothing and cost a join.
+        /// </summary>
+        internal static string JoinCredits(IEnumerable<string>? credits)
+            => credits is null
+                ? ""
+                : string.Join("\n", credits.Where(c => !string.IsNullOrWhiteSpace(c)).Select(c => c.Trim()));
+
+        internal static List<string> SplitCredits(string? stored)
+            => string.IsNullOrWhiteSpace(stored)
+                ? new List<string>()
+                : stored.Split('\n', StringSplitOptions.RemoveEmptyEntries)
+                        .Select(c => c.Trim())
+                        .Where(c => c.Length > 0)
+                        .ToList();
 
         /// <summary>When the cache was last written, or null when nothing has ever synced.</summary>
         public static DateTime? LastSyncedUtc(SqliteConnection conn)
