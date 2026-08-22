@@ -17,10 +17,17 @@ Permitted without asking:
     every visitor of a public repository, which cannot be revoked here.
   - Running the software locally for the sole purpose of evaluating it or
     preparing a contribution to this repository.
+  - Downloading a build published by the copyright holder and running it,
+    indefinitely, for your own personal and non-commercial use. Cataloguing
+    your own film collection with it needs no permission and no agreement.
 
-Anything else -- shipping it, hosting it, publishing a derivative, or reusing
-its code in another project -- requires written permission from the copyright
-holder first. Ask.
+That last permission is about the person running the app, and nothing further.
+It does not allow passing a build on to anyone else, modified or not, and it
+does not allow use in or for a business.
+
+Anything else -- redistributing it, hosting it as a service, using it
+commercially, publishing a derivative, or reusing its code in another project
+-- requires written permission from the copyright holder first. Ask.
 
 The name "UrDatabase", the application's icon, and its other artwork and
 branding are not covered by any of the above and may not be used without
