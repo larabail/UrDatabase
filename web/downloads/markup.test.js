@@ -150,6 +150,35 @@ describe('what the page says', () => {
   });
 });
 
+describe('the page as it is drawn', () => {
+  it('falls back to a system face for every webfont', () => {
+    // Three families come from Google Fonts, because the character of this
+    // page is the design rather than decoration on it. A blocked or failed
+    // request has to cost the page its voice and nothing else, and that only
+    // holds while every stack ends in a generic family the machine already
+    // has. Without it a blocked request leaves the whole page in the
+    // browser's default face, at sizes and spacing chosen for another one.
+    const stacks = [...html.matchAll(/--(?:disp|prose|mono):\s*([^;]+);/g)]
+      .map((match) => match[1].split(',').map((family) => family.trim()));
+
+    assert.equal(stacks.length, 3, 'expected a display, a prose and a mono stack');
+    for (const families of stacks) {
+      assert.match(families.at(-1), /^(?:serif|sans-serif|monospace)$/,
+        `${families[0]} ends in ${families.at(-1)}, which is not a generic family`);
+    }
+  });
+
+  it('gives the "Yours" stamp a card to sit on', () => {
+    // The stamp is positioned against its card rather than laid out in it,
+    // so the card is its containing block. Take the positioning off the card
+    // and the stamp flies to the corner of the page -- on a page that still
+    // looks finished, still passes every other test here, and now tells
+    // somebody the wrong thing about which build is theirs.
+    assert.match(html, /\.card\s*\{[^}]*position:\s*relative/,
+      'the .badge stamp is absolutely positioned and .card no longer contains it');
+  });
+});
+
 describe('the page as a document', () => {
   it('is one well formed page with a single h1', () => {
     assert.ok(html.includes('<html lang="en">'));
