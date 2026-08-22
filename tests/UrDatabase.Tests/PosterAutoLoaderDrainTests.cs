@@ -64,8 +64,38 @@ namespace UrDatabase.Tests
             return conn.QuerySingleOrDefault<string?>("SELECT poster_path FROM movies WHERE id=@id", new { id });
         }
 
-        private static string SearchResult(int tmdbId = 550) =>
-            $@"{{ ""results"": [ {{ ""id"": {tmdbId}, ""poster_path"": ""/poster.jpg"" }} ] }}";
+        /// <summary>
+        /// A TMDB search response for whatever film was asked about.
+        /// </summary>
+        /// <remarks>
+        /// It echoes the title out of the query rather than returning a fixed one, because a
+        /// result whose title does not agree with the catalogued film is refused by
+        /// <see cref="TmdbMatch"/> — deliberately, since that is how another film's poster used to
+        /// end up on a card. A fixed title here would have every one of these tests asserting on a
+        /// poster the loader was right not to store, and they are about draining the queue at
+        /// shutdown rather than about matching.
+        /// </remarks>
+        private static Func<HttpRequestMessage, string> SearchResult(int tmdbId = 550) =>
+            request =>
+            {
+                var title = QueriedTitle(request);
+                return $@"{{ ""results"": [ {{ ""id"": {tmdbId}, ""title"": ""{title}"", ""release_date"": ""1999-05-01"", ""poster_path"": ""/poster.jpg"" }} ] }}";
+            };
+
+        /// <summary>The <c>query</c> parameter TMDB was asked about, decoded.</summary>
+        private static string QueriedTitle(HttpRequestMessage request)
+        {
+            foreach (var pair in (request.RequestUri?.Query ?? "").TrimStart('?').Split('&'))
+            {
+                var split = pair.IndexOf('=');
+                if (split <= 0) continue;
+                if (pair[..split] != "query") continue;
+
+                return Uri.UnescapeDataString(pair[(split + 1)..].Replace('+', ' '));
+            }
+
+            return "";
+        }
 
         // ---------- the queue ----------
 
@@ -287,7 +317,7 @@ namespace UrDatabase.Tests
         /// </summary>
         private sealed class GatedHandler : HttpMessageHandler
         {
-            private readonly string _json;
+            private readonly Func<HttpRequestMessage, string> _json;
             private readonly bool _honourCancellation;
             private readonly TaskCompletionSource _entered = new(TaskCreationOptions.RunContinuationsAsynchronously);
             private readonly TaskCompletionSource _released = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -298,7 +328,7 @@ namespace UrDatabase.Tests
             /// Whether a cancelled token cuts the wait short. False makes a fetch that ignores
             /// the deadline, which is how the timeout is tested; true is the ordinary case.
             /// </param>
-            public GatedHandler(string json, bool honourCancellation = false)
+            public GatedHandler(Func<HttpRequestMessage, string> json, bool honourCancellation = false)
             {
                 _json = json;
                 _honourCancellation = honourCancellation;
@@ -324,7 +354,7 @@ namespace UrDatabase.Tests
 
                 return new HttpResponseMessage(HttpStatusCode.OK)
                 {
-                    Content = new StringContent(_json, System.Text.Encoding.UTF8, "application/json")
+                    Content = new StringContent(_json(request), System.Text.Encoding.UTF8, "application/json")
                 };
             }
 

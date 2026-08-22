@@ -18,7 +18,11 @@ CREATE TABLE IF NOT EXISTS movies (
     title       TEXT    NOT NULL,
     year        INTEGER,
     genres      TEXT,
-    poster_path TEXT
+    poster_path TEXT,
+    -- Which TMDB film this is. Written by the automatic match and overwritten when somebody
+    -- corrects it, so the plot, cast and artwork all describe the same film and a correction is
+    -- not re-derived away the next time the film is opened.
+    tmdb_id     INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS files (

@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using UrDatabase.Services;
 using Xunit;
 
@@ -116,6 +117,112 @@ namespace UrDatabase.Tests
 
             Assert.Equal("", job);
             Assert.Equal("", name);
+        }
+
+        // ---------- building the lines in the first place ----------
+        //
+        // The building used to sit in the main window's code-behind, out of reach of any test.
+        // Correcting a wrong TMDB match needs the same lines built a second time, which is what
+        // brought it in here beside the splitting.
+
+        private static TmdbService.TmdbCredits Credits(
+            IEnumerable<(string Name, string? Character)>? cast = null,
+            IEnumerable<(string Name, string? Job)>? crew = null)
+        {
+            var credits = new TmdbService.TmdbCredits();
+
+            foreach (var (name, character) in cast ?? new List<(string, string?)>())
+                credits.Cast.Add(new TmdbService.TmdbCast { Name = name, Character = character });
+
+            foreach (var (name, job) in crew ?? new List<(string, string?)>())
+                credits.Crew.Add(new TmdbService.TmdbCrew { Name = name, Job = job });
+
+            return credits;
+        }
+
+        [Fact]
+        public void An_actor_is_built_with_the_part_they_played_and_without_it_when_tmdb_has_none()
+        {
+            var lines = CreditLine.Cast(Credits(cast: new[]
+            {
+                ("Edward Norton", (string?)"The Narrator"),
+                ("Somebody Else", null)
+            }));
+
+            Assert.Equal(new[] { "Edward Norton (The Narrator)", "Somebody Else" }, lines);
+        }
+
+        [Fact]
+        public void The_cast_is_cut_off_before_it_becomes_a_list_of_extras()
+        {
+            var cast = new List<(string, string?)>();
+            for (var i = 0; i < 40; i++) cast.Add(($"Actor {i}", null));
+
+            Assert.Equal(CreditLine.MaxCast, CreditLine.Cast(Credits(cast: cast)).Count);
+        }
+
+        [Fact]
+        public void Directors_come_first_and_writers_are_found_under_every_job_that_names_one()
+        {
+            var lines = CreditLine.Crew(Credits(crew: new[]
+            {
+                ("A Writer", (string?)"Writer"),
+                ("David Fincher", "Director"),
+                ("A Screenwriter", "Screenplay Writer"),
+                ("A Composer", "Original Music Composer"),
+                ("Nobody", null)
+            }));
+
+            Assert.Equal(new[] { "Director: David Fincher", "Writer: A Writer", "Writer: A Screenwriter" }, lines);
+        }
+
+        [Fact]
+        public void No_credits_at_all_is_an_empty_list_rather_than_a_failure()
+        {
+            Assert.Empty(CreditLine.Cast(null));
+            Assert.Empty(CreditLine.Crew(null));
+            Assert.Equal("", CreditLine.Genres(null));
+        }
+
+        [Fact]
+        public void Genres_are_joined_for_display_and_blank_ones_dropped()
+        {
+            var details = new TmdbService.TmdbDetails
+            {
+                Genres = new List<TmdbService.TmdbGenre>
+                {
+                    new() { Name = "Drama" },
+                    new() { Name = "" },
+                    new() { Name = "Comedy" }
+                }
+            };
+
+            Assert.Equal("Drama, Comedy", CreditLine.Genres(details));
+        }
+
+        /// <summary>
+        /// What the details screen actually does with a built line. Building and splitting are
+        /// each other's inverse here, and a change to one that quietly breaks the other would
+        /// otherwise only show up as a blank name on screen.
+        /// </summary>
+        [Fact]
+        public void A_built_cast_line_splits_back_into_the_halves_it_was_built_from()
+        {
+            var line = Assert.Single(CreditLine.Cast(Credits(cast: new[] { ("Keir Dullea", (string?)"Dave Bowman") })));
+            var (name, character) = CreditLine.SplitCast(line);
+
+            Assert.Equal("Keir Dullea", name);
+            Assert.Equal("Dave Bowman", character);
+        }
+
+        [Fact]
+        public void A_built_crew_line_splits_back_into_the_halves_it_was_built_from()
+        {
+            var line = Assert.Single(CreditLine.Crew(Credits(crew: new[] { ("Stanley Kubrick", (string?)"Director") })));
+            var (job, name) = CreditLine.SplitCrew(line);
+
+            Assert.Equal("Director", job);
+            Assert.Equal("Stanley Kubrick", name);
         }
     }
 }

@@ -16,6 +16,16 @@ namespace UrDatabase.Models
         public string? BackdropUrl { get; set; }     // URL for big backdrop
 
         /// <summary>
+        /// Which TMDB film this is, when the catalogue has been told. Null for a film nothing has
+        /// identified yet, and for anything from a Jellyfin server, which describes its own films.
+        ///
+        /// Stored so a corrected match survives being reopened. The identification used to be
+        /// re-derived from the title every time, which is what made a correction impossible to
+        /// keep.
+        /// </summary>
+        public int? TmdbId { get; set; }
+
+        /// <summary>
         /// The file Play would open, when there is one. Read
         /// <see cref="FileMatch"/> before acting on it: this is not always a file the catalogue
         /// vouches for.

@@ -113,6 +113,14 @@
                                 Height="34"
                                 Content="Link File…"
                                 Click="LinkFile_Click"/>
+                        <!-- The way out of a wrong TMDB match. Hidden for a server
+                             film, which the server describes and the catalogue does
+                             not own, so there is nothing here to correct. -->
+                        <Button x:Name="CorrectMatchButton"
+                                Classes="ghost"
+                                Height="34"
+                                Content="Wrong film?"
+                                Click="CorrectMatch_Click"/>
                     </StackPanel>
 
                     <StackPanel Grid.Column="2" HorizontalAlignment="Right">

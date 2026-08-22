@@ -391,6 +391,41 @@ VALUES (1, '/films/Ran (1985).mkv', 1234, '2020-01-01T00:00:00.0000000', '2020-0
             Assert.True(Database.ColumnExists(conn, "files", "last_seen_at"));
             Assert.True(Database.ColumnExists(conn, "files", "last_seen_scan_id"));
             Assert.True(Database.ColumnExists(conn, "files", "missing_since"));
+            Assert.True(Database.ColumnExists(conn, "movies", "tmdb_id"));
+        }
+
+        /// <summary>
+        /// Which TMDB film a catalogued one is. A library built before the column existed has to
+        /// gain it, or the details screen fails on "no such column" against a database the app has
+        /// just declared up to date — and the film it names has to still be there afterwards.
+        /// </summary>
+        [Fact]
+        public void An_existing_movies_table_gains_the_column_that_records_the_tmdb_match()
+        {
+            using (var old = new SqliteConnection($"Data Source={_dbPath}"))
+            {
+                old.Open();
+
+                using var cmd = old.CreateCommand();
+                cmd.CommandText = @"
+CREATE TABLE movies (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    title       TEXT NOT NULL,
+    year        INTEGER,
+    genres      TEXT,
+    poster_path TEXT
+);
+INSERT INTO movies (title, year, poster_path) VALUES ('El Drama', 2026, '/wrong.jpg');";
+                cmd.ExecuteNonQuery();
+            }
+
+            using var conn = Database.Open(_dbPath);
+
+            Assert.True(Database.ColumnExists(conn, "movies", "tmdb_id"));
+
+            using var read = conn.CreateCommand();
+            read.CommandText = "SELECT poster_path FROM movies WHERE id = 1";
+            Assert.Equal("/wrong.jpg", read.ExecuteScalar() as string);
         }
 
         /// <summary>
