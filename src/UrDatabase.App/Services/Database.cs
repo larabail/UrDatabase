@@ -19,12 +19,17 @@ namespace UrDatabase.Services
             var directory = Path.GetDirectoryName(Path.GetFullPath(dbPath));
             if (!string.IsNullOrEmpty(directory)) Directory.CreateDirectory(directory);
 
-            var conn = new SqliteConnection($"Data Source={dbPath};Cache=Shared");
+            // No shared cache, and WAL: under Cache=Shared SQLite takes table-level locks and
+            // returns "database table is locked" to a reader immediately, ignoring any busy
+            // timeout. A scan holds a write transaction, so the window would fail to read the
+            // library — and render it as empty — for as long as one was running. In WAL a reader
+            // sees the last committed snapshot instead and is never blocked by the writer.
+            var conn = new SqliteConnection($"Data Source={dbPath}");
             conn.Open();
 
             using (var pragma = conn.CreateCommand())
             {
-                pragma.CommandText = "PRAGMA foreign_keys=ON;";
+                pragma.CommandText = "PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000; PRAGMA journal_mode=WAL;";
                 pragma.ExecuteNonQuery();
             }
 

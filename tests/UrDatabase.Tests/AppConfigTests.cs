@@ -5,20 +5,24 @@ using Xunit;
 
 namespace UrDatabase.Tests
 {
+    [Collection(EnvironmentVariables.CollectionName)]
     public class AppConfigTests : IDisposable
     {
         private readonly string _dir;
+        private readonly EnvironmentVariableScope _environment;
 
         public AppConfigTests()
         {
             _dir = Path.Combine(Path.GetTempPath(), "urdb-cfg-" + Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(_dir);
-            Environment.SetEnvironmentVariable(PlatformPaths.TmdbApiKeyVariable, null);
+            _environment = new EnvironmentVariableScope(
+                PlatformPaths.TmdbApiKeyVariable,
+                PlatformPaths.OmdbApiKeyVariable);
         }
 
         public void Dispose()
         {
-            Environment.SetEnvironmentVariable(PlatformPaths.TmdbApiKeyVariable, null);
+            _environment.Dispose();
             try { Directory.Delete(_dir, recursive: true); } catch { }
         }
 
