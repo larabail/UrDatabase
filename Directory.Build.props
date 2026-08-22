@@ -1,7 +1,7 @@
 <Project>
   <!-- Single source of truth for the release version. CI reads this file. -->
   <PropertyGroup>
-    <Version>0.3.1</Version>
+    <Version>0.3.3</Version>
   </PropertyGroup>
 
   <PropertyGroup>
