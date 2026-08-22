@@ -337,9 +337,12 @@
 
             <!-- The hall. -->
             <Grid>
+                <!-- Margin on the content rather than padding on the scroller:
+                     a ScrollViewer will not scroll into its own bottom padding,
+                     so the last shelf was unreachable behind the status bar. -->
                 <ScrollViewer VerticalScrollBarVisibility="Auto"
-                              Padding="24,24,0,24">
-                    <StackPanel>
+                              Background="Transparent">
+                    <StackPanel Margin="24,24,0,24">
 
                         <!-- SEARCH RESULTS (flat) -->
                         <StackPanel x:Name="SearchPanel" IsVisible="False">

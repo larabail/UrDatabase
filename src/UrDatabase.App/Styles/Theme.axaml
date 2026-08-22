@@ -324,6 +324,11 @@
     <Style Selector="ScrollViewer.shelf">
         <Setter Property="HorizontalScrollBarVisibility" Value="Hidden"/>
         <Setter Property="VerticalScrollBarVisibility" Value="Disabled"/>
+        <!-- A null Background is not hit-testable in Avalonia, so a shelf with
+             no fill takes no pointer events and cannot be wheeled or dragged
+             except where a card happens to be under the cursor. Transparent
+             paints nothing and still takes the pointer. -->
+        <Setter Property="Background" Value="Transparent"/>
     </Style>
 
 </Styles>

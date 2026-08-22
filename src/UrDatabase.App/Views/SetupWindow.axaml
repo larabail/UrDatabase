@@ -18,6 +18,9 @@
 
     <Window.Styles>
         <Style Selector="Border.panel">
+            <!-- Same reason: an unfilled panel does not take pointer events, so
+                 the wheel did nothing over the largest areas of the screen. -->
+            <Setter Property="Background" Value="Transparent"/>
             <Setter Property="BorderBrush" Value="{DynamicResource EdgeBrush}"/>
             <Setter Property="BorderThickness" Value="1"/>
             <Setter Property="CornerRadius" Value="{DynamicResource RadiusMedium}"/>
@@ -85,8 +88,21 @@
             </StackPanel>
         </Border>
 
-        <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="0,32">
-            <StackPanel MaxWidth="720" HorizontalAlignment="Center">
+        <!-- The breathing room is a margin on the content, not padding on the
+             scroller. A ScrollViewer's bottom padding is not part of what it
+             will scroll to, so the last panel stayed jammed under the docked
+             save bar with no way to reach it — on this window that meant the
+             two API key fields could not be seen, let alone typed into. -->
+        <!-- Transparent, not unset. A control with a null Background is not
+             hit-testable in Avalonia, so the wheel found nothing to scroll
+             across most of this window and the pane appeared to stop short of
+             its own last field. Transparent paints nothing and still takes the
+             pointer. -->
+        <ScrollViewer VerticalScrollBarVisibility="Auto"
+                      Background="Transparent">
+            <StackPanel MaxWidth="720"
+                        HorizontalAlignment="Center"
+                        Margin="0,32">
 
                 <TextBlock x:Name="HeadingText"
                            Classes="display"

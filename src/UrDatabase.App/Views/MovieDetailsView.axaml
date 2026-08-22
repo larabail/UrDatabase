@@ -216,7 +216,11 @@
                             BorderBrush="{StaticResource EdgeBrush}"
                             BorderThickness="0,0,0,1"
                             Padding="0,0,0,12">
+                        <!-- Transparent so the wheel has something to land on:
+                             a long plot could not otherwise be scrolled except
+                             with the cursor exactly over its text. -->
                         <ScrollViewer VerticalScrollBarVisibility="Auto"
+                                      Background="Transparent"
                                       Padding="0,0,16,0">
                             <TextBlock x:Name="OverviewText"
                                        Classes="body"
