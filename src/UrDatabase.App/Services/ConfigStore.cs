@@ -9,44 +9,53 @@ namespace UrDatabase.Services
     /// <summary>
     /// Where <c>appsettings.json</c> is read from and written to.
     ///
-    /// Reading has always looked next to the binary, and it still does first, so an install that
-    /// was configured by hand keeps behaving exactly as it did. The user's application data
-    /// directory is a second candidate for the one case that file cannot cover: an app dropped
-    /// somewhere the user may not write to, where the setup screen would otherwise have nowhere
-    /// to put an answer. It is deliberately the lower priority of the two — a person who edited
-    /// the documented file should never be quietly overruled by one they have never seen.
+    /// The user's application data directory comes first, because it is the only location that
+    /// exists on every install and can always be written to. Next to the executable is second: on
+    /// an installed macOS app that directory is inside a signed, notarized bundle, where writing
+    /// anything invalidates the signature and stops the app launching, and where an update throws
+    /// the file away regardless. Nothing here ever writes into a bundle.
+    ///
+    /// A file next to the executable is still read, and still wins over a per-user file that is
+    /// nothing but an untouched copy of the template, so a portable install and a build tree both
+    /// keep behaving as they did.
     /// </summary>
     public static class ConfigStore
     {
-        /// <summary>The documented location: alongside the executable.</summary>
+        /// <summary>Next to the executable: a build tree, or a portable install.</summary>
         public static string PortablePath => Path.Combine(AppContext.BaseDirectory, AppConfig.FileName);
 
-        /// <summary>The fallback, used when the install directory is read-only.</summary>
+        /// <summary>The user's own, in the per-user data directory. Always writable.</summary>
         public static string UserPath => Path.Combine(PlatformPaths.AppDataRoot, AppConfig.FileName);
 
         /// <summary>The tracked template, which is never written to.</summary>
         public static string ExamplePath => Path.Combine(AppContext.BaseDirectory, AppConfig.ExampleFileName);
 
         /// <summary>Every file <see cref="AppConfig.Load"/> will try, in order.</summary>
-        public static IReadOnlyList<string> ReadOrder => new[] { PortablePath, UserPath, ExamplePath };
+        public static IReadOnlyList<string> ReadOrder =>
+            AppConfig.CandidatePaths(null, PlatformPaths.AppDataRoot, AppContext.BaseDirectory);
 
         /// <summary>
         /// The configuration file this install actually has, or null when it has never been
         /// configured. The shipped example does not count: it is the same on every machine and
-        /// says nothing about what this user chose.
+        /// says nothing about what this user chose. Neither does an untouched copy of it in the
+        /// user's directory, which the app itself put there on first run.
         /// </summary>
         public static string? ExistingPath =>
-            new[] { PortablePath, UserPath }.FirstOrDefault(SafeExists);
+            ReadOrder.FirstOrDefault(path =>
+                !PathsMatch(path, ExamplePath) &&
+                SafeExists(path) &&
+                !(PathsMatch(path, UserPath) && AppConfig.IsUntouchedTemplate(path, ExamplePath)));
 
         /// <summary>True once the user has a configuration file of their own.</summary>
         public static bool IsConfigured => ExistingPath is not null;
 
         /// <summary>
         /// Where a save would land. Prefers the file that already exists, so saving twice never
-        /// leaves two configurations behind with only one of them being read.
+        /// leaves two configurations behind with only one of them being read, and never chooses
+        /// somewhere inside an application bundle however writable that looks.
         /// </summary>
         public static string SavePath =>
-            ChooseSavePath(PortablePath, UserPath, SafeExists, DirectoryAcceptsWrites);
+            ChooseSavePath(PortablePath, UserPath, SafeExists, AcceptsConfiguration);
 
         internal static string ChooseSavePath(
             string portablePath,
@@ -61,6 +70,29 @@ namespace UrDatabase.Services
             if (directoryAcceptsWrites(portableDirectory)) return portablePath;
 
             return userPath;
+        }
+
+        /// <summary>
+        /// A directory this app is willing to put configuration in: writable, and not inside a
+        /// macOS application bundle. A bundle usually passes the write test — it is owned by the
+        /// user who installed it — and writing there anyway is what breaks the code signature.
+        /// </summary>
+        internal static bool AcceptsConfiguration(string directory) =>
+            !IsInsideApplicationBundle(directory) && DirectoryAcceptsWrites(directory);
+
+        /// <summary>
+        /// Whether a path sits inside a <c>.app</c>. Matched on the path rather than the platform
+        /// because a bundle can be inspected from anywhere, and the answer must not depend on
+        /// which machine is asking.
+        /// </summary>
+        internal static bool IsInsideApplicationBundle(string? path)
+        {
+            if (string.IsNullOrWhiteSpace(path)) return false;
+
+            var normalized = path.Replace('\\', '/').TrimEnd('/');
+
+            return normalized.Contains(".app/Contents/", StringComparison.OrdinalIgnoreCase) ||
+                   normalized.EndsWith(".app/Contents", StringComparison.OrdinalIgnoreCase);
         }
 
         /// <summary>

@@ -73,6 +73,46 @@ namespace UrDatabase.Tests
             Assert.Equal("", JellyfinSettings.NormalizeServerUrl(input));
         }
 
+        [Theory]
+        [InlineData("media-box", "http://media-box")]
+        [InlineData("192.168.1.10", "http://192.168.1.10")]
+        [InlineData("media.invalid:8096", "http://media.invalid:8096")]
+        [InlineData("//media.invalid:8096", "http://media.invalid:8096")]
+        [InlineData("HTTP://media.invalid:8096", "http://media.invalid:8096")]
+        [InlineData("\"http://media.invalid:8096\"", "http://media.invalid:8096")]
+        [InlineData("http://media.invalid:8096///", "http://media.invalid:8096")]
+        public void An_address_typed_the_way_people_type_it_is_understood(string input, string expected)
+        {
+            Assert.Equal(expected, JellyfinSettings.NormalizeServerUrl(input));
+        }
+
+        [Theory]
+        [InlineData("http://media.invalid:80", "http://media.invalid:80")]
+        [InlineData("https://media.invalid:443/", "https://media.invalid:443")]
+        [InlineData("http://192.168.1.10:8920", "http://192.168.1.10:8920")]
+        public void An_explicit_port_survives_even_when_it_is_the_default_one(string input, string expected)
+        {
+            // A reverse proxy is reached on port 80 at a hostname. Rebuilding the address through
+            // Uri would drop the port as redundant, and the app would then be asking for something
+            // subtly different from what the user tested in a browser.
+            Assert.Equal(expected, JellyfinSettings.NormalizeServerUrl(input));
+        }
+
+        [Theory]
+        [InlineData("http://")]
+        [InlineData("http://:8096")]
+        [InlineData("http://media.invalid:not-a-port")]
+        public void An_address_with_no_usable_host_switches_the_feature_off(string input)
+        {
+            Assert.Equal("", JellyfinSettings.NormalizeServerUrl(input));
+        }
+
+        [Fact]
+        public void A_path_prefix_is_kept_because_a_proxy_may_need_it()
+        {
+            Assert.Equal("http://media.invalid/jellyfin", JellyfinSettings.NormalizeServerUrl("media.invalid/jellyfin/"));
+        }
+
         [Fact]
         public void A_username_and_password_use_the_user_sign_in()
         {

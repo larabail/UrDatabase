@@ -124,9 +124,37 @@ and whether there is a Jellyfin server — writes the answers to
 whenever you want to change something. What follows is what that file contains,
 for anyone who would rather edit it directly.
 
-Settings live next to the built app in `appsettings.json`. The file is
-gitignored, because it holds your API keys and the absolute paths to your own
-film folders. Copy the template and edit it:
+Settings live in `appsettings.json` in the app's own data directory, beside the
+database, the poster cache and the logs:
+
+| Platform | Where |
+| --- | --- |
+| macOS | `~/Library/Application Support/UrDatabase/appsettings.json` |
+| Windows | `%APPDATA%\UrDatabase\appsettings.json` |
+
+The app also puts a copy of the shipped template there on first run, so
+configuring it by hand means editing a file that already exists.
+
+Nothing is ever written inside `UrDatabase.app`. That bundle is signed and
+notarized: a file written next to the executable breaks the seal, and macOS then
+refuses to launch the app at all — so settings have to live somewhere writable
+that also survives an update. Editing anything inside `UrDatabase.app` is never
+the answer, and if you already have, reinstall from the DMG.
+
+Configuration is read from the first of these that exists:
+
+1. `<app data>/UrDatabase/appsettings.json` — yours, and where the setup screen saves
+2. `appsettings.json` next to the executable — a build tree, or a portable install
+3. `appsettings.example.json` next to the executable — the shipped template
+
+Running from source is unaffected. A local `src/UrDatabase.App/appsettings.json`
+is gitignored, is read and saved in place, and stops the per-user copy being
+created at all. If one was created already — you ran the app before writing
+yours — an untouched copy of the template does not outrank your file, and does
+not count as this install having been configured either. Edit the per-user file
+and it goes back to winning, everywhere.
+
+To configure a checkout by hand:
 
 ```bash
 cp src/UrDatabase.App/appsettings.example.json src/UrDatabase.App/appsettings.json
@@ -146,8 +174,9 @@ cp src/UrDatabase.App/appsettings.example.json src/UrDatabase.App/appsettings.js
 
 Paths may contain environment variables and are expanded on load, so
 `%APPDATA%\UrDatabase\movies.db` works on Windows. The application data
-directory .NET reports is `%APPDATA%` on Windows and `~/.config` on macOS, so a
-configuration file written on one is not portable to the other.
+directory .NET reports is `%APPDATA%` on Windows and
+`~/Library/Application Support` on macOS, so a configuration file written on one
+is not portable to the other.
 
 ### Where the file lives
 
@@ -260,6 +289,31 @@ option.
 Nothing is discovered automatically. Jellyfin's UDP discovery is off in many
 deployments, including behind a reverse proxy, so the address is something you
 type once rather than something the app guesses at.
+
+#### When it will not connect
+
+Five things can go wrong reaching a server, and the app names which one it hit
+rather than reporting a single "could not reach the server" for all of them:
+
+| What the app says | What happened | What to do |
+| --- | --- | --- |
+| the name could not be resolved | The address never got as far as being contacted | Use the server's IP address. A Tailscale, VPN or router-local name can work in your browser and still not resolve for the app |
+| refused the connection | The machine is there and nothing is listening on that port | Check Jellyfin is running, and check the port — it is `8096` unless somebody changed it |
+| did not answer in time | Neither refused nor completed | Usually a firewall dropping the connection, or a network this machine cannot currently see |
+| does not look like Jellyfin | Something answered, but not Jellyfin | You have reached a reverse proxy that routes by hostname, and an address it does not recognise lands on the wrong site. Try `http://<address>:8096` directly |
+| rejected the credentials | Jellyfin answered and said no | Check the username and password, or the API key |
+
+The first and fourth are the ones that waste an evening, because in both cases
+the address is genuinely correct in a browser. The **Test** button in setup says
+the same thing before you save, and after any failed sync the app asks the
+server to identify itself on `/System/Info/Public` and writes the verdict to
+`logs/jellyfin.log` in its data directory — so the answer is on disk even for
+the startup sync that never shows a dialog. Credentials are redacted out of that
+file, including one written into the address itself.
+
+An address is taken as typed: a bare host gets `http://`, a trailing slash is
+dropped, and a port or a path prefix you wrote is left exactly as it is, because
+a proxy may need either.
 
 Once configured, **Sync Jellyfin** appears next to the scan button. The app also
 syncs quietly at startup, after the window has already painted from the cache,
@@ -394,7 +448,8 @@ src/UrDatabase.App/          the application: one cross-platform project
   Services/                  config, SQLite, scanning, TMDB, OMDb, Jellyfin, posters
   Assets/UrDatabase.icns     the macOS application icon
   Data/schema.sql            the full schema, applied on first launch
-  appsettings.example.json   configuration template; the real file is ignored
+  appsettings.example.json   configuration template, copied to the user's data
+                             directory on first run; the real file is ignored
   UrDatabase.App.entitlements  hardened runtime exceptions the .NET JIT needs
 tests/UrDatabase.Tests/      xUnit suite
 tool/                        Python helpers with their own unittest suite:

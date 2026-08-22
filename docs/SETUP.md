@@ -25,10 +25,45 @@ opens a setup screen that writes `appsettings.json` for you — folders on this 
 server, or both, plus the two optional API keys — and the **Settings** button reopens it later.
 Everything below is the same file, for anyone editing it directly.
 
-Copy `src/UrDatabase.App/appsettings.example.json` to `src/UrDatabase.App/appsettings.json` and
-edit it. That file is gitignored, so your key and your folders can never be committed. A file you
-write by hand takes precedence over anything setup saved, and its presence is also what tells the
-app it has been configured already, so setup does not appear.
+Settings live in `appsettings.json` in the app's own data directory, which is where the setup
+screen writes it:
+
+| Platform | Where |
+| --- | --- |
+| macOS | `~/Library/Application Support/UrDatabase/appsettings.json` |
+| Windows | `%APPDATA%\UrDatabase\appsettings.json` |
+
+The app also puts a copy of `appsettings.example.json` there on first run, so there is a real
+file to edit rather than a path to create. It sits beside the database, the poster cache and the
+logs, and it survives an update.
+
+**Never put configuration inside an installed `UrDatabase.app`.** The bundle is signed and
+notarized; a file written next to the executable breaks the code signature and macOS then
+refuses to launch it, and the next update discards it anyway. Nothing in the app writes there
+either — a save always lands somewhere writable outside the bundle.
+
+Working from a checkout is different, and unchanged. Copy the example next to the binary and it
+is read, edited and saved there:
+
+```bash
+cp src/UrDatabase.App/appsettings.example.json src/UrDatabase.App/appsettings.json
+```
+
+That file is gitignored, so your key and your folders can never be committed, its presence stops
+a per-user copy being created at all, and it is what tells the app it has been configured
+already, so setup does not appear.
+
+Configuration is read from the first of these that exists:
+
+1. a path passed to `AppConfig.Load` outright — only tests do this
+2. `<app data>/UrDatabase/appsettings.json` — the user's own
+3. `appsettings.json` next to the executable — a build tree, or a portable install
+4. `appsettings.example.json` next to the executable — the shipped template
+
+With one exception, for the case of running the app once and writing a local config afterwards:
+a per-user file that is still a byte-for-byte copy of the template records no decision, so it
+drops below a file written next to the executable — and does not count as this install having
+been configured. Editing it at all restores it to the top.
 
 | Setting | Meaning | Default when blank |
 | --- | --- | --- |
@@ -40,9 +75,11 @@ app it has been configured already, so setup does not appear.
 | `DownloadPosters` | Cache posters to disk instead of loading them from TMDB | `false` |
 | `TmdbImageSize` | TMDB image size, e.g. `w185`, `w342`, `w500`, `original` | `w342` |
 | `SetupCompleted` | Written by the setup screen once answered; stops it being offered again | `false` |
+| `Jellyfin` | An optional server to browse; blank switches the feature off | off |
 
-`<app data>` is `%APPDATA%` on Windows and `~/.config` on macOS. Paths may use `%APPDATA%`,
-`%USERPROFILE%` or a leading `~`; a config file written on Windows still resolves on macOS.
+`<app data>` is `%APPDATA%` on Windows and `~/Library/Application Support` on macOS. Paths may
+use `%APPDATA%`, `%USERPROFILE%` or a leading `~`; a config file written on Windows still
+resolves on macOS.
 
 ## 4) API keys
 
@@ -51,7 +88,7 @@ browses your library — it simply shows no posters and no rating.
 
 Keys resolve **most specific first**:
 
-1. `appsettings.json`
+1. whichever `appsettings.json` was loaded, per the order above
 2. the `URDATABASE_TMDB_API_KEY` / `URDATABASE_OMDB_API_KEY` environment variables
 3. whatever was compiled in at build time
 

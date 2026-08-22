@@ -376,6 +376,11 @@ ORDER BY rank";
             {
                 AppLog.Write("jellyfin.log", JellyfinClient.Redact($"sync failed: {ex.Message}"));
 
+                // Deliberately not awaited. It is one more request against a server that has just
+                // failed to answer, and on the timeout case that is another fifteen seconds; the
+                // person is owed the message they already have now, not after a second wait.
+                _ = LogConnectionDiagnosticAsync();
+
                 var cached = _remoteMovies.Count;
                 SetStatus(cached > 0
                     ? $"{ex.Message} Showing the {cached} films from the last sync."
@@ -396,6 +401,41 @@ ORDER BY rank";
             {
                 _syncing = false;
                 if (JellyfinButton is not null) JellyfinButton.IsEnabled = true;
+            }
+        }
+
+        /// <summary>
+        /// After a failed sync, asks the server to identify itself and writes what came back to
+        /// the log. One extra request, only ever on the failure path, and it is the difference
+        /// between a log that says the server could not be reached and one that says the name did
+        /// not resolve, the port refused the connection, or something answered that is not
+        /// Jellyfin. Failing to diagnose a failure must not itself raise anything.
+        /// </summary>
+        private async Task LogConnectionDiagnosticAsync()
+        {
+            if (_jellyfin is null) return;
+
+            // Its own deadline. A server that is dropping connections would otherwise hold this
+            // for the client's full timeout, long after anybody stopped caring.
+            using var deadline = CancellationTokenSource.CreateLinkedTokenSource(_cts.Token);
+            deadline.CancelAfter(TimeSpan.FromSeconds(6));
+
+            try
+            {
+                var report = await _jellyfin.TestConnectionAsync(deadline.Token);
+                AppLog.Write("jellyfin.log", JellyfinClient.Redact($"connection test: {report}"));
+            }
+            catch (OperationCanceledException) when (_cts.IsCancellationRequested)
+            {
+                // The window is closing.
+            }
+            catch (OperationCanceledException)
+            {
+                AppLog.Write("jellyfin.log", "connection test: no answer within six seconds.");
+            }
+            catch (Exception ex)
+            {
+                AppLog.Write("jellyfin.log", JellyfinClient.Redact($"connection test failed: {ex.Message}"));
             }
         }
 
