@@ -52,5 +52,15 @@ namespace UrDatabase.Models
         /// repository has already shipped one bug from labelling one service's number as another's.
         /// </summary>
         public double? CommunityRating { get; set; }
+
+        /// <summary>
+        /// Whether a TMDB key was available when this film was opened.
+        /// </summary>
+        /// <remarks>
+        /// Carried so the screen can tell the truth about an empty plot or an empty cast. Both
+        /// keys are optional and an install with neither is entirely supported, so "none found"
+        /// is the wrong sentence for by far the commonest case: nothing was ever asked.
+        /// </remarks>
+        public bool TmdbConfigured { get; set; }
     }
 }
