@@ -54,6 +54,12 @@ namespace UrDatabase.Services
         /// Keyed by what SQLite says it opened rather than by the path a caller asked for, so a
         /// relative path and an absolute one cannot end up queueing in two different lanes and
         /// believing they are serialised.
+        ///
+        /// Never evicted, deliberately. An entry is one SemaphoreSlim per catalogue file ever
+        /// opened, which for an app that has one is nothing; evicting would mean knowing that no
+        /// writer is between taking a lane and releasing it, and that is the very thing the lane
+        /// exists to arbitrate. A test suite that opens hundreds of temporary databases leaks one
+        /// small object each, for the life of the process.
         /// </summary>
         private static readonly ConcurrentDictionary<string, SemaphoreSlim> Lanes =
             new(StringComparer.Ordinal);
