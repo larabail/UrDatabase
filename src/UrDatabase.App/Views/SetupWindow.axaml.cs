@@ -78,6 +78,12 @@ namespace UrDatabase.Views
 
             var resolved = AppConfig.Load();
 
+            // Read from _stored rather than from resolved: this is about the file in front of
+            // the user, and resolved may have come from a different one entirely.
+            var unrecognised = ConfigDiagnostics.Summarize(_stored.UnknownSettings, _stored.SourcePath);
+            ConfigWarningText.Text = unrecognised ?? "";
+            ConfigWarningPanel.IsVisible = unrecognised is not null;
+
             KeyNoteText.Text = DescribeKeys(resolved);
             PlayerNoteText.Text = DescribePlayer();
             SavePathText.Text =

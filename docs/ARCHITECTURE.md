@@ -50,6 +50,7 @@ Avalonia replaces WPF. The differences that mattered during the port:
 | --- | --- |
 | `AppConfig` | Loads settings from the per-user data directory, resolves API keys, applies platform defaults. Never throws. |
 | `ConfigStore` | Where `appsettings.json` is read from and written to. Never writes inside an app bundle, and refuses to save a resolved config. |
+| `ConfigDiagnostics` | Names keys in the settings file that are not settings, and what each was probably meant to be. Reports them; never rejects the file. |
 | `FirstRun` | Whether this launch has never been configured, and so whether to offer setup. |
 | `JellyfinDiagnostics` | Names which of five connection failures happened, and what to try about it. |
 | `PlatformPaths` | Every filesystem location, resolved per platform. Expands `%APPDATA%` and `~`. |

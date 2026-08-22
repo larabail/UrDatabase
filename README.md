@@ -226,6 +226,23 @@ directory .NET reports is `%APPDATA%` on Windows and
 `~/Library/Application Support` on macOS, so a configuration file written on one
 is not portable to the other.
 
+Spell one of those keys wrong and the app says so. `"Url"` where the Jellyfin
+setting is `ServerUrl` used to deserialise to nothing and start a perfectly
+normal-looking app with an empty library and no explanation; now the status line
+under the library names the key and what it was probably meant to be, the setup
+screen repeats it — that being where somebody is likely to be fixing it — and
+the same lines go to `startup.log`:
+
+```
+appsettings.json: unknown setting "Jellyfin.Url" — did you mean "ServerUrl"?
+```
+
+Saying so is all it does. The key is still ignored and the app still starts, so
+a file written by a newer version cannot stop an older one from launching. A
+file with no keys in it, or none at all, is not a problem and produces nothing:
+a fresh install starts silently. Malformed JSON is a separate matter and is
+still silent — see [issue #25](https://github.com/larabail/UrDatabase/issues/25).
+
 ### Where the file lives
 
 The app reads `appsettings.json` from beside the executable, then from

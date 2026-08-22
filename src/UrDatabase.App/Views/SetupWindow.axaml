@@ -114,6 +114,19 @@
                            Margin="0,8,0,28"
                            Text="Tell it where your films are. You can use folders on this computer, a Jellyfin server, or both."/>
 
+                <!-- Hidden unless the settings file holds a key the app has no
+                     such thing as. This is the screen somebody opens to correct
+                     that, so it is the screen that has to say so. -->
+                <Border x:Name="ConfigWarningPanel"
+                        Classes="panel"
+                        IsVisible="False"
+                        Margin="0,0,0,28">
+                    <TextBlock x:Name="ConfigWarningText"
+                               Foreground="{StaticResource NoBrush}"
+                               FontSize="12"
+                               TextWrapping="Wrap"/>
+                </Border>
+
                 <!-- Local folders -->
                 <Border Classes="panel">
                     <StackPanel>

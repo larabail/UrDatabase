@@ -61,6 +61,18 @@ namespace UrDatabase.Services
         public string? SourcePath { get; set; }
 
         /// <summary>
+        /// Keys that were in the file and are not settings this app has. Always empty when there
+        /// was no file, or when the file it found parsed into nothing — an install that has never
+        /// been configured has nothing to be warned about.
+        ///
+        /// Collected rather than thrown on. A mistyped key must not stop the app starting, and a
+        /// file written by a newer version must not stop an older one; see
+        /// <see cref="ConfigDiagnostics"/>.
+        /// </summary>
+        [JsonIgnore]
+        public IReadOnlyList<UnknownSetting> UnknownSettings { get; internal set; } = Array.Empty<UnknownSetting>();
+
+        /// <summary>
         /// Loads configuration from the first location that has it, then layers the environment
         /// variables on top. Never throws: a missing or malformed file yields a usable config so
         /// the app still starts.
@@ -99,9 +111,15 @@ namespace UrDatabase.Services
         public static AppConfig ReadRaw(string? path = null)
         {
             var candidate = path ?? ConfigStore.ExistingPath;
-            var (config, _) = ReadFirst(candidate is null ? Array.Empty<string>() : new[] { candidate });
+            var (config, source) = ReadFirst(candidate is null ? Array.Empty<string>() : new[] { candidate });
 
-            return config ?? new AppConfig
+            if (config is not null)
+            {
+                config.SourcePath = source;
+                return config;
+            }
+
+            return new AppConfig
             {
                 DatabasePath = "",
                 PosterCacheDir = "",
@@ -125,7 +143,13 @@ namespace UrDatabase.Services
                             ReadCommentHandling = JsonCommentHandling.Skip,
                             AllowTrailingCommas = true
                         });
-                    if (parsed is not null) return (parsed, candidate);
+                    if (parsed is not null)
+                    {
+                        // The text is already in hand, and this is the file that won: inspecting
+                        // any of the others would name keys from a file nobody is reading.
+                        parsed.UnknownSettings = ConfigDiagnostics.Inspect(json);
+                        return (parsed, candidate);
+                    }
                 }
                 catch
                 {
