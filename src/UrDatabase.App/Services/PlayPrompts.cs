@@ -42,6 +42,34 @@ namespace UrDatabase.Services
         }
 
         /// <summary>
+        /// Why this film cannot be opened right now, or null when it can. Checked immediately
+        /// before handing the path to the operating system, and not only when the link was made.
+        ///
+        /// Both halves matter. <see cref="PlayTargetResolver.LinkFile"/> refuses to record a path
+        /// that is not a video file, but the row it guards is ordinary local state: a catalogue
+        /// copied from another machine, restored from a backup, or written by a build that
+        /// predates that rule can all name something else, and the app opens whatever the path
+        /// says with the operating system's own launcher. Checking on the way in and again on the
+        /// way out is the point — the row can change between the two.
+        /// </summary>
+        public static string? DescribeRefusal(MovieDetailsVm vm, Func<string, bool>? fileExists = null)
+        {
+            if (vm is null) throw new ArgumentNullException(nameof(vm));
+
+            if (vm.IsRemote)
+            {
+                return string.IsNullOrWhiteSpace(vm.StreamUrl)
+                    ? "This film is on your Jellyfin server, which could not be reached. " +
+                      "It will play again once you are back on the same network as the server."
+                    : null;
+            }
+
+            if (!vm.HasFile) return NothingToPlay;
+
+            return PlayTargetResolver.DescribeLinkRefusal(vm.FilePath, fileExists);
+        }
+
+        /// <summary>
         /// True when opening this file would be acting on a guess, so the user is asked first.
         /// The distinction is the fix: a link the scan recorded plays, a filename that merely
         /// resembles the title does not.

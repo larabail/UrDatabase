@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using Dapper;
@@ -84,9 +85,11 @@ ORDER BY file_path ASC;
             foreach (var path in linked)
             {
                 // A row can outlive the file it describes — nothing prunes `files` when something
-                // is deleted or a drive is unmounted — so the link is necessary but not
-                // sufficient, and the next linked file gets its turn.
-                if (!string.IsNullOrWhiteSpace(path) && exists(path))
+                // is deleted or a drive is unmounted — and a row restored from another machine, or
+                // written by a build that did not check, can name something that is not a film at
+                // all. Both are filtered here rather than trusted, so the link is necessary but
+                // never sufficient and the next linked file gets its turn.
+                if (DescribeLinkRefusal(path, exists) is null)
                     return PlayTarget.Linked(path);
             }
 
@@ -108,7 +111,7 @@ ORDER BY file_path ASC;
             if (string.IsNullOrWhiteSpace(title)) return PlayTarget.None;
 
             var unclaimed = conn.Query<string>(UnclaimedFilesSql, new { movie_id = movieId })
-                .Where(path => !string.IsNullOrWhiteSpace(path) && exists(path))
+                .Where(path => DescribeLinkRefusal(path, exists) is null)
                 .ToList();
 
             if (unclaimed.Count == 0) return PlayTarget.None;
@@ -116,6 +119,36 @@ ORDER BY file_path ASC;
             var suggestion = MovieFileMatcher.FindBestMatch(unclaimed, title, year);
             return suggestion is null ? PlayTarget.None : PlayTarget.Suggested(suggestion);
         }
+
+        /// <summary>
+        /// Why <paramref name="filePath"/> may not be linked or opened, or null when it may.
+        ///
+        /// This app hands a path to the operating system's "open this" and lets it decide what to
+        /// run, which on both platforms will cheerfully execute a script. So the only files it
+        /// will accept are the video files it knows about — the same list the scanner walks, so a
+        /// file the catalogue would never have recorded cannot be attached to it by hand either.
+        ///
+        /// The picker's own type filter is not this check. A filter is advisory, macOS in
+        /// particular lets a determined user past it, and a path can also arrive from a database
+        /// restored from another machine or written by an older build. The rule therefore lives
+        /// here, where it is enforced on the way in and consulted again on the way out.
+        /// </summary>
+        public static string? DescribeLinkRefusal(string? filePath, Func<string, bool>? fileExists = null)
+        {
+            if (string.IsNullOrWhiteSpace(filePath)) return "No file was chosen.";
+
+            if (!ScanService.IsVideoFile(filePath))
+                return $"{Path.GetFileName(filePath)} is not a video file. UrDatabase only opens " +
+                       $"{string.Join(", ", SupportedExtensionsForDisplay())}.";
+
+            var exists = fileExists ?? File.Exists;
+            if (!exists(filePath)) return $"{Path.GetFileName(filePath)} is no longer there.";
+
+            return null;
+        }
+
+        private static IEnumerable<string> SupportedExtensionsForDisplay() =>
+            ScanService.SupportedExtensions.OrderBy(ext => ext, StringComparer.Ordinal);
 
         /// <summary>
         /// Records that <paramref name="filePath"/> is this film, so the choice survives closing
@@ -126,11 +159,17 @@ ORDER BY file_path ASC;
         /// filename and defers to whatever is already recorded; this one comes from a person
         /// pointing at the file, which is better evidence than a filename has ever been.
         /// </summary>
-        public static void LinkFile(SqliteConnection conn, long movieId, string filePath)
+        /// <exception cref="ArgumentException">
+        /// The file is missing, or is not one of the video types the app opens. Refusing here
+        /// rather than at the point of playing is what keeps a bad path out of the catalogue in
+        /// the first place; see <see cref="DescribeLinkRefusal"/>.
+        /// </exception>
+        public static void LinkFile(SqliteConnection conn, long movieId, string filePath, Func<string, bool>? fileExists = null)
         {
             if (conn is null) throw new ArgumentNullException(nameof(conn));
-            if (string.IsNullOrWhiteSpace(filePath))
-                throw new ArgumentException("A file path is required.", nameof(filePath));
+
+            var refusal = DescribeLinkRefusal(filePath, fileExists);
+            if (refusal is not null) throw new ArgumentException(refusal, nameof(filePath));
 
             var info = new FileInfo(filePath);
             var size = info.Exists ? info.Length : 0L;

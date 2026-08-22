@@ -297,6 +297,126 @@ namespace UrDatabase.Tests
             Assert.Equal(128L, conn.QuerySingle<long>("SELECT size_bytes FROM files WHERE file_path = @path", new { path }));
         }
 
+        /// <summary>
+        /// The app hands a path to the operating system's "open this", which will run a script as
+        /// readily as it plays a film. A picker filter is advisory — macOS honours it loosely and
+        /// the dialog offers "All files" besides — so the refusal has to be here, where it cannot
+        /// be walked around.
+        /// </summary>
+        [Fact]
+        public void Linking_refuses_a_file_that_is_not_a_video()
+        {
+            using var conn = OpenDatabase();
+
+            var movieId = AddMovie(conn, "It", 2017);
+            var script = WriteFile("evil.command");
+
+            var ex = Assert.Throws<ArgumentException>(() => PlayTargetResolver.LinkFile(conn, movieId, script));
+
+            Assert.Contains("not a video file", ex.Message);
+            Assert.Equal(0L, conn.QuerySingle<long>("SELECT COUNT(*) FROM files"));
+        }
+
+        [Theory]
+        [InlineData("run.sh")]
+        [InlineData("run.command")]
+        [InlineData("setup.exe")]
+        [InlineData("payload.bat")]
+        [InlineData("notes.txt")]
+        [InlineData("noextension")]
+        public void Linking_refuses_anything_the_scanner_would_not_have_recorded(string name)
+        {
+            using var conn = OpenDatabase();
+
+            var movieId = AddMovie(conn, "It", 2017);
+
+            Assert.Throws<ArgumentException>(() => PlayTargetResolver.LinkFile(conn, movieId, WriteFile(name)));
+            Assert.Equal(0L, conn.QuerySingle<long>("SELECT COUNT(*) FROM files"));
+        }
+
+        [Fact]
+        public void Linking_refuses_a_file_that_is_not_there()
+        {
+            using var conn = OpenDatabase();
+
+            var movieId = AddMovie(conn, "It", 2017);
+
+            var ex = Assert.Throws<ArgumentException>(
+                () => PlayTargetResolver.LinkFile(conn, movieId, Path.Combine(_root, "absent.mkv")));
+
+            Assert.Contains("no longer there", ex.Message);
+            Assert.Equal(0L, conn.QuerySingle<long>("SELECT COUNT(*) FROM files"));
+        }
+
+        [Fact]
+        public void Linking_refuses_a_blank_path()
+        {
+            using var conn = OpenDatabase();
+
+            var movieId = AddMovie(conn, "It", 2017);
+
+            Assert.Throws<ArgumentException>(() => PlayTargetResolver.LinkFile(conn, movieId, "   "));
+        }
+
+        /// <summary>
+        /// A catalogue is ordinary local state — restored from a backup, copied between machines,
+        /// or written by a build predating the check above. A row naming a script is therefore
+        /// still possible, and must not become something Play will open.
+        /// </summary>
+        [Fact]
+        public void A_linked_row_naming_a_script_is_not_a_play_target()
+        {
+            using var conn = OpenDatabase();
+
+            var movieId = AddMovie(conn, "It", 2017);
+            AddFile(conn, movieId, WriteFile("evil.command"));
+
+            Assert.Equal(PlayTargetKind.None, PlayTargetResolver.Resolve(conn, movieId, "It", 2017).Kind);
+        }
+
+        [Fact]
+        public void A_real_film_still_plays_when_a_script_is_linked_beside_it()
+        {
+            using var conn = OpenDatabase();
+
+            var movieId = AddMovie(conn, "It", 2017);
+            AddFile(conn, movieId, WriteFile("evil.command"), size: 9_000);
+            var film = WriteFile("It (2017).mkv", size: 10);
+            AddFile(conn, movieId, film, size: 10);
+
+            var target = PlayTargetResolver.Resolve(conn, movieId, "It", 2017);
+
+            Assert.Equal(PlayTargetKind.Linked, target.Kind);
+            Assert.Equal(film, target.FilePath);
+        }
+
+        [Fact]
+        public void A_script_is_never_offered_as_a_suggestion_either()
+        {
+            using var conn = OpenDatabase();
+
+            var movieId = AddMovie(conn, "Orphan Print", null);
+            AddFile(conn, null, WriteFile("Orphan Print.command"));
+
+            Assert.Equal(PlayTargetKind.None, PlayTargetResolver.Resolve(conn, movieId, "Orphan Print", null).Kind);
+        }
+
+        [Fact]
+        public void Every_extension_the_scanner_accepts_can_be_linked()
+        {
+            using var conn = OpenDatabase();
+
+            foreach (var extension in ScanService.SupportedExtensions)
+            {
+                var movieId = AddMovie(conn, "Film" + extension.Trim('.'), 2020);
+                var path = WriteFile("film" + extension);
+
+                PlayTargetResolver.LinkFile(conn, movieId, path);
+
+                Assert.Equal(PlayTargetKind.Linked, PlayTargetResolver.Resolve(conn, movieId, "ignored", null).Kind);
+            }
+        }
+
         [Fact]
         public void A_film_with_nothing_anywhere_resolves_to_nothing()
         {

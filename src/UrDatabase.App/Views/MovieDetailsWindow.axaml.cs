@@ -1,5 +1,4 @@
 using System;
-using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -57,15 +56,20 @@ namespace UrDatabase.Views
 
         private async void PlayBtn_Click(object? sender, RoutedEventArgs e)
         {
-            if (Vm.IsRemote)
+            // Re-asked here rather than trusted from when the link was made: the path is ordinary
+            // local state, and a catalogue restored from elsewhere or written by an older build
+            // can name a file that is missing, or one the operating system would execute rather
+            // than play.
+            var refusal = PlayPrompts.DescribeRefusal(Vm);
+            if (refusal is not null)
             {
-                await PlayFromServerAsync();
+                await MessageBoxWindow.ShowAsync(this, "UrDatabase", refusal);
                 return;
             }
 
-            if (string.IsNullOrWhiteSpace(Vm.FilePath) || !File.Exists(Vm.FilePath))
+            if (Vm.IsRemote)
             {
-                await MessageBoxWindow.ShowAsync(this, "UrDatabase", PlayPrompts.NothingToPlay);
+                await PlayFromServerAsync();
                 return;
             }
 
@@ -77,7 +81,7 @@ namespace UrDatabase.Views
 
             try
             {
-                FileLauncher.Open(Vm.FilePath);
+                FileLauncher.Open(Vm.FilePath!);
             }
             catch (Exception ex)
             {
@@ -159,6 +163,17 @@ namespace UrDatabase.Views
 
             var path = picked.Count > 0 ? picked[0].TryGetLocalPath() : null;
             if (string.IsNullOrWhiteSpace(path)) return;
+
+            // The picker's type filter is advisory — macOS honours it loosely and the dialog
+            // offers "All files" besides — so what was actually chosen is checked here, and the
+            // refusal is shown rather than swallowed: the user picked this file deliberately and
+            // is owed a reason.
+            var refusal = PlayTargetResolver.DescribeLinkRefusal(path);
+            if (refusal is not null)
+            {
+                await MessageBoxWindow.ShowAsync(this, "UrDatabase", refusal);
+                return;
+            }
 
             Vm.FilePath = path;
             Vm.FileMatch = PlayTargetKind.Linked;

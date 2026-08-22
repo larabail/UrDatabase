@@ -115,5 +115,71 @@ namespace UrDatabase.Tests
 
             Assert.Contains("this film", PlayPrompts.ConfirmationQuestion(vm));
         }
+
+        /// <summary>
+        /// The check that stands between the Play button and the operating system's launcher. It
+        /// is deliberately not the same check as the one guarding the link: the row can change
+        /// between being written and being used.
+        /// </summary>
+        [Fact]
+        public void A_linked_video_that_is_there_is_not_refused()
+        {
+            var vm = Local(PlayTargetKind.Linked, "/movies/It (2017).mkv");
+
+            Assert.Null(PlayPrompts.DescribeRefusal(vm, _ => true));
+        }
+
+        [Fact]
+        public void A_path_that_is_not_a_video_is_refused_before_opening()
+        {
+            var vm = Local(PlayTargetKind.Linked, "/movies/evil.command");
+
+            var refusal = PlayPrompts.DescribeRefusal(vm, _ => true);
+
+            Assert.NotNull(refusal);
+            Assert.Contains("not a video file", refusal);
+        }
+
+        /// <summary>
+        /// The dangerous shape specifically: a row that says it is a vouched-for link, naming
+        /// something the OS would execute. Existing on disk must not be enough to open it.
+        /// </summary>
+        [Theory]
+        [InlineData("/movies/run.sh")]
+        [InlineData("/movies/run.command")]
+        [InlineData("/movies/setup.exe")]
+        [InlineData("/movies/payload.bat")]
+        [InlineData("/movies/It (2017).mkv.command")]
+        public void A_linked_row_naming_an_executable_is_refused_however_it_got_there(string path)
+        {
+            Assert.NotNull(PlayPrompts.DescribeRefusal(Local(PlayTargetKind.Linked, path), _ => true));
+        }
+
+        [Fact]
+        public void A_file_that_has_gone_is_refused_before_opening()
+        {
+            var vm = Local(PlayTargetKind.Linked, "/movies/It (2017).mkv");
+
+            var refusal = PlayPrompts.DescribeRefusal(vm, _ => false);
+
+            Assert.NotNull(refusal);
+            Assert.Contains("no longer there", refusal);
+        }
+
+        [Fact]
+        public void A_film_with_no_file_at_all_is_refused_before_opening()
+        {
+            Assert.Equal(PlayPrompts.NothingToPlay, PlayPrompts.DescribeRefusal(Local(PlayTargetKind.None, null), _ => true));
+        }
+
+        [Fact]
+        public void A_reachable_server_film_is_not_refused_and_an_unreachable_one_is()
+        {
+            var reachable = new MovieDetailsVm { IsRemote = true, StreamUrl = "http://server/stream" };
+            var unreachable = new MovieDetailsVm { IsRemote = true, StreamUrl = null };
+
+            Assert.Null(PlayPrompts.DescribeRefusal(reachable, _ => false));
+            Assert.Contains("could not be reached", PlayPrompts.DescribeRefusal(unreachable, _ => false));
+        }
     }
 }

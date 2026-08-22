@@ -59,7 +59,11 @@ It runs on Windows and macOS from one codebase, built with
   closest: if something unclaimed on disk resembles the title it is offered by
   name and Play asks first, and otherwise the window says plainly that nothing is
   linked. Linking a file by hand from the file picker settles it, and is
-  remembered (`Services/PlayTargetResolver`, `Services/MovieFileMatcher`).
+  remembered. Only the video types the scanner recognises can be linked or
+  opened, checked both when the link is made and again before anything is
+  launched — the app asks the operating system to open a path, and an OS will run
+  a script as readily as it plays a film
+  (`Services/PlayTargetResolver`, `Services/MovieFileMatcher`).
 - **Browse a Jellyfin server.** Optional, off until you configure it. Point the
   app at a server and its movie library appears alongside your local one, with
   every server film badged **Server** so you can tell at a glance what is not on
@@ -529,6 +533,12 @@ Stated plainly, so nobody has to find out by using it:
   survive, Play opens the largest, then the most recently written, then the first
   by path. That is a guess at which is the better copy, not a preference you can
   set.
+- **A linked path is trusted to be where you said it was.** A file is only
+  accepted, and only opened, when its extension is one the scanner recognises,
+  and that is checked again immediately before launching. What is *not* checked
+  is where the path points: nothing confines it to your watch folders or resolves
+  it through symlinks first, so a catalogue you did not write yourself is worth
+  the same suspicion as any other file it hands you.
 - **Settings covers where your films are, and nothing else.** The screen asks
   about watch folders, a Jellyfin server and the two API keys. `DatabasePath`,
   `PosterCacheDir`, `DownloadPosters` and `TmdbImageSize` are still file-only;
