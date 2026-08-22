@@ -44,10 +44,12 @@ namespace UrDatabase.Views
         private Dictionary<string, JellyfinMovie> _remoteById = new(StringComparer.OrdinalIgnoreCase);
 
         private PosterAutoLoader? _posterLoader;
-        private readonly ImdbRatingService _ratings;
+
+        /// <summary>Rebuilt whenever the configuration changes; never null once the window exists.</summary>
+        private ImdbRatingService _ratings = null!;
 
         /// <summary>Null unless a server is configured, which is what keeps this feature off by default.</summary>
-        private readonly JellyfinClient? _jellyfin;
+        private JellyfinClient? _jellyfin;
 
         private readonly CancellationTokenSource _cts = new();
         private bool _scanning;
@@ -57,28 +59,10 @@ namespace UrDatabase.Views
         {
             InitializeComponent();
 
-            try { _config = AppConfig.Load(); } catch { _config = new AppConfig(); }
-            _dbPath = _config.DatabasePath;
-
-            // Constructed eagerly but idle: no request is made until a movie is opened, and none
-            // at all when no OMDb key is available.
-            _ratings = new ImdbRatingService(new OmdbService(_config.OmdbApiKey), ownsLookup: true);
-
-            // Nothing is constructed, and no database is touched, when no server is configured.
-            if (_config.Jellyfin?.IsConfigured == true)
-            {
-                _jellyfin = new JellyfinClient(
-                    _config.Jellyfin,
-                    JellyfinDeviceId.Resolve(),
-                    version: typeof(MainWindow).Assembly.GetName().Version?.ToString());
-            }
-
-            _posterLoader = new PosterAutoLoader(_config, _dbPath, maxConcurrency: 4);
+            ApplyConfig();
             Closed += (_, __) => { _cts.Cancel(); _posterLoader?.Dispose(); _ratings.Dispose(); _jellyfin?.Dispose(); };
 
             DataContext = this;
-
-            if (JellyfinButton is not null) JellyfinButton.IsVisible = _jellyfin is not null;
 
             LoadRemoteCache();
             LoadMovies();
@@ -90,6 +74,40 @@ namespace UrDatabase.Views
             // absent server delays nothing anybody is looking at.
             if (_jellyfin is not null)
                 Dispatcher.UIThread.Post(() => _ = SyncJellyfinAsync(announceFailure: false));
+        }
+
+        /// <summary>
+        /// Reads the configuration and rebuilds everything that depends on it. Called once at
+        /// startup and again whenever the setup screen saves, so that changing a server or a key
+        /// takes effect immediately rather than at the next launch — the alternative, a dialog
+        /// asking the user to restart, would be the app admitting it had not really applied
+        /// what it had just accepted.
+        ///
+        /// Each service is disposed before being replaced: they own an HTTP client apiece.
+        /// </summary>
+        private void ApplyConfig()
+        {
+            try { _config = AppConfig.Load(); } catch { _config = new AppConfig(); }
+            _dbPath = _config.DatabasePath;
+
+            // Constructed eagerly but idle: no request is made until a movie is opened, and none
+            // at all when no OMDb key is available.
+            _ratings?.Dispose();
+            _ratings = new ImdbRatingService(new OmdbService(_config.OmdbApiKey), ownsLookup: true);
+
+            // Nothing is constructed, and no database is touched, when no server is configured.
+            _jellyfin?.Dispose();
+            _jellyfin = _config.Jellyfin?.IsConfigured == true
+                ? new JellyfinClient(
+                    _config.Jellyfin,
+                    JellyfinDeviceId.Resolve(),
+                    version: typeof(MainWindow).Assembly.GetName().Version?.ToString())
+                : null;
+
+            _posterLoader?.Dispose();
+            _posterLoader = new PosterAutoLoader(_config, _dbPath, maxConcurrency: 4);
+
+            if (JellyfinButton is not null) JellyfinButton.IsVisible = _jellyfin is not null;
         }
 
         /// <summary>
@@ -255,6 +273,18 @@ ORDER BY rank";
         private async void ScanButton_Click(object? sender, RoutedEventArgs e)
         {
             if (_scanning) return;
+
+            // Scanning nothing would report success and change nothing, which reads as a broken
+            // button rather than as a library that was never pointed anywhere.
+            if (_config.WatchFolders is null || _config.WatchFolders.Length == 0)
+            {
+                SetStatus("No folders to scan. Add one under Settings.");
+                await MessageBoxWindow.ShowAsync(
+                    this,
+                    "UrDatabase",
+                    "There are no folders to scan. Add one under Settings, or use a Jellyfin server instead.");
+                return;
+            }
 
             _scanning = true;
             if (ScanButton is not null) ScanButton.IsEnabled = false;
@@ -469,49 +499,28 @@ ORDER BY rank";
             }
         }
 
-        private async Task Settings_ShowAsync()
-        {
-            // The settings file lives in the per-user data directory, never beside the executable:
-            // on macOS that is inside a signed bundle, where a written file breaks the signature.
-            var reading = _config.SourcePath;
-            var readingNote = reading is null || string.Equals(reading, AppConfig.UserConfigPath, StringComparison.Ordinal)
-                ? ""
-                : $"{Environment.NewLine}(currently reading {reading})";
-
-            var message =
-                $"Settings file:{Environment.NewLine}{AppConfig.UserConfigPath}{readingNote}" +
-                $"{Environment.NewLine}{Environment.NewLine}Database:{Environment.NewLine}{_dbPath}" +
-                $"{Environment.NewLine}{Environment.NewLine}Watch folders:{Environment.NewLine}{string.Join(Environment.NewLine, _config.WatchFolders)}" +
-                $"{Environment.NewLine}{Environment.NewLine}TMDB key: {(string.IsNullOrWhiteSpace(_config.TmdbApiKey) ? "not configured" : "configured")}" +
-                $"{Environment.NewLine}IMDb ratings: {(_ratings.IsConfigured ? "available" : "unavailable")}" +
-                $"{Environment.NewLine}{Environment.NewLine}Jellyfin:{Environment.NewLine}{DescribeJellyfin()}";
-
-            await MessageBoxWindow.ShowAsync(this, "Settings", message);
-        }
-
-        private async void Settings_Click(object? sender, RoutedEventArgs e) => await Settings_ShowAsync();
-
         /// <summary>
-        /// What the settings box says about the server. Never the password, the API key or the
-        /// session token — only whether one is present and which account it signs in as.
+        /// Settings is the setup screen again. Anything saved is applied to the running window
+        /// rather than at the next launch, which is the whole reason the configuration is read
+        /// through <see cref="ApplyConfig"/> instead of being captured in the constructor.
         /// </summary>
-        private string DescribeJellyfin()
+        private async void Settings_Click(object? sender, RoutedEventArgs e)
         {
-            if (_jellyfin is null)
-                return "not configured (set Jellyfin.ServerUrl in the settings file above)";
+            var saved = await SetupWindow.ShowDialogAsync(this);
+            if (saved is null) return;
 
-            var settings = _config.Jellyfin!;
-            var credential = settings.UsesUserAccount
-                ? $"signed in as {settings.Username}"
-                : "using an API key";
+            ApplyConfig();
 
-            var player = MediaPlayerLauncher.Find();
-            var playerNote = player is null
-                ? "no video player installed — install VLC or IINA to play"
-                : $"plays in {player.Name}";
+            // A server that has just been switched off leaves a cached library behind in SQLite.
+            // Reloading with no client drops it from view, which is what turning it off meant.
+            LoadRemoteCache();
+            LoadMovies();
+            BuildGenres();
+            RebuildGroups();
+            ShowAllGenres();
 
-            return $"{settings.ServerUrl} ({credential}){Environment.NewLine}" +
-                   $"{_remoteMovies.Count} films cached · {playerNote}";
+            if (_jellyfin is not null)
+                await SyncJellyfinAsync(announceFailure: true);
         }
 
         private void ShowSearch()

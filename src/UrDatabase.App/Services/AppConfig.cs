@@ -30,19 +30,28 @@ namespace UrDatabase.Services
         /// </summary>
         public JellyfinSettings Jellyfin { get; set; } = new();
 
+        /// <summary>
+        /// Set by the setup screen once the user has answered it, and the only thing that stops
+        /// it being offered again. It is written even when the user skips, because a person who
+        /// declined to answer a question has answered it.
+        /// </summary>
+        public bool SetupCompleted { get; set; } = false;
+
+        /// <summary>
+        /// True once <see cref="Normalize"/> has folded environment variables and compiled-in
+        /// keys into this instance. Such a config describes this machine at this moment rather
+        /// than what the user configured, and <see cref="ConfigStore.Save"/> refuses to write one:
+        /// doing so would copy an official build's TMDB key, or a password deliberately kept in
+        /// the environment, into a file that nobody put it in and nobody would think to clean out.
+        /// </summary>
+        [JsonIgnore]
+        internal bool IsResolved { get; private set; }
+
         /// <summary>File a user edits to configure their own install.</summary>
         public const string FileName = "appsettings.json";
 
         /// <summary>Tracked template, shipped next to the binary as the fallback.</summary>
         public const string ExampleFileName = "appsettings.example.json";
-
-        /// <summary>
-        /// Where a user's own settings belong: beside their database, poster cache and logs, in a
-        /// directory they can write to. An installed macOS app lives in a signed bundle, so a file
-        /// written next to the executable both breaks the code signature — Gatekeeper then refuses
-        /// to launch it — and is thrown away by the next update.
-        /// </summary>
-        public static string UserConfigPath => Path.Combine(PlatformPaths.AppDataRoot, FileName);
 
         /// <summary>
         /// Which file this instance was actually read from, or null when nothing was found and the
@@ -76,6 +85,28 @@ namespace UrDatabase.Services
             config.SourcePath = source;
             Normalize(config);
             return config;
+        }
+
+        /// <summary>
+        /// The configuration exactly as the user's own file has it — no environment fallbacks, no
+        /// compiled-in keys, no platform paths substituted for blanks. This is what the setup
+        /// screen edits and what gets written back, so that saving changes only the answers the
+        /// user actually gave.
+        ///
+        /// Returns an empty configuration when there is no file yet, and deliberately never
+        /// reads the shipped example: its placeholders are not this user's answers.
+        /// </summary>
+        public static AppConfig ReadRaw(string? path = null)
+        {
+            var candidate = path ?? ConfigStore.ExistingPath;
+            var (config, _) = ReadFirst(candidate is null ? Array.Empty<string>() : new[] { candidate });
+
+            return config ?? new AppConfig
+            {
+                DatabasePath = "",
+                PosterCacheDir = "",
+                WatchFolders = Array.Empty<string>()
+            };
         }
 
         private static (AppConfig? Config, string? Source) ReadFirst(IReadOnlyList<string> candidates)
@@ -150,9 +181,12 @@ namespace UrDatabase.Services
 
         /// <summary>
         /// True when the per-user file is exactly what the app itself put there and nobody has
-        /// touched it since — either a copy of the shipped example or the generated blank.
+        /// touched it since — either a copy of the shipped example or the generated blank. Such a
+        /// file records no decision: it must not outrank a config beside the executable, and
+        /// <see cref="ConfigStore.IsConfigured"/> must not read it as this install having been
+        /// configured, or the setup screen would never appear again.
         /// </summary>
-        private static bool IsUntouchedTemplate(string userConfig, string? example)
+        internal static bool IsUntouchedTemplate(string userConfig, string? example)
         {
             try
             {
@@ -220,13 +254,11 @@ namespace UrDatabase.Services
         }
 
         /// <summary>
-        /// The fallback seed, for the odd build with no example beside it. Serialised from the
-        /// model so it cannot drift out of step with the settings that actually exist.
+        /// The fallback seed, for the odd build with no example beside it. Written by the same
+        /// serialiser the setup screen saves through, so a generated file and a saved one have
+        /// the same shape and cannot drift apart.
         /// </summary>
-        private static string BlankTemplateJson() =>
-            JsonSerializer.Serialize(
-                new AppConfig { DatabasePath = "", PosterCacheDir = "", WatchFolders = Array.Empty<string>() },
-                new JsonSerializerOptions { WriteIndented = true });
+        private static string BlankTemplateJson() => ConfigStore.Serialize(new AppConfig());
 
         /// <summary>
         /// Resolves paths for the current OS, applies platform defaults for anything blank and
@@ -242,7 +274,11 @@ namespace UrDatabase.Services
                 .Where(folder => !string.IsNullOrWhiteSpace(folder))
                 .ToArray();
 
-            if (config.WatchFolders.Length == 0)
+            // An install that has never been asked gets the platform's film folder, which is the
+            // only useful guess available. One that has been asked and named no folder meant it:
+            // substituting a default there would scan a folder the user had just declined, and a
+            // Jellyfin-only library would fill up with films from this disk.
+            if (config.WatchFolders.Length == 0 && !config.SetupCompleted)
                 config.WatchFolders = new[] { PlatformPaths.DefaultWatchFolder };
 
             config.TmdbImageSize = string.IsNullOrWhiteSpace(config.TmdbImageSize) ? "w342" : config.TmdbImageSize.Trim();
@@ -259,6 +295,8 @@ namespace UrDatabase.Services
 
             config.Jellyfin ??= new JellyfinSettings();
             config.Jellyfin.Normalize();
+
+            config.IsResolved = true;
         }
 
         /// <summary>

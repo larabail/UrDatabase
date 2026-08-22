@@ -16,6 +16,13 @@ It runs on Windows and macOS from one codebase, built with
 
 ## Features
 
+- **Set up on first launch.** A fresh install opens a setup screen instead of an
+  empty library: tick folders on this computer, a Jellyfin server, or both, test
+  the server before committing to it, and optionally paste your TMDB and OMDb
+  keys. It writes `appsettings.json` for you and never appears again — the
+  **Settings** button reopens the same screen, and anything saved there is
+  applied to the running window rather than at the next launch
+  (`Views/SetupWindow`, `Models/SetupChoices`, `Services/ConfigStore`).
 - **Browse by genre.** The library opens as rows of poster cards, one row per
   genre, newest first within each row. Genre chips across the top narrow the
   view to a single genre (`Views/MainWindow`).
@@ -110,6 +117,13 @@ dotnet publish src/UrDatabase.App -c Release -r osx-arm64
 
 ## Configuration
 
+**You do not have to read this section.** The first launch opens a setup screen
+that asks the two questions that matter — where the films on this machine are,
+and whether there is a Jellyfin server — writes the answers to
+`appsettings.json`, and does not ask again. The **Settings** button reopens it
+whenever you want to change something. What follows is what that file contains,
+for anyone who would rather edit it directly.
+
 Settings live in `appsettings.json` in the app's own data directory, beside the
 database, the poster cache and the logs:
 
@@ -118,28 +132,29 @@ database, the poster cache and the logs:
 | macOS | `~/Library/Application Support/UrDatabase/appsettings.json` |
 | Windows | `%APPDATA%\UrDatabase\appsettings.json` |
 
-**The app creates that file for you on first run**, copied from the shipped
-template, so configuring it is editing a file that already exists. The **Settings**
-button names the exact path on your machine.
+The app also puts a copy of the shipped template there on first run, so
+configuring it by hand means editing a file that already exists.
 
-Nothing is ever written next to the executable. On macOS the executable lives
-inside `UrDatabase.app`, which is signed and notarized: a file written in there
-breaks the seal, and macOS then refuses to launch the app at all — so settings
-have to live somewhere writable that also survives an update. Editing anything
-inside `UrDatabase.app` is never the answer, and if you already have, reinstall
-from the DMG.
+Nothing is ever written inside `UrDatabase.app`. That bundle is signed and
+notarized: a file written next to the executable breaks the seal, and macOS then
+refuses to launch the app at all — so settings have to live somewhere writable
+that also survives an update. Editing anything inside `UrDatabase.app` is never
+the answer, and if you already have, reinstall from the DMG.
 
 Configuration is read from the first of these that exists:
 
-1. `<app data>/UrDatabase/appsettings.json` — yours
-2. `appsettings.json` next to the executable — a build tree, when running from source
+1. `<app data>/UrDatabase/appsettings.json` — yours, and where the setup screen saves
+2. `appsettings.json` next to the executable — a build tree, or a portable install
 3. `appsettings.example.json` next to the executable — the shipped template
 
 Running from source is unaffected. A local `src/UrDatabase.App/appsettings.json`
-is still gitignored, still wins over the shipped template, and stops the
-per-user file being created at all. If one was created already — you ran the app
-before writing yours — an untouched copy of the template does not outrank your
-file either. Edit the per-user file and it goes back to winning, everywhere.
+is gitignored, is read and saved in place, and stops the per-user copy being
+created at all. If one was created already — you ran the app before writing
+yours — an untouched copy of the template does not outrank your file, and does
+not count as this install having been configured either. Edit the per-user file
+and it goes back to winning, everywhere.
+
+To configure a checkout by hand:
 
 ```bash
 cp src/UrDatabase.App/appsettings.example.json src/UrDatabase.App/appsettings.json
@@ -148,12 +163,13 @@ cp src/UrDatabase.App/appsettings.example.json src/UrDatabase.App/appsettings.js
 | Key | What it does |
 | --- | --- |
 | `DatabasePath` | The SQLite catalogue. Defaults to `UrDatabase/movies.db` under the user's application data directory |
-| `WatchFolders` | Absolute paths the scan button walks, searched recursively |
+| `WatchFolders` | Absolute paths the scan button walks, searched recursively. Empty means the platform's film folder, unless `SetupCompleted` is set — somebody who was asked and named none meant none |
 | `TmdbApiKey` | Your TMDB v3 API key. Leave it empty to run without metadata |
 | `OmdbApiKey` | Your OMDb API key. Leave it empty to run without the IMDb rating |
 | `PosterCacheDir` | Where downloaded posters go |
 | `DownloadPosters` | `false` points the UI at TMDB's own image URLs; `true` caches each poster to disk |
 | `TmdbImageSize` | TMDB's poster width — `w185`, `w342`, `w500`, `original` |
+| `SetupCompleted` | Set by the setup screen once it has been answered, and the only thing that stops it being offered again |
 | `Jellyfin` | An optional server to browse. Empty, as it ships, means the feature is off entirely — see [A Jellyfin server](#a-jellyfin-server) |
 
 Paths may contain environment variables and are expanded on load, so
@@ -161,6 +177,30 @@ Paths may contain environment variables and are expanded on load, so
 directory .NET reports is `%APPDATA%` on Windows and
 `~/Library/Application Support` on macOS, so a configuration file written on one
 is not portable to the other.
+
+### Where the file lives
+
+The app reads `appsettings.json` from beside the executable, then from
+`UrDatabase/appsettings.json` under the user's application data directory, then
+falls back to the shipped `appsettings.example.json`. The first of those is the
+documented location and the one the setup screen writes to; the second exists
+only for an app installed somewhere its own folder cannot be written to, where
+setup would otherwise have nowhere to put an answer. A file you edit by hand
+therefore always wins over one the app wrote for itself.
+
+Setup only ever writes what you typed into it. A key that came from an
+environment variable, or one compiled into an official build, is shown as an
+empty box and stays out of the file — otherwise pressing Save would copy a
+shipped credential onto your disk under your own name, where nobody would think
+to rotate it.
+
+### When setup appears
+
+Only on an install that has never been configured: no `appsettings.json` of its
+own, no catalogue on disk, and no record of the screen having been answered
+before. An install predating this screen has at least one of those and goes
+straight to the library, as it always did. Skipping is an answer too — it goes
+straight to the library and does not ask again.
 
 ### API keys
 
@@ -206,6 +246,12 @@ the one that once was.
 Entirely optional, and off unless you fill it in. Leave `ServerUrl` empty — as
 it ships — and the app makes no request, opens no extra panel and behaves
 exactly as it did before this existed.
+
+The easiest way to fill it in is the setup screen, which has a **Test
+connection** button: it signs in, finds the movie library and reports how many
+films are in it, so a wrong address, a wrong password and a server with no movie
+library are told apart before anything is saved. The same four fields can be
+written by hand instead:
 
 ```jsonc
 "Jellyfin": {
@@ -258,11 +304,12 @@ rather than reporting a single "could not reach the server" for all of them:
 | rejected the credentials | Jellyfin answered and said no | Check the username and password, or the API key |
 
 The first and fourth are the ones that waste an evening, because in both cases
-the address is genuinely correct in a browser. After any failed sync the app
-asks the server to identify itself on `/System/Info/Public` and writes the
-verdict to `logs/jellyfin.log` in its data directory, so the answer is on disk
-even for the startup sync that never shows a dialog. Credentials are redacted
-out of that file.
+the address is genuinely correct in a browser. The **Test** button in setup says
+the same thing before you save, and after any failed sync the app asks the
+server to identify itself on `/System/Info/Public` and writes the verdict to
+`logs/jellyfin.log` in its data directory — so the answer is on disk even for
+the startup sync that never shows a dialog. Credentials are redacted out of that
+file, including one written into the address itself.
 
 An address is taken as typed: a bare host gets `http://`, a trailing slash is
 dropped, and a port or a path prefix you wrote is left exactly as it is, because
@@ -444,17 +491,18 @@ Stated plainly, so nobody has to find out by using it:
 - **Playback position is not shared with the server.** A film played from
   Jellyfin does not resume where you left off and is not marked watched, because
   the app hands the stream to an external player and never hears from it again.
-- **One Jellyfin server, chosen in a file.** There is no way to add a second, and
-  no in-app form for the first: the address and credentials are configuration,
-  edited by hand.
+- **One Jellyfin server.** There is no way to add a second. The setup screen
+  configures the first one and tests it, but a household with two servers has to
+  pick one.
 - **Files are matched to films by heuristic.** An exact filename stem wins,
   otherwise the first name containing the title. Two films whose titles are
   substrings of each other can still be confused.
 - **Linking a file by hand does not persist.** The file picker updates the open
   window and nothing else; reopening the film forgets it.
-- **Settings shows where things are; it does not change them.** The window names
-  the settings file, the database and the watch folders, and the file is still
-  edited by hand. There is no in-app form for any of it.
+- **Settings covers where your films are, and nothing else.** The screen asks
+  about watch folders, a Jellyfin server and the two API keys. `DatabasePath`,
+  `PosterCacheDir`, `DownloadPosters` and `TmdbImageSize` are still file-only;
+  they survive a save untouched, but nothing in the app edits them.
 - **Windows builds are not signed.** SmartScreen warns on first run and there
   is no way around it short of a Windows code signing certificate. The macOS
   side of this closed in 0.2.1; the Windows side has not.

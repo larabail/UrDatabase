@@ -298,6 +298,41 @@ namespace UrDatabase.Tests
         }
 
         [Fact]
+        public void A_seeded_copy_is_recognised_as_recording_no_decision()
+        {
+            // The same rule keeps the setup screen appearing: a file the app put there itself
+            // must not read as "this install has been configured".
+            Write(BundleExample, ConfigNaming("original"));
+            AppConfig.Load(null, _appData, _bundle);
+
+            Assert.True(AppConfig.IsUntouchedTemplate(UserConfig, BundleExample));
+        }
+
+        [Fact]
+        public void One_edit_makes_it_the_users_own_file()
+        {
+            Write(BundleExample, ConfigNaming("original"));
+            AppConfig.Load(null, _appData, _bundle);
+            Write(UserConfig, ConfigNaming("w500"));
+
+            Assert.False(AppConfig.IsUntouchedTemplate(UserConfig, BundleExample));
+        }
+
+        [Fact]
+        public void A_generated_seed_is_recognised_even_with_no_example_to_compare_against()
+        {
+            AppConfig.Load(null, _appData, _bundle);
+
+            Assert.True(AppConfig.IsUntouchedTemplate(UserConfig, Path.Combine(_bundle, AppConfig.ExampleFileName)));
+        }
+
+        [Fact]
+        public void A_file_that_is_not_there_is_not_an_untouched_template()
+        {
+            Assert.False(AppConfig.IsUntouchedTemplate(UserConfig, BundleExample));
+        }
+
+        [Fact]
         public void An_explicit_path_seeds_nothing()
         {
             var named = Write(Path.Combine(_root, "named.json"), ConfigNaming("w500"));
@@ -364,17 +399,17 @@ namespace UrDatabase.Tests
         {
             // All four belong in one writable place. If this ever diverges, a user editing the
             // file the app names would be editing a file it does not read.
-            Assert.Equal(Path.Combine(PlatformPaths.AppDataRoot, AppConfig.FileName), AppConfig.UserConfigPath);
+            Assert.Equal(Path.Combine(PlatformPaths.AppDataRoot, AppConfig.FileName), ConfigStore.UserPath);
             Assert.Equal(PlatformPaths.AppDataRoot, Path.GetDirectoryName(PlatformPaths.DefaultDatabasePath));
-            Assert.Equal(PlatformPaths.AppDataRoot, Path.GetDirectoryName(AppConfig.UserConfigPath));
+            Assert.Equal(PlatformPaths.AppDataRoot, Path.GetDirectoryName(ConfigStore.UserPath));
         }
 
         [Fact]
         public void The_user_config_is_never_inside_the_application_bundle()
         {
-            Assert.DoesNotContain(".app/Contents", AppConfig.UserConfigPath, StringComparison.Ordinal);
+            Assert.DoesNotContain(".app/Contents", ConfigStore.UserPath, StringComparison.Ordinal);
             Assert.False(
-                AppConfig.UserConfigPath.StartsWith(AppContext.BaseDirectory, StringComparison.Ordinal),
+                ConfigStore.UserPath.StartsWith(AppContext.BaseDirectory, StringComparison.Ordinal),
                 "Settings must not resolve to a location next to the executable.");
         }
 

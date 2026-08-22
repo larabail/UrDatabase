@@ -261,6 +261,14 @@ namespace UrDatabase.Services
         /// are skipped: this app only understands films.
         /// </summary>
         public async Task<string> ResolveMovieLibraryIdAsync(string userId, CancellationToken ct = default)
+            => (await ResolveMovieLibraryAsync(userId, ct)).Id;
+
+        /// <summary>
+        /// The movie library itself, name included, for the one caller that has something to say
+        /// about it: the setup screen, which reports back which library it found so a server with
+        /// several makes it obvious whether the right one was picked.
+        /// </summary>
+        public async Task<JellyfinViewDto> ResolveMovieLibraryAsync(string userId, CancellationToken ct = default)
         {
             var views = await GetAsync<JellyfinItemsDtoOfViews>($"Users/{Uri.EscapeDataString(userId)}/Views", ct);
             var libraries = views?.Items ?? new List<JellyfinViewDto>();
@@ -280,10 +288,37 @@ namespace UrDatabase.Services
                 if (named is null)
                     throw new JellyfinException($"No movie library called \"{_settings.LibraryName.Trim()}\" exists on that server.");
 
-                return named.Id;
+                return named;
             }
 
-            return movieLibraries[0].Id;
+            return movieLibraries[0];
+        }
+
+        /// <summary>
+        /// Signs in, finds the movie library and counts it, without fetching a single film.
+        /// Written for the setup screen's test button: it answers the three questions that
+        /// actually go wrong — is the address right, are the credentials right, and is there a
+        /// movie library there — and says which one failed rather than reporting "it didn't work".
+        ///
+        /// The count comes from Jellyfin's own total on an empty page, so testing a library of
+        /// ten thousand films costs the same as testing an empty one.
+        /// </summary>
+        public async Task<string> DescribeLibraryAsync(CancellationToken ct = default)
+        {
+            await ConnectAsync(ct);
+
+            var library = await ResolveMovieLibraryAsync(_userId!, ct);
+
+            var path =
+                $"Users/{Uri.EscapeDataString(_userId!)}/Items" +
+                $"?ParentId={Uri.EscapeDataString(library.Id)}" +
+                "&IncludeItemTypes=Movie&Recursive=true&Limit=0";
+
+            var page = await GetAsync<JellyfinItemsDto>(path, ct);
+            var total = page?.TotalRecordCount ?? 0;
+            var name = string.IsNullOrWhiteSpace(library.Name) ? "the movie library" : $"\"{library.Name}\"";
+
+            return $"Connected. {total} {(total == 1 ? "film" : "films")} in {name}.";
         }
 
         // ---------- the library ----------

@@ -344,6 +344,53 @@ namespace UrDatabase.Tests
             Assert.Equal("second", await client.ResolveMovieLibraryIdAsync("22222222222222222222222222222222"));
         }
 
+        // ---------- the setup screen's test button ----------
+
+        [Fact]
+        public async Task Testing_a_connection_reports_the_library_it_found_and_how_big_it_is()
+        {
+            var handler = FakeHttpMessageHandler.Routed(
+                ("/Items", HttpStatusCode.OK, """{ "Items": [], "TotalRecordCount": 42 }"""),
+                ("/Views", HttpStatusCode.OK, ViewsJson),
+                ("/Users", HttpStatusCode.OK, UsersJson));
+
+            using var client = new JellyfinClient(KeySettings(), deviceId: "device-1", handler: handler);
+
+            Assert.Equal("Connected. 42 films in \"Films\".", await client.DescribeLibraryAsync());
+
+            // The count comes from the server's own total, so testing a huge library is as cheap
+            // as testing an empty one and no film is fetched to answer the question.
+            var itemsRequest = handler.Requests.Last(r => r.Contains("/Items", StringComparison.Ordinal));
+            Assert.Contains("Limit=0", itemsRequest);
+        }
+
+        [Fact]
+        public async Task Testing_a_connection_counts_one_film_in_the_singular()
+        {
+            var handler = FakeHttpMessageHandler.Routed(
+                ("/Items", HttpStatusCode.OK, """{ "Items": [], "TotalRecordCount": 1 }"""),
+                ("/Views", HttpStatusCode.OK, ViewsJson),
+                ("/Users", HttpStatusCode.OK, UsersJson));
+
+            using var client = new JellyfinClient(KeySettings(), deviceId: "device-1", handler: handler);
+
+            Assert.Equal("Connected. 1 film in \"Films\".", await client.DescribeLibraryAsync());
+        }
+
+        [Fact]
+        public async Task Testing_a_connection_says_which_step_failed()
+        {
+            // The whole point of the button is to distinguish a wrong address from a wrong
+            // password from a server with no films on it, before anything is saved.
+            var handler = FakeHttpMessageHandler.Json("{}", HttpStatusCode.Unauthorized);
+
+            using var client = new JellyfinClient(UserSettings(), deviceId: "device-1", handler: handler);
+
+            var error = await Assert.ThrowsAsync<JellyfinException>(() => client.DescribeLibraryAsync());
+
+            Assert.Contains("username and password", error.Message);
+        }
+
         // ---------- listing ----------
 
         [Fact]
