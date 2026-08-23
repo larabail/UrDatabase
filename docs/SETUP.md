@@ -77,6 +77,27 @@ been configured. Editing it at all restores it to the top.
 | `TmdbImageSize` | TMDB image size, e.g. `w185`, `w342`, `w500`, `original` | `w342` |
 | `SetupCompleted` | Written by the setup screen once answered; stops it being offered again | `false` |
 | `Jellyfin` | An optional server to browse; blank switches the feature off | off |
+| `JellyfinSftp` | An optional SFTP account on the machine running that server, for uploading films to it; blank switches the upload button off | off |
+
+`JellyfinSftp` is its own small table, because it is a different machine account from the
+Jellyfin login above:
+
+| Setting | Meaning | Default when blank |
+| --- | --- | --- |
+| `JellyfinSftp.Host` | The machine running Jellyfin. May carry a port or an account: `uploader@box:2222` is read the way you would type it into `ssh` | off |
+| `JellyfinSftp.Port` | SSH port | `22` |
+| `JellyfinSftp.Username` | The SSH account, which is rarely the Jellyfin one | none |
+| `JellyfinSftp.PrivateKeyPath` | Path to the private half of an SSH key pair. Expanded like every other path, so `~/.ssh/id_ed25519` works | none |
+| `JellyfinSftp.PrivateKeyPassphrase` | The passphrase on that key, if it has one | none |
+| `JellyfinSftp.MoviesPath` | The server's movies directory **as that account sees it** — relative unless it starts with a slash | `movies` |
+
+All six can come from the environment instead: `URDATABASE_JELLYFIN_SFTP_HOST`, `_PORT`,
+`_USERNAME`, `_KEY`, `_PASSPHRASE` and `_MOVIES_PATH`. `_KEY` holds a **path**, never key
+material — a private key belongs in a file with its own permissions.
+
+Uploading needs all three of `Host`, `Username` and `PrivateKeyPath`; with any of them missing
+there is no button. Passwords are deliberately not supported: the account worth pointing this at
+is one that can do nothing but write films, and such accounts are set up key-only.
 
 `<app data>` is `%APPDATA%` on Windows and `~/Library/Application Support` on macOS. Paths may
 use `%APPDATA%`, `%USERPROFILE%` or a leading `~`; a config file written on Windows still

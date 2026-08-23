@@ -26,6 +26,19 @@ namespace UrDatabase.Services
         public const string JellyfinPasswordVariable = "URDATABASE_JELLYFIN_PASSWORD";
         public const string JellyfinApiKeyVariable = "URDATABASE_JELLYFIN_API_KEY";
 
+        /// <summary>
+        /// The SFTP account films are uploaded through, which is a different machine account from
+        /// the Jellyfin login above and deserves to be settable without touching a file. The key
+        /// variable holds a path, never key material: a private key belongs in a file with its own
+        /// permissions, not in an environment every child process inherits.
+        /// </summary>
+        public const string JellyfinSftpHostVariable = "URDATABASE_JELLYFIN_SFTP_HOST";
+        public const string JellyfinSftpPortVariable = "URDATABASE_JELLYFIN_SFTP_PORT";
+        public const string JellyfinSftpUsernameVariable = "URDATABASE_JELLYFIN_SFTP_USERNAME";
+        public const string JellyfinSftpKeyVariable = "URDATABASE_JELLYFIN_SFTP_KEY";
+        public const string JellyfinSftpPassphraseVariable = "URDATABASE_JELLYFIN_SFTP_PASSPHRASE";
+        public const string JellyfinSftpMoviesPathVariable = "URDATABASE_JELLYFIN_SFTP_MOVIES_PATH";
+
         public static string AppDataRoot =>
             Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), AppFolderName);
 

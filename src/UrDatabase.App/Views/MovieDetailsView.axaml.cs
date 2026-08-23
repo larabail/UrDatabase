@@ -70,6 +70,13 @@ namespace UrDatabase.Views
         private CancellationTokenSource? _downloadCts;
 
         /// <summary>
+        /// The same, for a transfer going the other way. A second source rather than a shared one
+        /// because the two buttons are never shown for the same film — a film is on the server or
+        /// on this disk — and one token cancelled by the wrong button would be a puzzle.
+        /// </summary>
+        private CancellationTokenSource? _uploadCts;
+
+        /// <summary>
         /// True once a download has finished while this screen was open. Read by the caller after
         /// <see cref="ShowAsync"/> returns: the library behind it now has a row it did not have.
         /// </summary>
@@ -129,6 +136,7 @@ namespace UrDatabase.Views
             // A transfer belongs to the film that is on screen. Left running, it would finish
             // against a screen showing something else and report itself there.
             _downloadCts?.Cancel();
+            _uploadCts?.Cancel();
 
             _cts?.Cancel();
             IsVisible = false;
@@ -186,6 +194,7 @@ namespace UrDatabase.Views
                 vm.DownloadedPath = JellyfinDownload.FindExisting(vm.DownloadFolder, vm.Title, vm.Year);
 
             UpdateDownloadButton();
+            UpdateUploadButton();
 
             AttributionText.Text = vm.IsRemote
                 ? "Metadata and artwork supplied by your Jellyfin server. IMDb rating retrieved from the OMDb API; neither IMDb nor OMDb endorses this application."
@@ -475,6 +484,133 @@ namespace UrDatabase.Views
             catch (Exception ex)
             {
                 AppLog.Write("jellyfin.log", $"downloaded film not catalogued: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// The SFTP account films are uploaded through, or null when there is none. Read from the
+        /// configuration the screen was given rather than held separately, so switching the
+        /// feature on in Settings and reopening a film is enough to see the button.
+        /// </summary>
+        private JellyfinSftpSettings? SftpSettings =>
+            _config?.JellyfinSftp is { IsConfigured: true } settings ? settings : null;
+
+        /// <summary>
+        /// Shown only when all three parts are there: a film worth sending, somewhere to send it,
+        /// and a server to tell about it afterwards. An install with no SFTP account configured
+        /// never sees this button at all.
+        /// </summary>
+        private void UpdateUploadButton()
+        {
+            UploadButton.IsVisible =
+                Vm is not null && Vm.CanUpload && SftpSettings is not null && _jellyfin is not null;
+        }
+
+        /// <summary>
+        /// Sends the film to the server, or stops a transfer already running. One button for both,
+        /// for the reason the Download button is one button: there is only ever one transfer on
+        /// this screen and a separate Cancel would spend almost all of its life disabled.
+        /// </summary>
+        private async void Upload_Click(object? sender, RoutedEventArgs e)
+        {
+            if (_uploadCts is not null)
+            {
+                _uploadCts.Cancel();
+                return;
+            }
+
+            var vm = Vm;
+            var settings = SftpSettings;
+            if (vm is null || settings is null || _jellyfin is null) return;
+
+            // Asked again here rather than trusted from when the button was drawn: the linked file
+            // is ordinary local state and may have been moved or deleted since.
+            var refusal = UploadPrompts.DescribeRefusal(vm);
+            if (refusal is not null)
+            {
+                await MessageBoxWindow.ShowAsync(Owner(), "UrDatabase", refusal);
+                if (ReferenceEquals(Vm, vm)) UpdateFileNote();
+                return;
+            }
+
+            if (UploadPrompts.NeedsConfirmation(vm))
+            {
+                var confirmed = await MessageBoxWindow.ConfirmAsync(
+                    Owner(),
+                    "UrDatabase",
+                    UploadPrompts.ConfirmationQuestion(vm),
+                    confirmText: "Upload");
+
+                if (!confirmed) return;
+            }
+
+            _uploadCts = CancellationTokenSource.CreateLinkedTokenSource(_cts?.Token ?? default);
+            UploadButton.Content = UploadPrompts.CancelLabel;
+            UploadProgress.IsVisible = true;
+            UploadProgress.IsIndeterminate = true;
+            UploadProgress.Value = 0;
+
+            var progress = new Progress<JellyfinUploadProgress>(report =>
+            {
+                // The screen may have moved on to another film while this was in flight.
+                if (!ReferenceEquals(Vm, vm)) return;
+
+                FileNote.Text = UploadPrompts.Progress(report);
+
+                UploadProgress.IsIndeterminate = report.Fraction is null;
+                if (report.Fraction is double fraction) UploadProgress.Value = fraction;
+            });
+
+            // Disposed here rather than kept: a connection is worth holding open for one transfer
+            // and not for the rest of an evening spent reading about films.
+            using var transport = new SshNetSftpTransport(settings);
+
+            try
+            {
+                var result = await new JellyfinUploader(transport, _jellyfin).UploadAsync(
+                    vm.FilePath,
+                    vm.Title,
+                    vm.Year,
+                    settings.MoviesPath,
+                    progress,
+                    _uploadCts.Token);
+
+                // The server has it now, which is what hides the button and what the facts row
+                // above has to agree with. Deliberately not a signal to the library behind this
+                // screen: nothing about the local catalogue changed, and the server's own view of
+                // its library will not have caught up until its scan finishes anyway.
+                vm.IsOnServer = true;
+
+                if (ReferenceEquals(Vm, vm))
+                {
+                    FactsList.ItemsSource = DetailFacts.For(vm);
+                    FileNote.Text = UploadPrompts.Describe(result);
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                if (ReferenceEquals(Vm, vm)) FileNote.Text = UploadPrompts.Cancelled;
+            }
+            catch (JellyfinException ex)
+            {
+                await MessageBoxWindow.ShowAsync(Owner(), "UrDatabase", ex.Message);
+                if (ReferenceEquals(Vm, vm)) UpdateFileNote();
+            }
+            catch (Exception ex)
+            {
+                AppLog.Write("jellyfin.log", JellyfinClient.Redact($"upload failed: {ex}"));
+                await MessageBoxWindow.ShowAsync(Owner(), "UrDatabase", $"Could not upload this film:{Environment.NewLine}{ex.Message}");
+                if (ReferenceEquals(Vm, vm)) UpdateFileNote();
+            }
+            finally
+            {
+                _uploadCts.Dispose();
+                _uploadCts = null;
+
+                UploadButton.Content = UploadPrompts.ButtonLabel;
+                UploadProgress.IsVisible = false;
+                UploadProgress.IsIndeterminate = false;
+                UpdateUploadButton();
             }
         }
 

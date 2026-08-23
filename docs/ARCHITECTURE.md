@@ -53,6 +53,7 @@ Avalonia replaces WPF. The differences that mattered during the port:
 | `ConfigDiagnostics` | Names keys in the settings file that are not settings, and what each was probably meant to be. Reports them; never rejects the file. |
 | `FirstRun` | Whether this launch has never been configured, and so whether to offer setup. |
 | `JellyfinDiagnostics` | Names which of five connection failures happened, and what to try about it. |
+| `JellyfinUploader` / `ISftpTransport` | Copies a film onto the Jellyfin server's disk over SFTP, then asks the server to rescan. Everything above the socket talks to the interface, so the whole of it is tested against a fake filesystem; `SshNetSftpTransport` is the only implementation that opens a connection. |
 | `PlatformPaths` | Every filesystem location, resolved per platform. Expands `%APPDATA%` and `~`. |
 | `Database` | Opens the SQLite database, applies `Data/schema.sql` idempotently, and migrates an existing library. The schema script is all `CREATE ... IF NOT EXISTS`, so it cannot add a column to a table somebody already has — `Migrate` does that. |
 | `ScanService` | Walks watch folders and upserts the `files` table, skipping unreadable directories. |
