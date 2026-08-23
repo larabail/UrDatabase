@@ -20,6 +20,16 @@ changes anything under `src/` must raise `<Version>` above the version on
   * `tests/`, `docs/` and `.github/` change what CI does or what the repository
     says, not what the shipped application does.
 
+There is one exception, and it runs the other way: **no pull request may leave
+`Directory.Build.props` without a version the release workflow can read**, even
+one that ships nothing. Blank that line, or write something the workflow cannot
+parse, and it tags nothing and reports success on every merge afterwards --
+including the ones that do change `src/`, which then land on `main` in no
+release with nothing red to say so. That is the state
+`tool/check_release_gate.py` exists to make loud, and it is the one route into
+it that the gate cannot see, because a version it cannot read names no tag it
+could compare against.
+
 Deliberately not checked here: how *much* the version moved. Whether a change
 is a patch, a minor or a major is a judgement call, and a script that guessed
 would be wrong often enough to be argued with rather than trusted. Any increase
@@ -38,7 +48,10 @@ That narrows the window rather than closing it. A required check reports the
 state at the moment it ran, and GitHub does not re-run every open pull
 request's checks when something lands on `main`, so two branches can still both
 be green and merge seconds apart. Only a merge queue closes that, and this
-repository does not have one.
+repository does not have one. What catches the one that gets through is
+`tool/check_release_gate.py`, which fails the release run rather than skipping
+quietly when a merge leaves `src/` newer than the tag it would have released
+as -- after the fact, but never silently.
 
 Usage, with the workflow deciding which files changed and this deciding what
 `main` says about the version:
@@ -166,8 +179,8 @@ def bump_instructions(current):
         "\n"
         "  Why: merging to main tags v<Version> and publishes a release whose\n"
         "  three zips carry that version in their names. Leaving it at %s\n"
-        "  means the tag already exists, the release workflow does nothing,\n"
-        "  and this change never reaches anybody."
+        "  means the tag already exists, so the merge publishes nothing and\n"
+        "  the release run fails saying so."
         % (
             show(current),
             next_patch(current),
@@ -176,6 +189,55 @@ def bump_instructions(current):
             current[0] + 1,
             show(current),
         )
+    )
+
+
+def readable(text):
+    """Whether a props file states a version the release workflow could use.
+
+    Both halves of "usable" in one answer -- present, and three numbers --
+    because the release workflow makes no distinction either. Its
+    `read-version` action rejects anything that is not `MAJOR.MINOR.PATCH` and
+    reports it exactly as it reports an absent file.
+    """
+    raw = version_from_props(text)
+    if raw is None:
+        return False
+    try:
+        parse_version(raw)
+    except VersionError:
+        return False
+    return True
+
+
+def lost_the_version(base):
+    """What to say when a branch leaves `main`'s version unusable.
+
+    Blocked even though the pull request ships nothing, which is the one
+    exception to the rule above, because the damage is not to this change --
+    it is to the next one. The release workflow reads that single line to
+    decide what to tag; with nothing readable there it tags nothing, publishes
+    nothing and reports success, and the merge after it is stranded on `main`
+    with no release and nothing red to say so. Every other route into that
+    state is now loud, and this was the last quiet one.
+    """
+    return Result(
+        False,
+        "This pull request changes nothing under src/, but it leaves\n"
+        "Directory.Build.props without a <Version> the release workflow can\n"
+        "read. main carries %s.\n"
+        "\n"
+        "  What to do: put <Version> back as three numbers, at %s or above,\n"
+        "  for example:\n"
+        "\n"
+        "      <Version>%s</Version>\n"
+        "\n"
+        "  Why this is blocked even though nothing shipped changed: that one\n"
+        "  line is what the release workflow tags from. With nothing readable\n"
+        "  there it tags nothing, publishes nothing and says so in green --\n"
+        "  and the next merge that does change src/ lands on main with no\n"
+        "  release and nothing red to point at it."
+        % (show(base), show(base), show(base)),
     )
 
 
@@ -190,6 +252,8 @@ def check(base_props, head_props, paths):
     changed = changed_paths(paths) if isinstance(paths, str) else list(paths)
 
     if not touches_shipped_code(changed):
+        if readable(base_props) and not readable(head_props):
+            return lost_the_version(parse_version(version_from_props(base_props)))
         return Result(
             True,
             "Nothing under src/ changed, so no version bump is required.\n"
