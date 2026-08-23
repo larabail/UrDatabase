@@ -221,9 +221,10 @@ namespace UrDatabase.Tests
                 deviceId: "device-1",
                 handler: handler);
 
-            var count = await JellyfinSync.RefreshAsync(client, conn);
+            var result = await JellyfinSync.RefreshAsync(client, conn);
 
-            Assert.Equal(1, count);
+            Assert.Equal(1, result.Films);
+            Assert.Equal(0, result.Series);
             var cached = Assert.Single(JellyfinCache.Load(conn));
             Assert.Equal("A Freshly Synced Film", cached.Title);
         }

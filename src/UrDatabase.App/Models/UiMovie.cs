@@ -38,6 +38,13 @@ namespace UrDatabase.Models
         public const string ServerTag = "Server";
 
         /// <summary>
+        /// The word on a television card. Every series carries it and no film does, which is what
+        /// makes it safe for series to share the genre shelves with films: the two populations are
+        /// mixed, but never silently.
+        /// </summary>
+        public const string SeriesTag = "Series";
+
+        /// <summary>
         /// The two badge texts, as instance properties because a card template can only bind to
         /// one of those. They are the constants above and nothing else, so the wall and the
         /// source row cannot drift apart by somebody retyping a word in the view.
@@ -46,6 +53,69 @@ namespace UrDatabase.Models
 
         /// <inheritdoc cref="ServerBadge"/>
         public string OfflineBadge => OfflineTag;
+
+        /// <inheritdoc cref="ServerBadge"/>
+        public string SeriesBadge => SeriesTag;
+
+        /// <summary>
+        /// Whether this is a film or a television series. Defaults to <see cref="MediaKind.Film"/>
+        /// so every row read out of the <c>movies</c> table is right without the query saying so —
+        /// nothing on this machine is catalogued as television.
+        /// </summary>
+        public MediaKind Kind { get; set; } = MediaKind.Film;
+
+        /// <summary>True when a series is only on the server, which every series is.</summary>
+        public bool IsSeries => Kind == MediaKind.Series;
+
+        public bool IsFilm => Kind == MediaKind.Film;
+
+        /// <summary>
+        /// Whether the card says the server holds this.
+        /// </summary>
+        /// <remarks>
+        /// Never on a series, although every series genuinely is on the server. The badge answers
+        /// "will this play away from home", and for television the answer is on the card already —
+        /// nothing local is ever a series, so the mark would appear on every single one of them
+        /// and say nothing that the series badge beside it did not.
+        /// </remarks>
+        public bool ShowServerBadge => IsOnServer && !IsSeries;
+
+        /// <summary>How many seasons a series has, when the server counted them. Null on a film.</summary>
+        public int? SeasonCount { get; set; }
+
+        /// <summary>How many episodes a series has, on the same terms as <see cref="SeasonCount"/>.</summary>
+        public int? EpisodeCount { get; set; }
+
+        /// <summary>
+        /// The line under the title on a card: the year, and for a series how many seasons are
+        /// behind it.
+        /// </summary>
+        /// <remarks>
+        /// One property rather than the view choosing between two, because the choice is a rule
+        /// about what a card means and rules in a view cannot be tested. A series showing nothing
+        /// but a year is the failure mode this exists to prevent: it would read as a film with an
+        /// odd date, which is precisely the objection to putting the two on one shelf.
+        ///
+        /// Empty rather than null for a film with no year, so the view has one thing to test.
+        /// </remarks>
+        public string MetaLine
+        {
+            get
+            {
+                var year = Year is int value ? value.ToString(CultureInfo.InvariantCulture) : "";
+
+                if (!IsSeries) return year;
+
+                var seasons = SeasonCount is int count && count > 0
+                    ? count == 1 ? "1 season" : $"{count.ToString(CultureInfo.InvariantCulture)} seasons"
+                    : "";
+
+                if (year.Length == 0) return seasons;
+                if (seasons.Length == 0) return year;
+
+                return $"{year} · {seasons}";
+            }
+        }
 
         /// <summary>
         /// Where the row came from: the local catalogue, or a server. Defaults to
@@ -90,9 +160,13 @@ namespace UrDatabase.Models
         ///
         /// A film in both places keeps its local key. It is one film, counted once, and it is the
         /// local copy that everything else about it — the file, the TMDB match — hangs off.
+        ///
+        /// Television is keyed separately from film. Jellyfin does not reuse an id between the
+        /// two, so this buys nothing today; it is here so that the day something does — a second
+        /// server, an import, a fixture — a series and a film cannot silently become one card.
         /// </summary>
         public string Key => IsRemote
-            ? $"jellyfin:{RemoteId}"
+            ? IsSeries ? $"jellyfin:series:{RemoteId}" : $"jellyfin:{RemoteId}"
             : $"local:{Id.ToString(CultureInfo.InvariantCulture)}";
 
         private string? _posterPath;

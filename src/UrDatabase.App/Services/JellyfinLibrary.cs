@@ -63,6 +63,58 @@ namespace UrDatabase.Services
         }
 
         /// <summary>
+        /// One television series as a card, on the same shelf as the films.
+        /// </summary>
+        /// <remarks>
+        /// Deliberately the same type. A series carries genres exactly as a film does, so it
+        /// belongs in the Drama shelf rather than in a wing of its own, and a second card type
+        /// would have meant a second template, a second search path and a second set of counts to
+        /// keep true.
+        ///
+        /// What stops it being mistakable for a film is <see cref="UiMovie.Kind"/>: the card shows
+        /// a badge and a season count instead of a bare year, and the kind row can take television
+        /// out of the library in one click. Without those two this fold would be dishonest.
+        /// </remarks>
+        public static UiMovie ToUiSeries(JellyfinSeries series, Func<JellyfinSeries, string?>? posterUrl = null)
+        {
+            if (series is null) throw new ArgumentNullException(nameof(series));
+
+            return new UiMovie
+            {
+                Id = 0,
+                RemoteId = series.ItemId,
+                Source = MovieSource.Jellyfin,
+                Kind = MediaKind.Series,
+                Title = series.Title ?? "",
+                Year = series.Year,
+
+                // Not taken from the server's TMDB id, which for a series is a TMDB *television*
+                // id: a different catalogue with its own numbering, where 1396 is a different
+                // programme from film 1396. Folding a series onto a film by that number is exactly
+                // the sort of mistake this app has already shipped once, so nothing here carries a
+                // TMDB id at all and the fold below refuses series outright.
+                TmdbId = null,
+
+                Genres = series.Genres ?? "",
+                SeasonCount = series.SeasonCount,
+                EpisodeCount = series.EpisodeCount,
+                PosterPath = posterUrl?.Invoke(series)
+            };
+        }
+
+        public static IReadOnlyList<UiMovie> ToUiSeriesList(
+            IEnumerable<JellyfinSeries>? series,
+            Func<JellyfinSeries, string?>? posterUrl = null)
+        {
+            if (series is null) return Array.Empty<UiMovie>();
+
+            return series
+                .Where(s => s is not null && !string.IsNullOrWhiteSpace(s.ItemId))
+                .Select(s => ToUiSeries(s, posterUrl))
+                .ToList();
+        }
+
+        /// <summary>
         /// The library the window shows: local films and server films in one ordering, with a film
         /// that is in both places appearing once, as a single card that says so.
         /// </summary>
@@ -157,6 +209,14 @@ namespace UrDatabase.Services
             IReadOnlyDictionary<long, UiMovie> byId,
             IReadOnlyDictionary<int, UiMovie> byTmdbId)
         {
+            // Television never folds onto a film, whatever either is called. Nothing in the local
+            // catalogue is a series — a scan records films — so a fold could only ever be wrong,
+            // and the names collide often enough for that to matter: Fargo, Hannibal, Westworld
+            // and Shōgun are each a film and a programme, and normalising the titles makes them
+            // one. The card the fold kept would be the film, and the show would vanish from the
+            // library rather than merely being shown beside it.
+            if (server.IsSeries) return false;
+
             if (server.TmdbId is int tmdbId &&
                 byTmdbId.TryGetValue(tmdbId, out var identified) &&
                 !identified.IsOnServer)

@@ -51,10 +51,10 @@
                             BorderThickness="1"
                             BorderBrush="Transparent"/>
 
-                    <!-- Where the film is. A film the server holds and this
-                         machine also holds is one card with both badges, so
-                         the pair reads as one fact each: the server has it,
-                         and it plays on a train.
+                    <!-- Where the film is, and what it is. A film the server
+                         holds and this machine also holds is one card with both
+                         badges, so the pair reads as one fact each: the server
+                         has it, and it plays on a train.
 
                          Nothing at all on a film that is only here, which is
                          most of a local library — a badge on every card would
@@ -66,6 +66,28 @@
                                 HorizontalAlignment="Right"
                                 VerticalAlignment="Top">
 
+                        <!-- Television. Every series carries it and no film
+                             does, which is the whole reason series are allowed
+                             on the same shelves as films: the two populations
+                             are mixed, but never silently. Brass rather than
+                             the away colour, because this says what a thing is
+                             and that one says where it is — and a series is
+                             always on the server anyway, so the two would have
+                             been the same badge twice. -->
+                        <Border Background="{StaticResource RoomBrush}"
+                                BorderBrush="{StaticResource BrassBrush}"
+                                BorderThickness="1"
+                                CornerRadius="{StaticResource RadiusSmall}"
+                                Padding="6,2"
+                                IsVisible="{Binding IsSeries}">
+                            <TextBlock Text="{Binding SeriesBadge}"
+                                       Foreground="{StaticResource BrassBrush}"
+                                       FontFamily="{StaticResource MonoFont}"
+                                       FontSize="9.5"
+                                       FontWeight="SemiBold"
+                                       LetterSpacing="1"/>
+                        </Border>
+
                         <!-- Filled, because the question it answers — will
                              this play when the laptop is away from home — has
                              to be answerable from six feet away without
@@ -73,7 +95,7 @@
                         <Border Background="{StaticResource AwayBrush}"
                                 CornerRadius="{StaticResource RadiusSmall}"
                                 Padding="6,2"
-                                IsVisible="{Binding IsOnServer}">
+                                IsVisible="{Binding ShowServerBadge}">
                             <TextBlock Text="{Binding ServerBadge}"
                                        Foreground="{StaticResource RoomBrush}"
                                        FontFamily="{StaticResource MonoFont}"
@@ -122,13 +144,14 @@
                            TextTrimming="CharacterEllipsis"
                            Margin="0,9,0,2"/>
 
-                <!-- The year alone. The library query reads title, year, genres
-                     and poster and nothing else, so a runtime here would be a
-                     number the app does not have. -->
+                <!-- The year, and for a series how many seasons are behind it.
+                     One binding rather than the template choosing, because
+                     what a card says about itself is a rule and rules in a
+                     view cannot be tested: see UiMovie.MetaLine. -->
                 <TextBlock Classes="mono"
                            FontSize="10.5"
-                           Text="{Binding Year}"
-                           IsVisible="{Binding Year, Converter={x:Static ObjectConverters.IsNotNull}}"/>
+                           Text="{Binding MetaLine}"
+                           IsVisible="{Binding MetaLine, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
             </StackPanel>
         </DataTemplate>
     </Window.Resources>
@@ -236,7 +259,7 @@
                      behind every genre the server library brought with it. -->
                 <Border BorderBrush="{StaticResource EdgeBrush}"
                         BorderThickness="0,0,0,1">
-                    <Grid ColumnDefinitions="Auto,Auto,*">
+                    <Grid ColumnDefinitions="Auto,Auto,Auto,Auto,*">
 
                         <!-- Hidden entirely unless films come from more than one
                              place, so an install with only local films — or only
@@ -284,7 +307,58 @@
                                    Fill="{StaticResource EdgeBrush}"
                                    VerticalAlignment="Center"/>
 
-                        <ScrollViewer Grid.Column="2" Classes="shelf" Height="40" Padding="24,0">
+                        <!-- What a thing is, as opposed to where it is. Hidden
+                             entirely unless the library holds both films and
+                             television, so an install with only films — which
+                             is every install this app had until television —
+                             grows no furniture it has no use for, and one with
+                             only television grows none either.
+
+                             Its left margin is set in code: whichever of these
+                             two rows comes first has to carry the window's
+                             margin, and either of them can be absent. -->
+                        <ItemsControl x:Name="KindChipsList"
+                                      Grid.Column="2"
+                                      ItemsSource="{Binding KindChips}"
+                                      IsVisible="False"
+                                      VerticalAlignment="Center">
+                            <ItemsControl.ItemsPanel>
+                                <ItemsPanelTemplate>
+                                    <StackPanel Orientation="Horizontal"/>
+                                </ItemsPanelTemplate>
+                            </ItemsControl.ItemsPanel>
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate DataType="models:KindChip">
+                                    <ToggleButton Classes="genre source"
+                                                  IsChecked="{Binding IsSelected}"
+                                                  Margin="0,0,20,0"
+                                                  VerticalAlignment="Center"
+                                                  Click="KindChip_Click">
+                                        <StackPanel Orientation="Horizontal">
+                                            <TextBlock Classes="genreLabel"
+                                                       Text="{Binding Name}"
+                                                       FontSize="12.5"/>
+                                            <TextBlock Classes="mono"
+                                                       Text="{Binding Count}"
+                                                       FontSize="10"
+                                                       Margin="6,0,0,0"
+                                                       VerticalAlignment="Center"/>
+                                        </StackPanel>
+                                    </ToggleButton>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+
+                        <Rectangle x:Name="KindDivider"
+                                   Grid.Column="3"
+                                   Width="1"
+                                   Height="16"
+                                   IsVisible="False"
+                                   Margin="4,0,20,0"
+                                   Fill="{StaticResource EdgeBrush}"
+                                   VerticalAlignment="Center"/>
+
+                        <ScrollViewer Grid.Column="4" Classes="shelf" Height="40" Padding="24,0">
                             <ItemsControl x:Name="GenreChipsList" ItemsSource="{Binding GenreChips}">
                                 <ItemsControl.ItemsPanel>
                                     <ItemsPanelTemplate>
@@ -518,7 +592,10 @@
             </Grid>
         </DockPanel>
 
-        <!-- Details, in place, over the whole window. -->
+        <!-- Details, in place, over the whole window. Two screens rather than
+             one with a mode: a film is a page about one video, and a series is
+             an index of them. -->
         <views:MovieDetailsView x:Name="DetailsView" IsVisible="False"/>
+        <views:SeriesDetailsView x:Name="SeriesView" IsVisible="False"/>
     </Grid>
 </Window>

@@ -24,12 +24,37 @@ namespace UrDatabase.Services
     }
 
     /// <summary>
-    /// Reads a Jellyfin server's movie library, and fetches a film from it when asked.
+    /// What one sync found on the server: its films and its television series, in one value.
+    /// </summary>
+    /// <remarks>
+    /// Together rather than fetched separately, because they are written to the cache in one
+    /// transaction and a half-replaced cache is the failure this app already went out of its way
+    /// to avoid once. Either list may be empty — a server with only films and a server with only
+    /// television are both ordinary — and an empty list is not the same as a failure.
+    /// </remarks>
+    public sealed record JellyfinLibraryContents(
+        IReadOnlyList<JellyfinMovie> Movies,
+        IReadOnlyList<JellyfinSeries> Series)
+    {
+        public static JellyfinLibraryContents Empty { get; } =
+            new(Array.Empty<JellyfinMovie>(), Array.Empty<JellyfinSeries>());
+
+        /// <summary>How many things the sync brought back, films and series together.</summary>
+        public int Count => Movies.Count + Series.Count;
+    }
+
+    /// <summary>
+    /// Reads a Jellyfin server's film and television libraries, and fetches an item from one when
+    /// asked.
     ///
-    /// Deliberately narrow. It authenticates, finds the movie library, lists it, builds the URLs
-    /// the rest of the app needs and opens the response for a download. It does not transcode,
-    /// does not touch series, and never asks TMDB for anything — a Jellyfin item arrives complete,
-    /// so a library from a server works fully on a build with no TMDB key at all.
+    /// Deliberately narrow. It authenticates, finds the libraries, lists them, builds the URLs the
+    /// rest of the app needs and opens the response for a download. It does not transcode and
+    /// never asks TMDB for anything — a Jellyfin item arrives complete, so a library from a server
+    /// works fully on a build with no TMDB key at all.
+    ///
+    /// Seasons and episodes are the one thing it fetches lazily. A sync pulls films and series and
+    /// stops there: two hundred shows is thousands of episodes, and a sync that walked them all
+    /// would be a sync nobody waits for. They are asked for when a series is opened.
     ///
     /// Nothing it fetches is written to this machine: metadata goes to the cache through
     /// <see cref="JellyfinCache"/>, and a downloaded film is written by
@@ -48,6 +73,23 @@ namespace UrDatabase.Services
         /// with no genres, overview or provider ids, and the app would be back to guessing.
         /// </summary>
         public const string ItemFields = "Genres,Overview,ProviderIds,ProductionYear,RunTimeTicks,CommunityRating,People";
+
+        /// <summary>
+        /// The same, plus the two counts that make a series card readable as a series. Both are
+        /// optional on the wire — not every server version fills them in — so nothing depends on
+        /// them arriving; a missing count is printed as nothing rather than as zero.
+        /// </summary>
+        public const string SeriesFields = ItemFields + ",ChildCount,RecursiveItemCount";
+
+        /// <summary>A season needs its episode count and nothing else; its name and number are always sent.</summary>
+        public const string SeasonFields = "ChildCount";
+
+        /// <summary>
+        /// An episode needs a plot and a length. Deliberately not <see cref="ItemFields"/>: a
+        /// season of twenty-four episodes would drag twenty-four cast lists across the network to
+        /// render a list of titles.
+        /// </summary>
+        public const string EpisodeFields = "Overview,RunTimeTicks";
 
         private readonly HttpClient _http;
         private readonly HttpClient _downloadHttp;
@@ -331,29 +373,54 @@ namespace UrDatabase.Services
         }
 
         /// <summary>
-        /// The id of the movie library, chosen by collection type rather than by name or id, so it
-        /// keeps working when a library is renamed and needs nothing hardcoded. Series libraries
-        /// are skipped: this app only understands films.
+        /// The user's top level libraries, exactly as the server reports them.
         /// </summary>
-        public async Task<string> ResolveMovieLibraryIdAsync(string userId, CancellationToken ct = default)
-            => (await ResolveMovieLibraryAsync(userId, ct)).Id;
-
-        /// <summary>
-        /// The movie library itself, name included, for the one caller that has something to say
-        /// about it: the setup screen, which reports back which library it found so a server with
-        /// several makes it obvious whether the right one was picked.
-        /// </summary>
-        public async Task<JellyfinViewDto> ResolveMovieLibraryAsync(string userId, CancellationToken ct = default)
+        public async Task<IReadOnlyList<JellyfinViewDto>> GetLibrariesAsync(string userId, CancellationToken ct = default)
         {
             var views = await GetAsync<JellyfinItemsDtoOfViews>($"Users/{Uri.EscapeDataString(userId)}/Views", ct);
-            var libraries = views?.Items ?? new List<JellyfinViewDto>();
+            return views?.Items ?? new List<JellyfinViewDto>();
+        }
 
-            var movieLibraries = libraries
-                .Where(v => string.Equals(v.CollectionType, "movies", StringComparison.OrdinalIgnoreCase))
+        /// <summary>
+        /// The movie library, or null when the server has none.
+        /// </summary>
+        /// <remarks>
+        /// Null rather than an exception, which is what this used to be. A server that holds only
+        /// television is a perfectly ordinary server, and refusing to get past the absence of a
+        /// movie library meant such a server showed nothing at all — the throw happened before
+        /// anything else ran, so every one of its series was discarded to report a missing film
+        /// library nobody had asked for.
+        ///
+        /// A <em>named</em> library that is not there is still an exception, and has to be: the
+        /// name came from configuration, so its absence is a mistake somebody can correct, and
+        /// silently reading a different library instead would be the wrong films with no
+        /// explanation. It is only raised when the server has movie libraries to choose between —
+        /// a name cannot be wrong about a kind of library the server does not have.
+        /// </remarks>
+        public async Task<JellyfinViewDto?> FindMovieLibraryAsync(string userId, CancellationToken ct = default)
+            => SelectMovieLibrary(await GetLibrariesAsync(userId, ct));
+
+        /// <summary>
+        /// Every television library. All of them, unlike the single movie library above: a server
+        /// routinely files television under more than one — "TV Shows" and "Anime" is the usual
+        /// pair — and <see cref="JellyfinSettings.LibraryName"/> is documented as naming a movie
+        /// library, so there is nothing to narrow these by and no reason to pick one arbitrarily.
+        /// </summary>
+        public async Task<IReadOnlyList<JellyfinViewDto>> FindSeriesLibrariesAsync(string userId, CancellationToken ct = default)
+            => SelectSeriesLibraries(await GetLibrariesAsync(userId, ct));
+
+        /// <summary>
+        /// Picks the movie library out of a list of libraries. Pure, and separate from the request
+        /// above, so the rule — collection type first, then the configured name — can be asserted
+        /// without a server.
+        /// </summary>
+        internal JellyfinViewDto? SelectMovieLibrary(IEnumerable<JellyfinViewDto>? libraries)
+        {
+            var movieLibraries = (libraries ?? Array.Empty<JellyfinViewDto>())
+                .Where(v => v.IsMovieLibrary)
                 .ToList();
 
-            if (movieLibraries.Count == 0)
-                throw new JellyfinException("That Jellyfin server has no movie library.");
+            if (movieLibraries.Count == 0) return null;
 
             if (!string.IsNullOrWhiteSpace(_settings.LibraryName))
             {
@@ -369,39 +436,109 @@ namespace UrDatabase.Services
             return movieLibraries[0];
         }
 
+        /// <inheritdoc cref="FindSeriesLibrariesAsync"/>
+        internal static IReadOnlyList<JellyfinViewDto> SelectSeriesLibraries(IEnumerable<JellyfinViewDto>? libraries)
+            => (libraries ?? Array.Empty<JellyfinViewDto>()).Where(v => v.IsSeriesLibrary).ToList();
+
         /// <summary>
-        /// Signs in, finds the movie library and counts it, without fetching a single film.
-        /// Written for the setup screen's test button: it answers the three questions that
-        /// actually go wrong — is the address right, are the credentials right, and is there a
-        /// movie library there — and says which one failed rather than reporting "it didn't work".
+        /// Signs in, finds the libraries and counts them, without fetching a single item. Written
+        /// for the setup screen's test button: it answers the questions that actually go wrong —
+        /// is the address right, are the credentials right, and is there anything on that server
+        /// this app can read — and says which one failed rather than reporting "it didn't work".
         ///
-        /// The count comes from Jellyfin's own total on an empty page, so testing a library of
-        /// ten thousand films costs the same as testing an empty one.
+        /// The counts come from Jellyfin's own totals on empty pages, so testing a library of ten
+        /// thousand films costs the same as testing an empty one.
         /// </summary>
         public async Task<string> DescribeLibraryAsync(CancellationToken ct = default)
         {
             await ConnectAsync(ct);
 
-            var library = await ResolveMovieLibraryAsync(_userId!, ct);
+            var libraries = await GetLibrariesAsync(_userId!, ct);
+            var movieLibrary = SelectMovieLibrary(libraries);
+            var seriesLibraries = SelectSeriesLibraries(libraries);
 
+            if (movieLibrary is null && seriesLibraries.Count == 0)
+                throw new JellyfinException("That Jellyfin server has no film or television library.");
+
+            var parts = new List<string>();
+
+            if (movieLibrary is not null)
+            {
+                var films = await CountAsync(_userId!, movieLibrary.Id, "Movie", ct);
+                parts.Add($"{films.ToString(CultureInfo.InvariantCulture)} {(films == 1 ? "film" : "films")} in {Describe(movieLibrary, "the movie library")}");
+            }
+
+            if (seriesLibraries.Count > 0)
+            {
+                var shows = 0;
+                foreach (var library in seriesLibraries)
+                    shows += await CountAsync(_userId!, library.Id, "Series", ct);
+
+                var name = seriesLibraries.Count == 1
+                    ? Describe(seriesLibraries[0], "the television library")
+                    : "television";
+
+                parts.Add($"{shows.ToString(CultureInfo.InvariantCulture)} {(shows == 1 ? "series" : "series")} in {name}");
+            }
+
+            return $"Connected. {string.Join(", ", parts)}.";
+
+            static string Describe(JellyfinViewDto library, string fallback)
+                => string.IsNullOrWhiteSpace(library.Name) ? fallback : $"\"{library.Name}\"";
+        }
+
+        /// <summary>
+        /// How many items of one type a library holds, asked for as a page of none.
+        /// </summary>
+        private async Task<int> CountAsync(string userId, string libraryId, string itemType, CancellationToken ct)
+        {
             var path =
-                $"Users/{Uri.EscapeDataString(_userId!)}/Items" +
-                $"?ParentId={Uri.EscapeDataString(library.Id)}" +
-                "&IncludeItemTypes=Movie&Recursive=true&Limit=0";
+                $"Users/{Uri.EscapeDataString(userId)}/Items" +
+                $"?ParentId={Uri.EscapeDataString(libraryId)}" +
+                $"&IncludeItemTypes={itemType}&Recursive=true&Limit=0";
 
             var page = await GetAsync<JellyfinItemsDto>(path, ct);
-            var total = page?.TotalRecordCount ?? 0;
-            var name = string.IsNullOrWhiteSpace(library.Name) ? "the movie library" : $"\"{library.Name}\"";
-
-            return $"Connected. {total} {(total == 1 ? "film" : "films")} in {name}.";
+            return page?.TotalRecordCount ?? 0;
         }
 
         // ---------- the library ----------
 
         /// <summary>
-        /// Every film in the movie library, fetched a page at a time. Progress is reported per
-        /// page rather than per film so a slow server still says something without flooding the
-        /// status line.
+        /// Everything on the server this app understands: the films, and the television series.
+        /// One call because it is one sync, and because the two share a sign-in, a
+        /// <c>/Views</c> request and a progress line.
+        /// </summary>
+        /// <remarks>
+        /// A server missing one half is not an error. Only a server with neither is, and it is
+        /// reported once here rather than by each half separately — a library of television
+        /// answering "that server has no movie library" is exactly the bug this replaced.
+        /// </remarks>
+        public async Task<JellyfinLibraryContents> GetLibraryAsync(
+            IProgress<string>? progress = null,
+            CancellationToken ct = default)
+        {
+            await ConnectAsync(ct);
+
+            var userId = _userId!;
+            var libraries = await GetLibrariesAsync(userId, ct);
+            var movieLibrary = SelectMovieLibrary(libraries);
+            var seriesLibraries = SelectSeriesLibraries(libraries);
+
+            if (movieLibrary is null && seriesLibraries.Count == 0)
+                throw new JellyfinException("That Jellyfin server has no film or television library.");
+
+            var movies = movieLibrary is null
+                ? Array.Empty<JellyfinMovie>()
+                : await FetchMoviesAsync(userId, movieLibrary.Id, progress, ct);
+
+            var series = await FetchSeriesAsync(userId, seriesLibraries, progress, ct);
+
+            return new JellyfinLibraryContents(movies, series);
+        }
+
+        /// <summary>
+        /// Every film in the movie library, fetched a page at a time. Empty, rather than an
+        /// exception, on a server with no movie library at all.
         /// </summary>
         public async Task<IReadOnlyList<JellyfinMovie>> GetMoviesAsync(
             IProgress<string>? progress = null,
@@ -410,44 +547,194 @@ namespace UrDatabase.Services
             await ConnectAsync(ct);
 
             var userId = _userId!;
-            var libraryId = await ResolveMovieLibraryIdAsync(userId, ct);
+            var library = await FindMovieLibraryAsync(userId, ct);
+            if (library is null) return Array.Empty<JellyfinMovie>();
 
+            return await FetchMoviesAsync(userId, library.Id, progress, ct);
+        }
+
+        /// <summary>
+        /// Every television series on the server, across all of its television libraries. The
+        /// seasons and episodes underneath them are deliberately not fetched here.
+        /// </summary>
+        public async Task<IReadOnlyList<JellyfinSeries>> GetSeriesAsync(
+            IProgress<string>? progress = null,
+            CancellationToken ct = default)
+        {
+            await ConnectAsync(ct);
+
+            var userId = _userId!;
+            return await FetchSeriesAsync(userId, await FindSeriesLibrariesAsync(userId, ct), progress, ct);
+        }
+
+        /// <summary>
+        /// Progress is reported per page rather than per film so a slow server still says
+        /// something without flooding the status line.
+        /// </summary>
+        private async Task<IReadOnlyList<JellyfinMovie>> FetchMoviesAsync(
+            string userId,
+            string libraryId,
+            IProgress<string>? progress,
+            CancellationToken ct)
+        {
             var movies = new List<JellyfinMovie>();
             var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            await PageAsync(
+                startIndex => ItemsPath(userId, libraryId, "Movie", ItemFields, startIndex),
+                (items, total) =>
+                {
+                    foreach (var item in items)
+                    {
+                        var movie = item.ToMovie();
+                        if (movie is not null && seen.Add(movie.ItemId)) movies.Add(movie);
+                    }
+
+                    progress?.Report($"Jellyfin: {Math.Min(seen.Count, total)} of {total} films…");
+                },
+                ct);
+
+            return movies;
+        }
+
+        private async Task<IReadOnlyList<JellyfinSeries>> FetchSeriesAsync(
+            string userId,
+            IReadOnlyList<JellyfinViewDto> libraries,
+            IProgress<string>? progress,
+            CancellationToken ct)
+        {
+            var series = new List<JellyfinSeries>();
+            if (libraries.Count == 0) return series;
+
+            // Deduplicated across libraries, not merely within one. A server that files the same
+            // show under both "TV Shows" and "Anime" would otherwise put two identical cards on
+            // the shelf, and the second would overwrite the first in the cache anyway.
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            foreach (var library in libraries)
+            {
+                await PageAsync(
+                    startIndex => ItemsPath(userId, library.Id, "Series", SeriesFields, startIndex),
+                    (items, _) =>
+                    {
+                        foreach (var item in items)
+                        {
+                            var show = item.ToSeries();
+                            if (show is not null && seen.Add(show.ItemId)) series.Add(show);
+                        }
+
+                        progress?.Report($"Jellyfin: {seen.Count} {(seen.Count == 1 ? "series" : "series")}…");
+                    },
+                    ct);
+            }
+
+            return series;
+        }
+
+        /// <summary>
+        /// The seasons of one series, in the order the server lists them. Fetched when a series is
+        /// opened rather than during a sync — see the remarks on this class.
+        /// </summary>
+        public async Task<IReadOnlyList<JellyfinSeason>> GetSeasonsAsync(string seriesId, CancellationToken ct = default)
+        {
+            if (string.IsNullOrWhiteSpace(seriesId))
+                throw new JellyfinException("This series has no id on the server, so its seasons cannot be listed.");
+
+            await ConnectAsync(ct);
+
+            var path =
+                $"Shows/{Uri.EscapeDataString(seriesId)}/Seasons" +
+                $"?userId={Uri.EscapeDataString(_userId!)}" +
+                $"&Fields={SeasonFields}";
+
+            var page = await GetAsync<JellyfinItemsDto>(path, ct);
+
+            return (page?.Items ?? new List<JellyfinItemDto>())
+                .Select(item => item.ToSeason(seriesId))
+                .Where(season => season is not null)
+                .Select(season => season!)
+                .ToList();
+        }
+
+        /// <summary>
+        /// Every episode of one series, across every season, a page at a time.
+        /// </summary>
+        /// <remarks>
+        /// All seasons in one request rather than one request per season. Each episode carries its
+        /// own season number, so the grouping costs nothing here and asking per season would turn
+        /// opening a show with twelve of them into twelve round trips.
+        /// </remarks>
+        public async Task<IReadOnlyList<JellyfinEpisode>> GetEpisodesAsync(string seriesId, CancellationToken ct = default)
+        {
+            if (string.IsNullOrWhiteSpace(seriesId))
+                throw new JellyfinException("This series has no id on the server, so its episodes cannot be listed.");
+
+            await ConnectAsync(ct);
+
+            var episodes = new List<JellyfinEpisode>();
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            await PageAsync(
+                startIndex =>
+                    $"Shows/{Uri.EscapeDataString(seriesId)}/Episodes" +
+                    $"?userId={Uri.EscapeDataString(_userId!)}" +
+                    $"&Fields={EpisodeFields}" +
+                    $"&StartIndex={startIndex.ToString(CultureInfo.InvariantCulture)}" +
+                    $"&Limit={PageSize.ToString(CultureInfo.InvariantCulture)}",
+                (items, _) =>
+                {
+                    foreach (var item in items)
+                    {
+                        var episode = item.ToEpisode(seriesId);
+                        if (episode is not null && seen.Add(episode.ItemId)) episodes.Add(episode);
+                    }
+                },
+                ct);
+
+            return episodes;
+        }
+
+        private static string ItemsPath(string userId, string libraryId, string itemType, string fields, int startIndex) =>
+            $"Users/{Uri.EscapeDataString(userId)}/Items" +
+            $"?ParentId={Uri.EscapeDataString(libraryId)}" +
+            $"&IncludeItemTypes={itemType}&Recursive=true" +
+            "&SortBy=SortName&SortOrder=Ascending" +
+            $"&StartIndex={startIndex.ToString(CultureInfo.InvariantCulture)}" +
+            $"&Limit={PageSize.ToString(CultureInfo.InvariantCulture)}" +
+            $"&Fields={fields}";
+
+        /// <summary>
+        /// Walks a paged endpoint until it runs out, handing each page to <paramref name="accept"/>.
+        /// </summary>
+        /// <remarks>
+        /// One loop for films, series and episodes, because the way it stops is the part that is
+        /// easy to get wrong and expensive to get wrong twice: it advances by what the page
+        /// actually contained rather than by the page size, so a server that returns a short page
+        /// does not have the rest of its library skipped, and it stops on an empty page as well as
+        /// on the total, so a server whose total is wrong cannot spin here forever.
+        /// </remarks>
+        private async Task PageAsync(
+            Func<int, string> path,
+            Action<IReadOnlyList<JellyfinItemDto>, int> accept,
+            CancellationToken ct)
+        {
             var startIndex = 0;
 
             while (true)
             {
                 ct.ThrowIfCancellationRequested();
 
-                var path =
-                    $"Users/{Uri.EscapeDataString(userId)}/Items" +
-                    $"?ParentId={Uri.EscapeDataString(libraryId)}" +
-                    "&IncludeItemTypes=Movie&Recursive=true" +
-                    "&SortBy=SortName&SortOrder=Ascending" +
-                    $"&StartIndex={startIndex.ToString(CultureInfo.InvariantCulture)}" +
-                    $"&Limit={PageSize.ToString(CultureInfo.InvariantCulture)}" +
-                    $"&Fields={ItemFields}";
-
-                var page = await GetAsync<JellyfinItemsDto>(path, ct);
+                var page = await GetAsync<JellyfinItemsDto>(path(startIndex), ct);
                 var items = page?.Items ?? new List<JellyfinItemDto>();
                 if (items.Count == 0) break;
 
-                foreach (var item in items)
-                {
-                    var movie = item.ToMovie();
-                    if (movie is not null && seen.Add(movie.ItemId)) movies.Add(movie);
-                }
-
                 startIndex += items.Count;
 
-                var total = page?.TotalRecordCount ?? movies.Count;
-                progress?.Report($"Jellyfin: {Math.Min(startIndex, total)} of {total} films…");
+                var total = page?.TotalRecordCount ?? startIndex;
+                accept(items, total);
 
                 if (startIndex >= total) break;
             }
-
-            return movies;
         }
 
         // ---------- plumbing ----------

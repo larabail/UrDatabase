@@ -7,9 +7,10 @@ plot, runtime, cast and crew from [TMDB](https://www.themoviedb.org/) as you
 look at them, with the IMDb rating fetched from
 [OMDb](https://www.omdbapi.com/). If your films live on a
 [Jellyfin](https://jellyfin.org/) server instead of on this disk, point it at
-that too and browse and play them from the same window. Nothing of yours leaves
-the machine: the only things sent out are the title being looked up, its IMDb id
-for the rating, and whatever your own server is asked for.
+that too and browse and play them from the same window — television included,
+season by season. Nothing of yours leaves the machine: the only things sent out
+are the title being looked up, its IMDb id for the rating, and whatever your own
+server is asked for.
 
 It runs on Windows and macOS from one codebase, built with
 [Avalonia UI 11](https://avaloniaui.net/) on .NET 8.
@@ -38,6 +39,16 @@ It runs on Windows and macOS from one codebase, built with
   controls, so the counts deliberately do not add up to the total. The row is
   hidden entirely when everything comes from one place, or when every film is in
   both (`Services/LibraryFilter`).
+- **Filter by what it is.** When the library holds both films and television, a
+  second row beside that one offers **Everything**, **Films** and **Television**.
+  Series share the genre shelves with films, because Jellyfin gives a programme
+  real genres and it belongs in Drama rather than in a wing of its own — but
+  every series card carries a **Series** badge and its season count where a film
+  shows its year, so the two are mixed but never silently. Nothing is both, so
+  unlike the row above these counts do add up. It is hidden entirely on a library
+  of films only, and on one of television only: a permanent "Television 0" beside
+  "Films 412" is a control whose only possible use is to empty the window
+  (`Services/LibraryFilter`).
 - **It looks like a screening room.** Warm near-black rather than blue-black,
   because a blue surround makes every poster look faintly green; one brass
   accent, spent only on the focus ring, the primary action and progress that is
@@ -88,6 +99,16 @@ It runs on Windows and macOS from one codebase, built with
   inked alike or labelled merely "rating". Absent either key, that fact is
   simply absent and nothing else changes (`Services/TmdbService`,
   `Services/DetailFacts`, `Views/MovieDetailsView`).
+- **Television, season by season.** A Jellyfin server's `tvshows` libraries are
+  synced alongside its films, and opening a series shows its seasons as a row of
+  chips with that season's episodes listed under them — number, title, one line
+  of plot and a runtime. Clicking an episode streams it, through the same player
+  a film uses. Seasons and episodes are fetched when a series is opened rather
+  than during a sync, because two hundred programmes is several thousand
+  episodes and a sync that walked them all would be a sync nobody waits for; once
+  fetched they are cached, so a programme you have already opened still lists its
+  episodes with the server switched off (`Services/SeriesLoader`,
+  `Services/SeriesGrouping`, `Views/SeriesDetailsView`).
 - **Posters fill themselves in.** Any film in the catalogue with no poster is
   looked up in the background, four at a time, through one shared connection to
   TMDB, and the result is written back to the database so the next launch is
@@ -371,10 +392,10 @@ it ships — and the app makes no request, opens no extra panel and behaves
 exactly as it did before this existed.
 
 The easiest way to fill it in is the setup screen, which has a **Test
-connection** button: it signs in, finds the movie library and reports how many
-films are in it, so a wrong address, a wrong password and a server with no movie
-library are told apart before anything is saved. The same four fields can be
-written by hand instead:
+connection** button: it signs in, finds the film and television libraries and
+reports how much is in each, so a wrong address, a wrong password and a server
+this app can read nothing from are told apart before anything is saved. The same
+four fields can be written by hand instead:
 
 ```jsonc
 "Jellyfin": {
@@ -391,7 +412,7 @@ written by hand instead:
 | `ServerUrl` | Where the server is. A host with no scheme is assumed to be `http://`, since a server on a home network usually has no certificate |
 | `Username`, `Password` | The preferred sign-in. Exchanged for a session token at startup |
 | `ApiKey` | A Jellyfin API key, used when no username and password are given |
-| `LibraryName` | Which movie library to read, when a server has more than one |
+| `LibraryName` | Which **movie** library to read, when a server has more than one. It does not narrow television: a server routinely files that under several libraries — "TV Shows" and "Anime" is the usual pair — and all of them are read |
 
 Any of the four can come from the environment instead, which is the way to keep
 a password out of a file:
@@ -450,10 +471,58 @@ TMDB key at all**, and no title is ever run through the filename parser. Because
 Jellyfin supplies real genres, its films group properly instead of piling into
 the **Uncategorised** bucket a scanned library falls into.
 
+A server with only films and a server with only television both work. Neither is
+an error: only a server this app can read nothing from at all is, and it says
+that rather than complaining about whichever half is missing.
+
 The rating badge on a server film says `Jellyfin` when it is Jellyfin's own
 community rating, and `IMDb` only for the IMDb rating from OMDb. They are
 different numbers from different populations and are never shown under each
 other's name.
+
+#### Television
+
+Series from the server's `tvshows` libraries are synced beside its films and
+appear on the same genre shelves, each carrying a **Series** badge and the number
+of seasons behind it where a film shows its year. The **Television** control in
+the row above the genres takes them out of the library in one click, and that
+row appears only when there is actually both kinds to choose between.
+
+Opening a series is not opening a film. It shows the programme — its plot, its
+cast, its ratings, how many seasons and episodes the server counted — and under
+that a row of seasons, with the selected season's episodes listed below:
+`S01E02`, the title, one line of plot and the runtime. Specials are listed last
+rather than first, which is where the number alone would put them, because
+somebody opening a programme wants episode one.
+
+Clicking an episode plays it, through the same VLC or IINA that plays a film and
+by the same `static=true` stream URL. That URL carries a token, so it is built at
+the moment Play is pressed rather than being held on every row in the list.
+
+Seasons and episodes are **not** fetched by a sync. A library of two hundred
+programmes is several thousand episodes, and pulling them all would turn a sync
+that takes seconds into one that takes minutes, to fill in a screen almost nobody
+has open. They are fetched when a series is opened, written to
+`jellyfin_seasons` and `jellyfin_episodes`, and read from there first the next
+time — so a programme opens instantly on the second visit and still lists its
+episodes on a laptop nowhere near the server. The screen says which of the two it
+is showing you.
+
+A sync leaves those cached episodes alone, because it never asked the server
+about them: clearing them would empty a programme's episode list on the strength
+of a request that was not made. Reopening the series is what replaces them, and
+an episode deleted upstairs stops being offered then.
+
+Nothing folds a programme onto a film. *Fargo*, *Hannibal*, *Westworld* and
+*Shōgun* are each a film and a programme, and the title matching that folds a
+server film onto its local copy would make them one card — keeping the film and
+losing the programme from the library entirely. Nor does a series carry a TMDB
+id: Jellyfin reports a TMDB *television* id for one, which is a different
+catalogue with its own numbering, and matching a film to it by number would be
+wrong in a way nobody would spot.
+
+There is no download for an episode, and no local television. See
+[Known gaps](#known-gaps).
 
 #### A film that is in both places
 
@@ -539,9 +608,17 @@ switched off — which is the whole point of having fetched it.
 Point `DatabasePath` anywhere and the app creates what it needs on first
 launch. `src/UrDatabase.App/Data/schema.sql` is the full schema — the `movies`
 and `files` tables, the `scans` table each scan records itself in, the
-`jellyfin_movies` cache, the `movies_fts` FTS5 index and the triggers that keep
-it current — and every statement is `IF NOT EXISTS`, so it runs against a
-library you already have without touching your data.
+`jellyfin_movies` cache and its television counterparts `jellyfin_series`,
+`jellyfin_seasons` and `jellyfin_episodes`, the `movies_fts` FTS5 index and the
+triggers that keep it current — and every statement is `IF NOT EXISTS`, so it
+runs against a library you already have without touching your data.
+
+Television is cached in three tables of its own rather than as a `kind` column on
+`jellyfin_movies`. A series has no runtime and has two counts a film cannot have,
+so a shared table would carry a column that is always null for one of them and a
+discriminator every query would have to remember to filter on. The seasons and
+episodes tables are the only ones in the app written outside a sync: they are
+filled when a programme is opened, one series at a time.
 
 `IF NOT EXISTS` covers a whole new table and does nothing at all for a new
 column on a table that already exists, so `Database.Migrate` runs straight after
@@ -748,7 +825,10 @@ Stated plainly, so nobody has to find out by using it:
   server library's genres, but they remain ungrouped. Films from a Jellyfin
   server are unaffected: the server supplies their genres, and a scanned film
   the server also has borrows them for as long as the two are shown as one card
-  — the catalogue itself is not written to.
+  — the catalogue itself is not written to. A **programme** the server never
+  identified has no genres either and shares that bucket, deliberately: both mean
+  "nobody has said what this is", and the **Television** filter separates them
+  again in a click.
 - **A film in both places is matched by identity, then by name.** The server's
   copy and this computer's are shown as one card when they agree on a TMDB id,
   and otherwise when their titles agree once case, accents and punctuation are
@@ -759,13 +839,26 @@ Stated plainly, so nobody has to find out by using it:
   is what fixes that by hand. Nor does such a card offer the stream as a
   fallback: it plays the file on this disk, and says the server has it rather
   than doing anything with that.
-- **Films only.** The filename parser has no concept of television, so
-  `Show.S01E02` becomes an oddly titled film rather than an episode. A mixed
-  library will look wrong rather than broken. A Jellyfin server's series
-  libraries are skipped outright for the same reason.
+- **Television is a Jellyfin feature only.** A server's series, seasons and
+  episodes are browsable and playable, but nothing on this disk is. The filename
+  parser has no concept of television, so `Show.S01E02.mkv` in a watch folder is
+  still catalogued as an oddly titled film, and a local mixed library will look
+  wrong rather than broken. Teaching the parser to recognise an episode is not
+  enough on its own — a scanned episode needs a series to belong to, and the
+  catalogue has no table for one — so it was left out rather than half done.
+- **An episode cannot be downloaded.** **Download** keeps a copy of a server
+  *film* so it plays with the server switched off; there is no equivalent for an
+  episode, or for a season. Episodes stream or they do not play.
+- **A programme is described only by the server.** There is no TMDB enrichment
+  for television and no **Wrong film?** for a series, so a programme the server
+  has not identified stays undescribed. TMDB's television catalogue is a separate
+  one from its films, and using the film endpoints for it would be worse than
+  using nothing.
 - **Playback position is not shared with the server.** A film played from
   Jellyfin does not resume where you left off and is not marked watched, because
   the app hands the stream to an external player and never hears from it again.
+  The same is true of an episode, which also means nothing tracks which episode
+  you had reached.
 - **One Jellyfin server.** There is no way to add a second. The setup screen
   configures the first one and tests it, but a household with two servers has to
   pick one.

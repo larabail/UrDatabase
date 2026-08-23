@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Linq;
 using UrDatabase.Models;
 
@@ -19,6 +20,14 @@ namespace UrDatabase.Services
         public const string AllGenres = "All";
 
         /// <summary>The bucket for films no genre is known for yet.</summary>
+        /// <remarks>
+        /// And now for television the server never identified, which is the one thing about this
+        /// bucket that has changed. A scanned film has no genres because nothing has enriched it;
+        /// a Jellyfin series usually has real ones, but a show the server could not identify has
+        /// none either, and both mean the same thing — nobody has said what this is. They share a
+        /// bucket for that reason rather than by accident. The kind row separates them in a click
+        /// when the mixture is not what somebody wanted.
+        /// </remarks>
         public const string Uncategorised = "Uncategorised";
 
         public static bool HasNoGenre(UiMovie movie) => !movie.GenresList.Any();
@@ -114,6 +123,53 @@ namespace UrDatabase.Services
         /// because "1 films" is the sort of thing that survives review for years.
         /// </remarks>
         public static string CountLabel(int count)
-            => count == 1 ? "1 FILM" : $"{count} FILMS";
+            => count == 1 ? "1 FILM" : $"{count.ToString(CultureInfo.InvariantCulture)} FILMS";
+
+        /// <summary>
+        /// The same, for a shelf that may hold television as well: <c>"12 FILMS · 3 SERIES"</c>.
+        /// </summary>
+        /// <remarks>
+        /// A shelf of eight films and four programmes headed "12 FILMS" is the exact failure that
+        /// makes mixing the two on one shelf indefensible, and a count is the one place the
+        /// mixture is stated as a number. Each half is named only when it is there, so a library
+        /// with no television reads precisely as it did before — which is every library this app
+        /// had until now.
+        /// </remarks>
+        public static string CountLabel(IEnumerable<UiMovie>? items)
+        {
+            var materialised = items as IReadOnlyCollection<UiMovie> ?? items?.ToList();
+            if (materialised is null || materialised.Count == 0) return CountLabel(0);
+
+            var films = materialised.Count(m => m.IsFilm);
+            var series = materialised.Count(m => m.IsSeries);
+
+            if (series == 0) return CountLabel(films);
+
+            // "SERIES" is its own plural. Spelled once rather than through a conditional that
+            // would read as though one of the two branches did something.
+            var seriesLabel = $"{series.ToString(CultureInfo.InvariantCulture)} SERIES";
+            return films == 0 ? seriesLabel : $"{CountLabel(films)} · {seriesLabel}";
+        }
+
+        /// <summary>
+        /// What the search field offers to search, which is the cheapest possible answer to "did
+        /// the scan actually find anything". Names television only when there is some.
+        /// </summary>
+        public static string SearchWatermark(IEnumerable<UiMovie>? items)
+        {
+            IReadOnlyCollection<UiMovie> materialised =
+                items as IReadOnlyCollection<UiMovie> ?? items?.ToList() ?? (IReadOnlyCollection<UiMovie>)Array.Empty<UiMovie>();
+
+            var films = materialised.Count(m => m.IsFilm);
+            var series = materialised.Count(m => m.IsSeries);
+
+            var filmPart = films == 1 ? "1 film" : $"{films:N0} films";
+            var seriesPart = series == 1 ? "1 series" : $"{series:N0} series";
+
+            if (series == 0) return $"Search {filmPart}";
+            if (films == 0) return $"Search {seriesPart}";
+
+            return $"Search {filmPart} and {seriesPart}";
+        }
     }
 }
