@@ -637,7 +637,9 @@ namespace UrDatabase.Views
                 //
                 // A film that is in both places is not skipped: it is showing the server's poster
                 // only until the catalogue on this machine has one of its own, and that copy is
-                // the one that still has a poster with the server switched off.
+                // the one that still has a poster with the server switched off. A film whose own
+                // copy has since gone is skipped again, because there is no longer a local copy
+                // for that artwork to belong to — it keeps whatever poster it already had.
                 if (m.IsRemote) continue;
                 if (!string.IsNullOrWhiteSpace(m.PosterPath)) continue;
 
@@ -1141,6 +1143,14 @@ namespace UrDatabase.Views
         /// play URL, and failing to get one is reported as "cannot play right now" rather than as
         /// an error.
         /// </summary>
+        /// <remarks>
+        /// Also opens a catalogued film whose own copy has gone and which the server still has.
+        /// Such a card keeps its catalogue identity here — the row id, and the title and year the
+        /// catalogue holds rather than the server's spelling of them. That matters beyond
+        /// tidiness: a download is named from the title on this screen and registered by parsing
+        /// that name back, so taking the server's title for a film the catalogue already has under
+        /// another one would file the download as a second film beside the first.
+        /// </remarks>
         private async Task ShowRemoteDetailsAsync(UiMovie m)
         {
             if (_jellyfin is null || string.IsNullOrWhiteSpace(m.RemoteId)) return;
@@ -1150,14 +1160,22 @@ namespace UrDatabase.Views
             {
                 var vm = new MovieDetailsVm
                 {
-                    Title = film.Title,
-                    Year = film.Year,
+                    // Zero for a film that only ever came from the server, which is what every
+                    // consumer of this already treats as "no local row".
+                    LocalId = m.Id,
+                    Title = m.Title,
+                    Year = m.Year,
                     Genres = film.Genres,
                     Overview = film.Overview,
                     Runtime = film.RuntimeMinutes,
                     CommunityRating = film.CommunityRating,
                     ImdbId = film.ImdbId,
-                    PosterPath = m.PosterPath,
+
+                    // What the card is already showing: this machine's artwork when the catalogue
+                    // has any, and the server's otherwise. Taking the local column alone opened a
+                    // blank screen for a degraded film the catalogue had never fetched a poster
+                    // for, which is most of them.
+                    PosterPath = m.DisplayPosterPath,
                     BackdropUrl = _jellyfin.BuildBackdropUrl(film.ItemId),
                     IsRemote = true,
                     RemoteId = film.ItemId,
@@ -1186,8 +1204,10 @@ namespace UrDatabase.Views
                 }
 
                 // The IMDb id came from Jellyfin's own metadata, so this is a real IMDb rating and
-                // not the community number beside it. No local movie row owns it.
-                vm.ImdbRating = await LoadImdbRatingAsync(vm.ImdbId, null, cts.Token);
+                // not the community number beside it. Keyed to the catalogue row when there is
+                // one — a film whose copy has gone still has a row that owns the rating — and to
+                // nothing at all for a film that only ever came from the server.
+                vm.ImdbRating = await LoadImdbRatingAsync(vm.ImdbId, vm.LocalId > 0 ? vm.LocalId : null, cts.Token);
 
                 await ShowDetailsAsync(vm);
             }

@@ -64,7 +64,12 @@ namespace UrDatabase.Models
         /// </summary>
         public MediaKind Kind { get; set; } = MediaKind.Film;
 
-        /// <summary>True when a series is only on the server, which every series is.</summary>
+        /// <summary>
+        /// True when this is a television series rather than a film. A question about what the
+        /// card is, not about where it is — <see cref="IsRemote"/> and <see cref="IsOnServer"/>
+        /// answer that, and every series happens to be on a server, which is a fact about how
+        /// television reaches this app rather than part of what a series means.
+        /// </summary>
         public bool IsSeries => Kind == MediaKind.Series;
 
         public bool IsFilm => Kind == MediaKind.Film;
@@ -135,13 +140,50 @@ namespace UrDatabase.Models
         public string? RemoteId { get; set; }
 
         /// <summary>
-        /// True when the film is <em>only</em> on the server, so playing it needs the server
-        /// reachable. A film held in both places is not remote: it plays from this disk.
+        /// True when the catalogue names at least one file for this film that the last completed
+        /// scan still found. Read together with <see cref="HasFileMissing"/>: a film the catalogue
+        /// has no file for at all has neither set, and that is a different thing from one whose
+        /// copy went away.
         /// </summary>
-        public bool IsRemote => Source == MovieSource.Jellyfin;
+        public bool HasFileHere { get; set; }
 
-        /// <summary>True when the catalogue on this machine has the film.</summary>
-        public bool IsOnThisComputer => Source == MovieSource.Local;
+        /// <summary>
+        /// True when the catalogue names at least one file for this film that a completed scan
+        /// looked for and could not find. Written by the scan into <c>files.missing_since</c>;
+        /// a scan that was cancelled, and a folder that was not there to be walked, both leave
+        /// this false, because neither may conclude anything from not having found something.
+        /// </summary>
+        public bool HasFileMissing { get; set; }
+
+        /// <summary>
+        /// True when every file this machine had for the film is one a scan could not find.
+        ///
+        /// False for a film with two prints where only one went away — one surviving copy still
+        /// plays — and false for a film the catalogue names no file for at all, which is an
+        /// ordinary "nothing linked yet" rather than a film that has gone.
+        /// </summary>
+        public bool FileIsGone => HasFileMissing && !HasFileHere;
+
+        /// <summary>
+        /// True when the film has to be streamed, because nothing on this disk will play it.
+        ///
+        /// A film from a server, and also a catalogued film whose own copy is gone and which the
+        /// server still holds — that one degrades to being a server film rather than disappearing,
+        /// so that the row carrying its corrected TMDB match, its poster and its genres survives
+        /// the file being deleted.
+        /// </summary>
+        public bool IsRemote => Source == MovieSource.Jellyfin || (FileIsGone && IsOnServer);
+
+        /// <summary>
+        /// True when a film on this machine will actually open: the catalogue has the film
+        /// <em>and</em> the last scan could still find a file for it.
+        ///
+        /// It used to be the source alone, which made it a claim about where a row came from
+        /// rather than about where the film is. A film somebody had deleted kept the
+        /// <see cref="OfflineTag"/> badge and answered the "on this computer" filter until the
+        /// moment Play failed on it.
+        /// </summary>
+        public bool IsOnThisComputer => Source == MovieSource.Local && !FileIsGone;
 
         /// <summary>True when a server has the film, whether or not this machine does too.</summary>
         public bool IsOnServer => !string.IsNullOrWhiteSpace(RemoteId);
@@ -159,13 +201,16 @@ namespace UrDatabase.Models
         /// carries id 0 and would collapse into a single entry if grouped by that.
         ///
         /// A film in both places keeps its local key. It is one film, counted once, and it is the
-        /// local copy that everything else about it — the file, the TMDB match — hangs off.
+        /// local copy that everything else about it — the file, the TMDB match — hangs off. That
+        /// holds even once the file is gone: keyed on <see cref="Source"/> rather than on
+        /// <see cref="IsRemote"/>, so a film degrading to a server film cannot change identity
+        /// underneath a list that has already deduplicated on it.
         ///
         /// Television is keyed separately from film. Jellyfin does not reuse an id between the
         /// two, so this buys nothing today; it is here so that the day something does — a second
         /// server, an import, a fixture — a series and a film cannot silently become one card.
         /// </summary>
-        public string Key => IsRemote
+        public string Key => Source == MovieSource.Jellyfin
             ? IsSeries ? $"jellyfin:series:{RemoteId}" : $"jellyfin:{RemoteId}"
             : $"local:{Id.ToString(CultureInfo.InvariantCulture)}";
 

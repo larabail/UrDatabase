@@ -358,8 +358,19 @@
                                    Fill="{StaticResource EdgeBrush}"
                                    VerticalAlignment="Center"/>
 
-                        <ScrollViewer Grid.Column="4" Classes="shelf" Height="40" Padding="24,0">
-                            <ItemsControl x:Name="GenreChipsList" ItemsSource="{Binding GenreChips}">
+                        <!-- Margin on the content rather than padding on the
+                             scroller, for the same reason the hall below does it:
+                             a ScrollViewer will not scroll into its own padding.
+                             With 24px of padding here the row stopped 24px short
+                             of its own end, so the last genre — Western on most
+                             libraries — could never be brought fully into view no
+                             matter how far it was scrolled. It read as a clipping
+                             bug in the label rather than as a scroller that would
+                             not travel, which is why it survived a first look. -->
+                        <ScrollViewer Grid.Column="4" Classes="shelf" Height="40">
+                            <ItemsControl x:Name="GenreChipsList"
+                                          Margin="24,0"
+                                          ItemsSource="{Binding GenreChips}">
                                 <ItemsControl.ItemsPanel>
                                     <ItemsPanelTemplate>
                                         <StackPanel Orientation="Horizontal"/>
