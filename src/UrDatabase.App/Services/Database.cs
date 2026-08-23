@@ -155,6 +155,11 @@ namespace UrDatabase.Services
             AddColumnIfMissing(conn, "files", "last_seen_at", "TEXT");
             AddColumnIfMissing(conn, "files", "last_seen_scan_id", "INTEGER");
             AddColumnIfMissing(conn, "files", "missing_since", "TEXT");
+
+            // Which TMDB film a catalogued one is. The identification used to be re-derived from
+            // the title on every open, so correcting a wrong match could not survive the film
+            // being reopened — the same wrong guess was simply worked out again.
+            AddColumnIfMissing(conn, "movies", "tmdb_id", "INTEGER");
         }
 
         /// <summary>
@@ -242,7 +247,8 @@ CREATE TABLE IF NOT EXISTS movies (
     title       TEXT    NOT NULL,
     year        INTEGER,
     genres      TEXT,
-    poster_path TEXT
+    poster_path TEXT,
+    tmdb_id     INTEGER
 );
 CREATE TABLE IF NOT EXISTS files (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
