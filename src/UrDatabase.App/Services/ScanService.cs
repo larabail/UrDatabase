@@ -522,10 +522,18 @@ WHERE id = @id;
             var index = new MovieIndex();
 
             var rows = await conn.QueryAsync<MovieRow>(
-                "SELECT id AS Id, title AS Title, year AS Year FROM movies ORDER BY id");
+                "SELECT id AS Id, title AS Title, year AS Year, scan_title AS ScanTitle FROM movies ORDER BY id");
 
             foreach (var row in rows)
+            {
                 index.Add(row.Id, row.Title, row.Year);
+
+                // A film whose displayed title was corrected still arrives from disk under the name
+                // the scan gave it. Filed under both, the re-scan finds the row it already made
+                // instead of creating a second one beside it.
+                if (!string.IsNullOrWhiteSpace(row.ScanTitle))
+                    index.AddAlias(row.Id, row.ScanTitle, row.Year);
+            }
 
             return index;
         }
@@ -535,6 +543,9 @@ WHERE id = @id;
             public long Id { get; set; }
             public string? Title { get; set; }
             public int? Year { get; set; }
+
+            /// <summary>Null unless the film has been renamed by a corrected TMDB match.</summary>
+            public string? ScanTitle { get; set; }
         }
 
         /// <summary>

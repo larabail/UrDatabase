@@ -22,7 +22,11 @@ CREATE TABLE IF NOT EXISTS movies (
     -- Which TMDB film this is. Written by the automatic match and overwritten when somebody
     -- corrects it, so the plot, cast and artwork all describe the same film and a correction is
     -- not re-derived away the next time the film is opened.
-    tmdb_id     INTEGER
+    tmdb_id     INTEGER,
+    -- The title the scanner derived from the filename, kept when a corrected TMDB match renames
+    -- the film. The scanner resolves what it parses out of a filename, so without this a re-scan
+    -- would fail to find the renamed row and insert a second one beside it.
+    scan_title  TEXT
 );
 
 CREATE TABLE IF NOT EXISTS files (

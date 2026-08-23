@@ -875,7 +875,9 @@ namespace UrDatabase.Views
 
                 // A downloaded film is a row the library behind this screen does not have yet: it
                 // would still be shown as living only on the server until something reloaded it.
-                if (DetailsView.DownloadedSomething) await _searchLoop.RefreshAsync();
+                // A renamed one is a row whose name, sort position and genre shelf have all moved.
+                if (DetailsView.DownloadedSomething || DetailsView.RenamedSomething)
+                    await _searchLoop.RefreshAsync();
             }
             finally
             {

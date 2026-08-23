@@ -160,6 +160,11 @@ namespace UrDatabase.Services
             // the title on every open, so correcting a wrong match could not survive the film
             // being reopened — the same wrong guess was simply worked out again.
             AddColumnIfMissing(conn, "movies", "tmdb_id", "INTEGER");
+
+            // The name the scanner gave a film, now that its displayed title can be corrected to
+            // something else. Null on every row that predates a correction, which is the honest
+            // value: those rows are still called what the scan called them.
+            AddColumnIfMissing(conn, "movies", "scan_title", "TEXT");
         }
 
         /// <summary>
@@ -248,7 +253,8 @@ CREATE TABLE IF NOT EXISTS movies (
     year        INTEGER,
     genres      TEXT,
     poster_path TEXT,
-    tmdb_id     INTEGER
+    tmdb_id     INTEGER,
+    scan_title  TEXT
 );
 CREATE TABLE IF NOT EXISTS files (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
