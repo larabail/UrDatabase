@@ -237,11 +237,30 @@ namespace UrDatabase.Tests
             var choices = WithFolder();
             choices.TmdbApiKey = "  pasted-with-a-newline\n";
             choices.OmdbApiKey = " ";
+            choices.UrActorApiKey = "  uractor-key ";
 
             var config = choices.ToConfig();
 
             Assert.Equal("pasted-with-a-newline", config.TmdbApiKey);
             Assert.Equal("", config.OmdbApiKey);
+            Assert.Equal("uractor-key", config.UrActorApiKey);
+        }
+
+        /// <summary>
+        /// Every key this screen edits has to make the round trip. A key the screen can set and
+        /// then silently drops on the next save is worse than one it never offered.
+        /// </summary>
+        [Fact]
+        public void A_key_typed_into_this_screen_comes_back_to_it()
+        {
+            var choices = SetupChoices.From(new AppConfig
+            {
+                WatchFolders = new[] { "/films" },
+                UrActorApiKey = "typed-by-the-user"
+            });
+
+            Assert.Equal("typed-by-the-user", choices.UrActorApiKey);
+            Assert.Equal("typed-by-the-user", choices.ToConfig().UrActorApiKey);
         }
 
         [Fact]

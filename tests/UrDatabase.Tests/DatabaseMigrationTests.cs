@@ -78,6 +78,28 @@ VALUES ('abc', 'Ran', 1985, '2026-01-01T00:00:00.0000000Z');";
 
             Assert.True(Database.ColumnExists(conn, "jellyfin_movies", "cast_list"));
             Assert.True(Database.ColumnExists(conn, "jellyfin_movies", "crew_list"));
+
+            // Nothing asked Jellyfin for its media streams until the badges existed, so every
+            // library synced before then has this column absent — and every server film would
+            // fail on "no such column" the moment somebody opened one.
+            Assert.True(Database.ColumnExists(conn, "jellyfin_movies", "media_info"));
+        }
+
+        /// <summary>
+        /// A whole new table needs no migration: <c>CREATE TABLE IF NOT EXISTS</c> in the schema
+        /// script does build one against an existing database. Asserted anyway, because the
+        /// awards cache is read on the details path and a missing table there is a film that will
+        /// not open.
+        /// </summary>
+        [Fact]
+        public void An_existing_library_gains_the_awards_cache()
+        {
+            CreateOldLibrary();
+
+            using var conn = Database.Open(_dbPath);
+
+            Assert.True(Database.TableExists(conn, "oscar_lookups"));
+            Assert.True(Database.TableExists(conn, "oscar_nominations"));
         }
 
         [Fact]

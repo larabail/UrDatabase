@@ -1,3 +1,4 @@
+using System.Linq;
 using System.Net;
 using System.Threading;
 using System.Threading.Tasks;
@@ -285,6 +286,76 @@ namespace UrDatabase.Tests
             using var svc = Create(FakeHttpMessageHandler.Json("{}", HttpStatusCode.NotFound));
 
             Assert.Null(await svc.GetCreditsByIdAsync(550, CancellationToken.None));
+        }
+
+        // ---------- recommendations ----------
+
+        /// <summary>
+        /// <c>/recommendations</c>, not <c>/similar</c>. The two are easy to confuse and answer
+        /// different questions: similar is shared genres and keywords, recommendations is what
+        /// people who rated this film also rated, and "what next" is the second one.
+        /// </summary>
+        [Fact]
+        public void Recommendations_ask_the_recommendations_endpoint()
+        {
+            using var svc = Create(FakeHttpMessageHandler.Json("{}"));
+
+            var url = svc.BuildRecommendationsUrl(550);
+
+            Assert.Contains("/movie/550/recommendations", url);
+            Assert.DoesNotContain("/similar", url);
+            Assert.Contains("api_key=test-key", url);
+        }
+
+        [Fact]
+        public async Task Recommendations_are_read_in_the_order_tmdb_returned_them()
+        {
+            var handler = FakeHttpMessageHandler.Json(@"{
+                ""results"": [
+                    { ""id"": 807, ""title"": ""Se7en"", ""release_date"": ""1995-09-22"" },
+                    { ""id"": 1422, ""title"": ""The Departed"", ""release_date"": ""2006-10-05"" }
+                ]
+            }");
+            using var svc = Create(handler);
+
+            var found = await svc.GetRecommendationsAsync(550, CancellationToken.None);
+
+            Assert.Equal(new[] { 807, 1422 }, found.Select(f => f.Id));
+            Assert.Equal(1995, found[0].Year);
+        }
+
+        [Fact]
+        public async Task No_key_means_no_request_for_recommendations()
+        {
+            var handler = FakeHttpMessageHandler.Json(@"{ ""results"": [ { ""id"": 807 } ] }");
+            using var svc = new TmdbService("", "", "w342", false, handler);
+
+            Assert.Empty(await svc.GetRecommendationsAsync(550, CancellationToken.None));
+            Assert.Equal(0, handler.CallCount);
+        }
+
+        [Fact]
+        public async Task A_film_nothing_has_identified_is_never_asked_about()
+        {
+            var handler = FakeHttpMessageHandler.Json(@"{ ""results"": [ { ""id"": 807 } ] }");
+            using var svc = Create(handler);
+
+            Assert.Empty(await svc.GetRecommendationsAsync(0, CancellationToken.None));
+            Assert.Equal(0, handler.CallCount);
+        }
+
+        /// <summary>
+        /// The shelf is an offer, not a fact. Every failure here is empty rather than thrown,
+        /// because none of them is worth stopping a film from opening.
+        /// </summary>
+        [Fact]
+        public async Task Recommendations_are_empty_rather_than_fatal_when_tmdb_fails()
+        {
+            using var broken = Create(FakeHttpMessageHandler.Json("{}", HttpStatusCode.InternalServerError));
+            Assert.Empty(await broken.GetRecommendationsAsync(550, CancellationToken.None));
+
+            using var nonsense = Create(FakeHttpMessageHandler.Json("not json"));
+            Assert.Empty(await nonsense.GetRecommendationsAsync(550, CancellationToken.None));
         }
     }
 }

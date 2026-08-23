@@ -79,14 +79,39 @@ namespace UrDatabase.Services
         /// Everything the list needs in one pass. Without <c>Fields</c> Jellyfin returns a stub
         /// with no genres, overview or provider ids, and the app would be back to guessing.
         /// </summary>
-        public const string ItemFields = "Genres,Overview,ProviderIds,ProductionYear,RunTimeTicks,CommunityRating,People";
+        /// <remarks>
+        /// <c>MediaStreams</c> is the expensive one — it adds a track list to every item, and a
+        /// library of several hundred films pays for it in one response. It is asked for anyway,
+        /// because it is the only measured description of a copy this app can obtain: the local
+        /// path has nothing but a filename to read, and a filename is a claim. Asking per film
+        /// instead would be a request every time somebody opened one, against a server that may
+        /// not be reachable, to fill in a row that is meant to be instant.
+        ///
+        /// Deliberately not <c>MediaSources</c>, which carries the same streams wrapped in the
+        /// server's own file paths and direct-play profiles — several times the payload for
+        /// nothing this screen shows.
+        /// </remarks>
+        public const string ItemFields = DescriptionFields + ",MediaStreams,Width,Height";
 
         /// <summary>
-        /// The same, plus the two counts that make a series card readable as a series. Both are
-        /// optional on the wire — not every server version fills them in — so nothing depends on
-        /// them arriving; a missing count is printed as nothing rather than as zero.
+        /// What describes the work rather than the file: title, plot, genres, people, ids. Shared
+        /// by films and series because both are things somebody reads about.
         /// </summary>
-        public const string SeriesFields = ItemFields + ",ChildCount,RecursiveItemCount";
+        private const string DescriptionFields =
+            "Genres,Overview,ProviderIds,ProductionYear,RunTimeTicks,CommunityRating,People";
+
+        /// <summary>
+        /// A description plus the two counts that make a series card readable as a series. Both
+        /// are optional on the wire — not every server version fills them in — so nothing depends
+        /// on them arriving; a missing count is printed as nothing rather than as zero.
+        /// </summary>
+        /// <remarks>
+        /// Built from <see cref="DescriptionFields"/> rather than from <see cref="ItemFields"/>,
+        /// which is the difference between the two constants. A series is a folder: it has no
+        /// track list and no picture size of its own, so asking for <c>MediaStreams</c> here buys
+        /// a programme no badges and costs the request anyway.
+        /// </remarks>
+        public const string SeriesFields = DescriptionFields + ",ChildCount,RecursiveItemCount";
 
         /// <summary>A season needs its episode count and nothing else; its name and number are always sent.</summary>
         public const string SeasonFields = "ChildCount";

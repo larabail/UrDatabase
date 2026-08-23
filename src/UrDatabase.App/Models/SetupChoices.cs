@@ -41,6 +41,9 @@ namespace UrDatabase.Models
 
         public string OmdbApiKey { get; set; } = "";
 
+        /// <summary>UrActor, for the Academy Award nominations under the poster.</summary>
+        public string UrActorApiKey { get; set; } = "";
+
         /// <summary>
         /// Prefills the screen from the user's own configuration file. Takes the raw config
         /// rather than the resolved one so that a key coming from the environment, or compiled
@@ -65,7 +68,8 @@ namespace UrDatabase.Models
                 ApiKey = jellyfin.ApiKey ?? "",
                 LibraryName = jellyfin.LibraryName ?? "",
                 TmdbApiKey = config.TmdbApiKey ?? "",
-                OmdbApiKey = config.OmdbApiKey ?? ""
+                OmdbApiKey = config.OmdbApiKey ?? "",
+                UrActorApiKey = config.UrActorApiKey ?? ""
             };
 
             foreach (var folder in folders) choices.Folders.Add(folder);
@@ -175,6 +179,7 @@ namespace UrDatabase.Models
 
                 TmdbApiKey = (TmdbApiKey ?? "").Trim(),
                 OmdbApiKey = (OmdbApiKey ?? "").Trim(),
+                UrActorApiKey = (UrActorApiKey ?? "").Trim(),
 
                 SetupCompleted = true
             };

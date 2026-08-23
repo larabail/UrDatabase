@@ -12,13 +12,14 @@
 
   <!--
     API keys baked in at build time. CI passes them from repository secrets:
-      dotnet publish ... -p:TmdbApiKey=$TMDB_API_KEY -p:OmdbApiKey=$OMDB_API_KEY
-    Both default to empty so a local build with no keys still compiles, runs and tests.
+      dotnet publish ... -p:TmdbApiKey=$TMDB_API_KEY -p:OmdbApiKey=$OMDB_API_KEY -p:UrActorApiKey=$URACTOR_API_KEY
+    All default to empty so a local build with no keys still compiles, runs and tests.
     Never commit a value here.
   -->
   <PropertyGroup>
     <TmdbApiKey Condition="'$(TmdbApiKey)' == ''"></TmdbApiKey>
     <OmdbApiKey Condition="'$(OmdbApiKey)' == ''"></OmdbApiKey>
+    <UrActorApiKey Condition="'$(UrActorApiKey)' == ''"></UrActorApiKey>
   </PropertyGroup>
 
   <ItemGroup>
@@ -29,6 +30,10 @@
     <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
       <_Parameter1>OmdbApiKey</_Parameter1>
       <_Parameter2>$(OmdbApiKey)</_Parameter2>
+    </AssemblyAttribute>
+    <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
+      <_Parameter1>UrActorApiKey</_Parameter1>
+      <_Parameter2>$(UrActorApiKey)</_Parameter2>
     </AssemblyAttribute>
   </ItemGroup>
 
