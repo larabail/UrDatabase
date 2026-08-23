@@ -141,6 +141,22 @@ actually under the temporary root before writing a byte. `AppConfig`,
 reason — use it. If a piece of code offers no way to be pointed elsewhere, that
 is a bug in the code and not a licence to run it against real data.
 
+Running the app itself is the case where that used to be true, and it is the
+case that matters, because `dotnet run` is not optional — the step below asks
+for it, and Avalonia reports a broken binding at runtime rather than at compile
+time. Set `URDATABASE_DATA_DIR` and the whole install moves: the catalogue, the
+poster cache, the logs and `appsettings.json` all hang off it.
+
+```bash
+export URDATABASE_DATA_DIR=/tmp/urdb-scratch
+dotnet run --project src/UrDatabase.App
+```
+
+Setting `HOME` instead does not work and looks like it does; that is the trap
+above. Check afterwards rather than trusting it — the scratch directory should
+have gained `movies.db-wal`, and the real one should be byte for byte what it
+was.
+
 ## Commit convention
 
 Conventional Commits, with a body that explains the reasoning.

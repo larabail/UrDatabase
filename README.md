@@ -377,6 +377,25 @@ empty box and stays out of the file — otherwise pressing Save would copy a
 shipped credential onto your disk under your own name, where nobody would think
 to rotate it.
 
+`URDATABASE_DATA_DIR` moves that application data directory, and with it the
+whole install: `appsettings.json`, the catalogue, the poster cache and the logs
+all hang off it.
+
+```bash
+URDATABASE_DATA_DIR=/tmp/urdb-scratch dotnet run --project src/UrDatabase.App
+```
+
+It exists so the app can be launched against a throwaway install without
+touching a real one — for a verification run, for reproducing a bug against a
+copied database, or for keeping two libraries apart. Setting `HOME` does not do
+this and quietly appears to: on macOS .NET asks the operating system for the
+application data directory rather than reading the environment, so a script that
+sets `HOME` writes to the live install anyway. That has already cost somebody
+their API keys, and it is why the variable exists rather than a note asking
+people to be careful. Blank or unset leaves the install where it has always
+been; a relative path is resolved against the working directory, since a macOS
+bundle starts at `/`.
+
 ### When setup appears
 
 Only on an install that has never been configured: no `appsettings.json` of its
