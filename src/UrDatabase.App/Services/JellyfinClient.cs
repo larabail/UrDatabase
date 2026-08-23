@@ -399,6 +399,39 @@ namespace UrDatabase.Services
         // ---------- the library ----------
 
         /// <summary>
+        /// Asks the server to scan its libraries, which is the only way a file that appeared on
+        /// its disk becomes a film it knows about.
+        ///
+        /// It exists here rather than in <see cref="JellyfinUploader"/> because this class already
+        /// holds the token and the shape of an authenticated request; a second HTTP client for one
+        /// POST would mean a second place for the authorization header to be got wrong.
+        ///
+        /// Two things about it are worth knowing at the call site. It is administrative — a
+        /// perfectly ordinary Jellyfin account gets a 403 and cannot start a scan — and it is
+        /// asynchronous even when it succeeds: the server answers 204 immediately and the film
+        /// appears when the scan reaches it, which on a large library is not instant.
+        /// </summary>
+        public async Task RefreshLibraryAsync(CancellationToken ct = default)
+        {
+            await ConnectAsync(ct);
+
+            using var request = new HttpRequestMessage(HttpMethod.Post, BuildUri("Library/Refresh"));
+            request.Headers.TryAddWithoutValidation("Authorization", BuildAuthorizationHeader(_token));
+
+            using var response = await SendAsync(request, ct);
+
+            if (response.IsSuccessStatusCode) return;
+
+            if (response.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
+                throw new JellyfinException(
+                    "Jellyfin will not let this account start a library scan, because scanning is " +
+                    "an administrator's job. The film is on the server and will appear at its next " +
+                    "scheduled scan.");
+
+            throw new JellyfinException($"Jellyfin refused to rescan its library (HTTP {(int)response.StatusCode}).");
+        }
+
+        /// <summary>
         /// Every film in the movie library, fetched a page at a time. Progress is reported per
         /// page rather than per film so a slow server still says something without flooding the
         /// status line.

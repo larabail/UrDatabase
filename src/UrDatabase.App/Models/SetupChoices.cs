@@ -158,8 +158,15 @@ namespace UrDatabase.Models
             {
                 DatabasePath = source.DatabasePath,
                 PosterCacheDir = source.PosterCacheDir,
+                DownloadFolder = source.DownloadFolder,
                 DownloadPosters = source.DownloadPosters,
                 TmdbImageSize = source.TmdbImageSize,
+
+                // Carried rather than asked about. This screen has no field for the SFTP account
+                // uploading needs, and the file is rewritten whole, so anything not copied across
+                // here is deleted the first time somebody presses Save — silently, and long after
+                // they configured it.
+                JellyfinSftp = source.JellyfinSftp ?? new JellyfinSftpSettings(),
 
                 // An unticked source is stored as nothing at all rather than left behind, so that
                 // turning Jellyfin off in this screen really does stop the app contacting it.
