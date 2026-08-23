@@ -69,7 +69,12 @@ Avalonia replaces WPF. The differences that mattered during the port:
 | `PosterAutoLoader` | Fills in missing posters in the background. |
 | `ImageLoader` | Loads posters and backdrops from a URL or local file into an Avalonia bitmap. |
 | `MovieFileMatcher` | Matches a catalogue entry to a file on disk. |
-| `FileLauncher` | Opens a movie in the default player, per platform. |
+| `FileLauncher` | Opens a movie in the default player, per platform, and a web address in the default browser — only `http` and `https`, because every URL it is given comes out of an API response. |
+| `AppVersion` | Which version is running, and which of two versions is newer. The same rules `web/downloads/releases.js` applies to the same tags, so the app and the downloads page cannot disagree about one release. |
+| `UpdateFeed` | Turns GitHub's list of releases into the newest one carrying a build for this machine. Pure, including which runtime identifier this computer wants. |
+| `UpdateService` | The one request behind that: the releases API, once per launch, every failure answered as "no update". |
+| `UpdateDownloader` | Fetches a release asset into the downloads folder through a `.part` file. Does not install it; nothing here can. |
+| `UpdatePrompt` / `UpdateState` | What the banner says, whether it appears at all, and the one version a user has dismissed. |
 | `BuildKeys` | Reads API keys compiled in at build time. |
 | `AppLog` | Best-effort diagnostics under the app data folder. |
 

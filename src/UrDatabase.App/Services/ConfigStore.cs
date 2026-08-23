@@ -165,6 +165,7 @@ namespace UrDatabase.Services
                 config.DownloadPosters,
                 TmdbImageSize = config.TmdbImageSize ?? "",
                 config.SetupCompleted,
+                config.CheckForUpdates,
                 Jellyfin = new
                 {
                     jellyfin.ServerUrl,

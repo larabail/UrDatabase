@@ -52,6 +52,17 @@ namespace UrDatabase.Services
         public bool SetupCompleted { get; set; } = false;
 
         /// <summary>
+        /// Whether the app asks GitHub, once per launch, if there is a newer release than this one.
+        ///
+        /// On by default: a desktop app that cannot update itself and does not say when it is out
+        /// of date leaves people on a build whose bugs are already fixed, and the release notes are
+        /// the only place they would otherwise find out. Off is a real answer though, and it means
+        /// off entirely — no request is made at all, rather than one being made and its result
+        /// hidden — so an install that is deliberately kept off the network stays that way.
+        /// </summary>
+        public bool CheckForUpdates { get; set; } = true;
+
+        /// <summary>
         /// True once <see cref="Normalize"/> has folded environment variables and compiled-in
         /// keys into this instance. Such a config describes this machine at this moment rather
         /// than what the user configured, and <see cref="ConfigStore.Save"/> refuses to write one:

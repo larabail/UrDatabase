@@ -56,6 +56,7 @@ namespace UrDatabase.Tests
                 DownloadPosters = true,
                 TmdbImageSize = "w500",
                 SetupCompleted = true,
+                CheckForUpdates = false,
                 Jellyfin = new JellyfinSettings
                 {
                     ServerUrl = "http://media.invalid:8096",
@@ -72,6 +73,7 @@ namespace UrDatabase.Tests
             Assert.True(reloaded.DownloadPosters);
             Assert.Equal("w500", reloaded.TmdbImageSize);
             Assert.True(reloaded.SetupCompleted);
+            Assert.False(reloaded.CheckForUpdates);
             Assert.Equal("http://media.invalid:8096", reloaded.Jellyfin.ServerUrl);
             Assert.Equal("viewer", reloaded.Jellyfin.Username);
             Assert.Equal("hunter2", reloaded.Jellyfin.Password);
