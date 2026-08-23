@@ -217,6 +217,21 @@
         <Setter Property="FontSize" Value="12"/>
     </Style>
 
+    <!--
+        Selected text. The highlight behind it follows the accent, so it is brass
+        wherever a TextBox appears — the search field, and the seven fields on
+        Setup. Selecting on this app is deliberately unclassed: a field that
+        forgets its class should still not select in blue.
+
+        The ink on top of it has to change with it. Fluent leaves selected text in
+        the control's own foreground, which here is bone, and bone on brass is
+        2.2:1 — selecting a word would have hidden it. Dark ink on brass is 7.5:1,
+        the same trade Button.primary makes.
+    -->
+    <Style Selector="TextBox">
+        <Setter Property="SelectionForegroundBrush" Value="{DynamicResource RoomBrush}"/>
+    </Style>
+
     <!-- ============================================================== -->
     <!--  the genre row: typed labels, not pills                        -->
     <!-- ============================================================== -->
@@ -250,6 +265,30 @@
                 </Border>
             </ControlTemplate>
         </Setter>
+    </Style>
+
+    <!--
+        Fluent styles a ToggleButton by painting ContentPresenter#PART_ContentPresenter,
+        and this template contains one — ContentControl finds its presenter by that
+        name, so it cannot be called anything else. The result was that Fluent's
+        accent fill landed inside a template that never asked for a fill at all, and
+        a selected genre wore a solid block behind its label while the underline this
+        template draws for exactly that purpose sat underneath it.
+
+        So the presenter is pinned transparent in every state. The states are listed
+        out rather than left to the bare selector because Fluent's are written with
+        pseudo-classes, and a plain selector losing to a :checked one is the kind of
+        thing that reappears on a theme upgrade.
+    -->
+    <Style Selector="ToggleButton.genre /template/ ContentPresenter#PART_ContentPresenter,
+                     ToggleButton.genre:checked /template/ ContentPresenter#PART_ContentPresenter,
+                     ToggleButton.genre:pointerover /template/ ContentPresenter#PART_ContentPresenter,
+                     ToggleButton.genre:pressed /template/ ContentPresenter#PART_ContentPresenter,
+                     ToggleButton.genre:checked:pointerover /template/ ContentPresenter#PART_ContentPresenter,
+                     ToggleButton.genre:checked:pressed /template/ ContentPresenter#PART_ContentPresenter">
+        <Setter Property="Background" Value="Transparent"/>
+        <Setter Property="BorderBrush" Value="Transparent"/>
+        <Setter Property="BorderThickness" Value="0"/>
     </Style>
 
     <Style Selector="ToggleButton.genre:checked /template/ Border#PART_Rule">

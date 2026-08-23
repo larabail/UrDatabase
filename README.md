@@ -41,7 +41,13 @@ It runs on Windows and macOS from one codebase, built with
   accent, spent only on the focus ring, the primary action and progress that is
   genuinely running; posters at a true 2:3; and chrome dimmed to hairlines and
   text so that forty pieces of artwork are the brightest thing on screen. Every
-  colour, face and metric is a token in `Styles/Tokens.axaml`.
+  colour, face and metric is a token in `Styles/Tokens.axaml`. That accent is
+  the whole theme's, not just this app's markup: Avalonia's Fluent theme derives
+  every selected, checked and focused state from an accent it takes from the
+  operating system, so the seven shades it reads are computed from the brass
+  token at startup (`Services/AccentPalette`). Without that, a window built
+  entirely out of the palette above still turned macOS blue the moment anything
+  was selected.
 - **A film with no poster yet still says what it is.** Artwork is fetched in the
   background, so most of a freshly scanned library has none for the first
   minute. Rather than a wall of identical holes, each card shows the title and
@@ -568,7 +574,9 @@ is `urdatabase-downloads`.
 src/UrDatabase.App/          the application: one cross-platform project
   Views/                     windows, screens and their code-behind
   Controls/                  reusable pieces, e.g. the poster card
-  Styles/                    Tokens.axaml: every colour, face and metric.
+  Styles/                    Tokens.axaml: every colour, face and metric, plus
+                             the Fluent resources the theme would otherwise
+                             paint in the system accent.
                              Theme.axaml: the shared control styles
   Models/                    what the views bind to
   Services/                  config, SQLite, scanning, TMDB, OMDb, Jellyfin, posters

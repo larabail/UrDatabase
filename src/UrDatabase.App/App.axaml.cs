@@ -4,13 +4,51 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Markup.Xaml;
+using Avalonia.Media;
 using UrDatabase.Services;
 
 namespace UrDatabase
 {
     public partial class App : Avalonia.Application
     {
-        public override void Initialize() => AvaloniaXamlLoader.Load(this);
+        public override void Initialize()
+        {
+            AvaloniaXamlLoader.Load(this);
+            ApplyAccent();
+        }
+
+        /// <summary>
+        /// Replaces Fluent's accent — which is the operating system's, and on macOS is
+        /// #007AFF — with the app's own brass, before any window is built.
+        /// </summary>
+        /// <remarks>
+        /// Fluent derives every selected, checked and focused state from seven accent
+        /// resources rather than holding a colour per state, so overriding those seven at
+        /// application scope is what turns the whole theme warm: a checked toggle, a
+        /// selected row, the highlight behind selected text and a focus ring all follow.
+        /// They have to be <see cref="Color"/> values rather than brushes, because that is
+        /// what Fluent's own brushes bind their <c>Color</c> to.
+        ///
+        /// The base is read back out of Tokens.axaml rather than written here, so the
+        /// accent has exactly one home. Nothing is hardcoded as a fallback: a silent
+        /// default is how the blue survived being "fixed" in the first place, and a missing
+        /// token is a bug that should be found by the test that asserts it is present, not
+        /// papered over at runtime.
+        /// </remarks>
+        private void ApplyAccent()
+        {
+            if (!Resources.TryGetResource(AccentBaseKey, null, out var token) || token is not Color brass)
+            {
+                AppLog.Write("startup.log", $"{AccentBaseKey} is missing from Tokens.axaml, so Fluent kept the system accent.");
+                return;
+            }
+
+            foreach (var (key, hex) in AccentPalette.Ramp(brass.ToString()))
+                Resources[key] = Color.Parse(hex);
+        }
+
+        /// <summary>The token in Tokens.axaml the whole accent ramp is derived from.</summary>
+        internal const string AccentBaseKey = "BrassColor";
 
         public override void OnFrameworkInitializationCompleted()
         {
