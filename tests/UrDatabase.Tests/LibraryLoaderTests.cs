@@ -142,16 +142,23 @@ namespace UrDatabase.Tests
         }
 
         [Fact]
-        public void A_local_film_and_a_server_copy_of_it_are_both_kept()
+        public void A_local_film_and_a_server_copy_of_it_are_one_card()
         {
             SeedLibrary();
             var remote = new[] { Server("the-matrix", "The Matrix", 1999) };
 
             var view = NewLoader().Load("matrix", remote);
 
-            // Only one of the two plays with the house network down, so hiding either would hide
-            // the one that works.
-            Assert.Equal(2, view.All.Count(m => m.Title == "The Matrix"));
+            // One film, in two places, carrying both facts — rather than two identical posters
+            // with nothing to tell them apart until you click one.
+            var matrix = Assert.Single(view.All, m => m.Title == "The Matrix");
+            Assert.True(matrix.IsInBothPlaces);
+            Assert.Equal("the-matrix", matrix.RemoteId);
+
+            // Both halves are still reported as they were found, because the status line counts
+            // what each library holds and not what the wall does with them.
+            Assert.Single(view.Remote);
+            Assert.Contains(view.Local, m => m.Title == "The Matrix");
         }
 
         [Fact]

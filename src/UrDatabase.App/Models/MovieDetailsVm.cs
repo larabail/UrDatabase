@@ -49,6 +49,13 @@ namespace UrDatabase.Models
         public bool IsRemote { get; set; }
 
         /// <summary>
+        /// True when a server holds this film as well as this machine. Set for a film that is in
+        /// both places, which <see cref="IsRemote"/> is deliberately not: that one is streamed and
+        /// this one is opened from disk, and only the facts row mentions the server copy at all.
+        /// </summary>
+        public bool IsOnServer { get; set; }
+
+        /// <summary>
         /// The direct play URL, resolved when the details were opened. Null when the server could
         /// not be reached, which is what lets Play explain itself instead of failing obscurely.
         ///

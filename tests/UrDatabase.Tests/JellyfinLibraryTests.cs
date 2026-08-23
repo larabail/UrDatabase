@@ -36,9 +36,12 @@ namespace UrDatabase.Tests
             var card = JellyfinLibrary.ToUiMovie(Film("a", "A Wholly Invented Film"));
 
             Assert.True(card.IsRemote);
+            Assert.True(card.IsOnServer);
+            Assert.False(card.IsOnThisComputer);
+            Assert.False(card.IsInBothPlaces);
             Assert.Equal(MovieSource.Jellyfin, card.Source);
             Assert.Equal("a", card.RemoteId);
-            Assert.Equal("Server", card.SourceLabel);
+            Assert.Equal("Server", card.ServerBadge);
             Assert.Equal("A Wholly Invented Film", card.Title);
             Assert.Equal("Drama", card.Genres);
         }
@@ -49,7 +52,12 @@ namespace UrDatabase.Tests
             var card = Local(1, "A Local Film");
 
             Assert.False(card.IsRemote);
-            Assert.Equal("Local", card.SourceLabel);
+            Assert.True(card.IsOnThisComputer);
+            Assert.False(card.IsOnServer);
+
+            // No badge at all on a film only this machine has: the absence of the server's badge
+            // is the whole message, and one on every card would be a wall of them.
+            Assert.False(card.IsInBothPlaces);
         }
 
         [Fact]
@@ -99,17 +107,127 @@ namespace UrDatabase.Tests
         }
 
         [Fact]
-        public void A_film_held_both_locally_and_on_the_server_is_shown_twice()
+        public void A_film_held_both_locally_and_on_the_server_is_one_card_carrying_both_facts()
         {
-            // Deliberate. One of them plays with the house network down and the other does not,
-            // so collapsing them would hide the only copy that always works.
             var merged = JellyfinLibrary.Merge(
                 new[] { Local(1, "The Same Film", 1999) },
                 new[] { JellyfinLibrary.ToUiMovie(Film("a", "The Same Film", 1999)) });
 
+            var only = Assert.Single(merged);
+
+            Assert.True(only.IsInBothPlaces);
+            Assert.True(only.IsOnThisComputer);
+            Assert.True(only.IsOnServer);
+
+            // Not remote: it opens from this disk, and the server copy is a second badge on the
+            // card rather than a change of how it plays.
+            Assert.False(only.IsRemote);
+            Assert.Equal("a", only.RemoteId);
+            Assert.Equal("local:1", only.Key);
+        }
+
+        [Fact]
+        public void The_same_film_spelled_differently_in_the_two_libraries_is_still_one_card()
+        {
+            // The rules a re-scan already uses: case, accents and punctuation are not differences.
+            var merged = JellyfinLibrary.Merge(
+                new[] { Local(1, "amelie", 2001) },
+                new[] { JellyfinLibrary.ToUiMovie(Film("a", "Amélie", 2001)) });
+
+            Assert.Single(merged);
+            Assert.True(merged[0].IsInBothPlaces);
+        }
+
+        [Fact]
+        public void A_local_film_whose_filename_carried_no_year_still_meets_its_server_copy()
+        {
+            // "The Matrix.mkv" scans to a film with no year at all, and the server knows 1999.
+            var merged = JellyfinLibrary.Merge(
+                new[] { Local(1, "A Wholly Invented Film", null) },
+                new[] { JellyfinLibrary.ToUiMovie(Film("a", "A Wholly Invented Film", 1999)) });
+
+            Assert.Single(merged);
+            Assert.True(merged[0].IsInBothPlaces);
+        }
+
+        [Fact]
+        public void Two_films_that_merely_share_a_title_are_left_alone()
+        {
+            var merged = JellyfinLibrary.Merge(
+                new[] { Local(1, "The Thing", 1982) },
+                new[] { JellyfinLibrary.ToUiMovie(Film("a", "The Thing", 2011)) });
+
             Assert.Equal(2, merged.Count);
+            Assert.DoesNotContain(merged, m => m.IsInBothPlaces);
+        }
+
+        [Fact]
+        public void A_second_server_film_with_the_same_title_stays_a_card_of_its_own()
+        {
+            // A film and its remaster, or an entry that never got a year. Overwriting the first
+            // fold with the second would drop a film out of the library altogether.
+            var merged = JellyfinLibrary.Merge(
+                new[] { Local(1, "A Wholly Invented Film", 1999) },
+                new[]
+                {
+                    JellyfinLibrary.ToUiMovie(Film("a", "A Wholly Invented Film", 1999)),
+                    JellyfinLibrary.ToUiMovie(Film("b", "A Wholly Invented Film", 1999))
+                });
+
+            Assert.Equal(2, merged.Count);
+            Assert.Single(merged, m => m.IsInBothPlaces);
             Assert.Single(merged, m => m.IsRemote);
-            Assert.Single(merged, m => !m.IsRemote);
+            Assert.Equal("a", merged.Single(m => m.IsInBothPlaces).RemoteId);
+        }
+
+        [Fact]
+        public void A_folded_film_takes_the_genres_it_has_none_of_its_own()
+        {
+            // A scanned film has no genres at all, and its server twin was the only reason it
+            // appeared on a shelf. Folding without this would drop it into Uncategorised.
+            var merged = JellyfinLibrary.Merge(
+                new[] { Local(1, "A Wholly Invented Film", 1999, genres: "") },
+                new[] { JellyfinLibrary.ToUiMovie(Film("a", "A Wholly Invented Film", 1999, genres: "Drama, Crime")) });
+
+            Assert.Equal("Drama, Crime", Assert.Single(merged).Genres);
+        }
+
+        [Fact]
+        public void A_folded_film_keeps_the_genres_it_already_had()
+        {
+            var merged = JellyfinLibrary.Merge(
+                new[] { Local(1, "A Wholly Invented Film", 1999, genres: "Comedy") },
+                new[] { JellyfinLibrary.ToUiMovie(Film("a", "A Wholly Invented Film", 1999, genres: "Drama")) });
+
+            Assert.Equal("Comedy", Assert.Single(merged).Genres);
+        }
+
+        [Fact]
+        public void A_folded_film_borrows_the_servers_poster_only_until_it_has_one()
+        {
+            var local = Local(1, "A Wholly Invented Film", 1999);
+            var server = JellyfinLibrary.ToUiMovie(Film("a", "A Wholly Invented Film", 1999), m => $"http://media.invalid/{m.ItemId}");
+
+            var card = Assert.Single(JellyfinLibrary.Merge(new[] { local }, new[] { server }));
+
+            Assert.Equal("http://media.invalid/a", card.DisplayPosterPath);
+
+            // The local column stays empty, so the poster loader still fetches artwork this
+            // machine owns — which is the copy that survives the server being switched off.
+            Assert.Null(card.PosterPath);
+
+            card.PosterPath = "/tmp/cached.jpg";
+            Assert.Equal("/tmp/cached.jpg", card.DisplayPosterPath);
+        }
+
+        [Fact]
+        public void A_folded_film_is_counted_once()
+        {
+            var merged = JellyfinLibrary.Merge(
+                new[] { Local(1, "A Wholly Invented Film", 1999) },
+                new[] { JellyfinLibrary.ToUiMovie(Film("a", "A Wholly Invented Film", 1999)) });
+
+            Assert.Equal(1, LibraryGrouping.BuildGenreChips(merged)[0].Count);
         }
 
         [Fact]

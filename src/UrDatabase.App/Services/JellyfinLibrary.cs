@@ -10,8 +10,8 @@ namespace UrDatabase.Services
     ///
     /// Out of the window and pure, because this is where the two sources meet and the rules for
     /// that are worth being able to assert: a remote film is never run through the filename
-    /// parser, never sent to TMDB, and never silently replaces a local copy of the same title.
-    /// Both are shown, because only one of them plays with the house network down.
+    /// parser and never sent to TMDB, and a film held in both places is one card carrying both
+    /// facts rather than a server copy quietly replacing the local one that plays offline.
     /// </summary>
     public static class JellyfinLibrary
     {
@@ -50,26 +50,76 @@ namespace UrDatabase.Services
         }
 
         /// <summary>
-        /// The library the window shows: local films and server films in one ordering, with
-        /// duplicates removed by identity rather than by title. A film that exists both on this
-        /// disk and on the server legitimately appears twice — they behave differently, and
-        /// hiding one would mean hiding the only one that works offline.
+        /// The library the window shows: local films and server films in one ordering, with a film
+        /// that is in both places appearing once, as a single card that says so.
         /// </summary>
+        /// <remarks>
+        /// This used to show both copies, on the reasoning that they behave differently and only
+        /// one plays with the house network down. That is true of the copies and false of the
+        /// film: a search for a title held in both places answered with two identical posters and
+        /// no way to tell which was which without clicking, and a shelf counted it twice.
+        ///
+        /// So the two facts are folded onto one card, which carries a badge for each. The local
+        /// row is the one kept, because everything else in the app hangs off it — the file that
+        /// plays offline, the TMDB match, the poster the catalogue owns — and the server's id,
+        /// genres and artwork are folded into it.
+        ///
+        /// Which films are the same film is decided by <see cref="MovieIndex"/>, the same rules a
+        /// re-scan uses to avoid inserting a second row for a file it has already seen: titles
+        /// normalised for case, accents and punctuation, and a missing year on either side
+        /// treated as agreement. Deliberately not by TMDB or IMDb id — the local half of the
+        /// library mostly has neither, so matching on them would fold almost nothing.
+        /// </remarks>
         public static IReadOnlyList<UiMovie> Merge(IEnumerable<UiMovie>? local, IEnumerable<UiMovie>? remote)
         {
             var seen = new HashSet<string>(StringComparer.Ordinal);
             var combined = new List<UiMovie>();
 
-            foreach (var movie in (local ?? Array.Empty<UiMovie>()).Concat(remote ?? Array.Empty<UiMovie>()))
+            var here = new MovieIndex();
+            var byId = new Dictionary<long, UiMovie>();
+
+            foreach (var movie in local ?? Array.Empty<UiMovie>())
             {
                 if (movie is null) continue;
-                if (seen.Add(movie.Key)) combined.Add(movie);
+                if (!seen.Add(movie.Key)) continue;
+
+                combined.Add(movie);
+                if (byId.TryAdd(movie.Id, movie)) here.Add(movie.Id, movie.Title, movie.Year);
+            }
+
+            foreach (var movie in remote ?? Array.Empty<UiMovie>())
+            {
+                if (movie is null) continue;
+                if (!seen.Add(movie.Key)) continue;
+
+                if (TryFold(movie, here, byId)) continue;
+
+                combined.Add(movie);
             }
 
             return combined
                 .OrderByDescending(m => m.Year ?? 0)
                 .ThenBy(m => m.Title, StringComparer.CurrentCultureIgnoreCase)
                 .ToList();
+        }
+
+        /// <summary>
+        /// Folds one server film into the local card for the same film, if there is one.
+        /// </summary>
+        /// <remarks>
+        /// A local card that has already taken a server copy is left alone and the second server
+        /// film is kept as a card of its own. Two items on a server can normalise to one title —
+        /// a film and its remaster, or one entry that never got a year — and quietly overwriting
+        /// the first with the second would lose a film from the library rather than merely
+        /// showing it separately.
+        /// </remarks>
+        private static bool TryFold(UiMovie server, MovieIndex here, IReadOnlyDictionary<long, UiMovie> byId)
+        {
+            if (!here.TryResolve(new ParsedMedia(server.Title, server.Year), out var id, out _)) return false;
+            if (!byId.TryGetValue(id, out var local) || local.IsOnServer) return false;
+
+            local.AdoptServerCopy(server);
+            return true;
         }
 
         /// <summary>

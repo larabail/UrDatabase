@@ -30,12 +30,14 @@ It runs on Windows and macOS from one codebase, built with
   Windows — puts the cursor in the search field, and the field says so
   (`Views/MainWindow`).
 - **Filter by where a film is.** When the library draws on both this computer
-  and a server, a row above the genres offers **Everywhere**, **On this
-  computer** and **On the server**, each with a count. Genre and location are
-  different questions: a scanned film has no genre until something enriches it,
-  so without this every local film sat in the Uncategorised bucket, which sorts
-  behind every genre a server library brings with it. The row is hidden entirely
-  when everything comes from one place (`Services/LibraryFilter`).
+  and a server, a row above the genres offers **Everywhere**, **Offline** and
+  **On the server**, each with a count. Genre and location are different
+  questions: a scanned film has no genre until something enriches it, so without
+  this every local film sat in the Uncategorised bucket, which sorts behind every
+  genre a server library brings with it. A film in both places answers to both
+  controls, so the counts deliberately do not add up to the total. The row is
+  hidden entirely when everything comes from one place, or when every film is in
+  both (`Services/LibraryFilter`).
 - **It looks like a screening room.** Warm near-black rather than blue-black,
   because a blue surround makes every poster look faintly green; one brass
   accent, spent only on the focus ring, the primary action and progress that is
@@ -139,13 +141,17 @@ It runs on Windows and macOS from one codebase, built with
 - **Browse a Jellyfin server.** Optional, off until you configure it. Point the
   app at a server and its movie library appears alongside your local one, with
   every server film badged **Server** so you can tell at a glance what is not on
-  this machine. The server describes its own films, cast and crew included, so a
+  this machine. A film the server has and this computer has too is one card, not
+  two, badged **Server** and **Offline**: it is the same film, and the pair of
+  badges says both things about it — where it came from, and that it still plays
+  with the network down. The server describes its own films, cast and crew
+  included, so a
   Jellyfin library is complete without a TMDB key. The library is cached in SQLite, so the window opens instantly
   and stays browsable with the server switched off or the laptop away from home
   — the films simply cannot play until it is reachable again. Playing one
   streams it, without transcoding, through VLC or IINA
   (`Services/JellyfinClient`, `Services/JellyfinCache`,
-  `Services/MediaPlayerLauncher`).
+  `Services/JellyfinLibrary`, `Services/MediaPlayerLauncher`).
 
 [Known gaps](#known-gaps) is worth reading before you judge any of the above;
 several are thinner than they sound.
@@ -436,6 +442,27 @@ community rating, and `IMDb` only for the IMDb rating from OMDb. They are
 different numbers from different populations and are never shown under each
 other's name.
 
+#### A film that is in both places
+
+A film the server holds and this computer holds too is shown once, as one card
+badged **Server** and **Offline**, and the details screen says the same thing on
+its facts row. The two are matched by title and year, using the rules a re-scan
+already uses to avoid cataloguing the same film twice: case, accents and
+punctuation are not differences, and a filename that carried no year is treated
+as agreeing with the server's. Not by TMDB or IMDb id, because the local half of
+a library mostly has neither.
+
+The local row is the one kept, so such a film plays from disk, links to a file
+and can have its TMDB match corrected like any other. It borrows the server's
+genres when the scan gave it none, and the server's artwork until the catalogue
+has its own — neither is written to the database, so nothing about it goes stale
+when the server changes. Opening it fills anything TMDB could not answer from
+the server's own description — plot, runtime, cast, crew, the IMDb id, and
+Jellyfin's community rating — so folding the two cards together costs you
+nothing, including on an install with no TMDB key. What is already answered is
+left alone, or correcting a match would appear not to have taken
+(`Services/ServerDetails`).
+
 #### Playing a server film
 
 Films are streamed, never downloaded, and Jellyfin direct-plays most of them as
@@ -657,10 +684,20 @@ Stated plainly, so nobody has to find out by using it:
 - **A scanned library has no genres.** Nothing writes the `genres` column for a
   scanned film yet, so every film from a scan lands in a single
   **Uncategorised** bucket, and a freshly scanned library looks bare until
-  something fills genres in — which no code does. The **On this computer**
+  something fills genres in — which no code does. The **Offline**
   filter means those films are still one click away rather than buried behind a
   server library's genres, but they remain ungrouped. Films from a Jellyfin
-  server are unaffected: the server supplies their genres.
+  server are unaffected: the server supplies their genres, and a scanned film
+  the server also has borrows them for as long as the two are shown as one card
+  — the catalogue itself is not written to.
+- **A film in both places is matched by its name.** The server's copy and this
+  computer's are shown as one card when their titles agree once case, accents
+  and punctuation are set aside and their years do not contradict each other.
+  Two spellings that differ by a word — a translated title, or one the filename
+  parser mangled — stay two cards, and there is no way to say by hand that they
+  are the same film. Nor does such a card offer the stream as a fallback: it
+  plays the file on this disk, and says the server has it rather than doing
+  anything with that.
 - **Films only.** The filename parser has no concept of television, so
   `Show.S01E02` becomes an oddly titled film rather than an episode. A mixed
   library will look wrong rather than broken. A Jellyfin server's series

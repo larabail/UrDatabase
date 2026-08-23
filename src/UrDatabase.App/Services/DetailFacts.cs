@@ -65,14 +65,24 @@ namespace UrDatabase.Services
                 });
             }
 
-            // Says out loud that this film is not on this machine, in the same colour the badge
-            // and the sync button use.
+            // Says out loud where the film is, in the same colour the badge and the sync button
+            // use. A film in both places says so too: the card carries both badges, and a details
+            // screen that mentioned neither would be the one place the app went quiet about it.
             if (vm.IsRemote)
             {
                 facts.Add(new DetailFact
                 {
                     Label = "WHERE",
                     Value = "On the server",
+                    Kind = DetailFactKind.Server
+                });
+            }
+            else if (vm.IsOnServer)
+            {
+                facts.Add(new DetailFact
+                {
+                    Label = "WHERE",
+                    Value = $"{UiMovie.OfflineTag} and on the server",
                     Kind = DetailFactKind.Server
                 });
             }

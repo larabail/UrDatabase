@@ -182,7 +182,11 @@ namespace UrDatabase.Tests
             // The source survives the typing, the same way the search survives the click.
             Assert.Equal(LibrarySource.Server, screen.Source);
             Assert.NotEmpty(screen.Shown);
-            Assert.All(screen.Shown, m => Assert.True(m.IsRemote));
+
+            // Asked of the film rather than of where its card came from: the seeded library holds
+            // The Matrix and so does the server, so that one is a single card in both places, and
+            // it belongs in this list every bit as much as the film only the server has.
+            Assert.All(screen.Shown, m => Assert.True(m.IsOnServer));
             Assert.Equal(new[] { "Mad Max", "The Matrix" }, screen.Shown.Select(m => m.Title).OrderBy(t => t));
         }
 
