@@ -26,11 +26,11 @@ namespace UrDatabase.Services
     public sealed class MovieRepository
     {
         private const string ListSql =
-            "SELECT id AS Id, title AS Title, year AS Year, genres AS Genres, poster_path AS PosterPath " +
+            "SELECT id AS Id, title AS Title, year AS Year, genres AS Genres, poster_path AS PosterPath, tmdb_id AS TmdbId " +
             "FROM movies ORDER BY COALESCE(year,0) DESC, title";
 
         private const string SearchSql = @"
-SELECT m.id AS Id, m.title AS Title, m.year AS Year, m.genres AS Genres, m.poster_path AS PosterPath
+SELECT m.id AS Id, m.title AS Title, m.year AS Year, m.genres AS Genres, m.poster_path AS PosterPath, m.tmdb_id AS TmdbId
 FROM movies_fts f
 JOIN movies m ON m.id = f.rowid
 WHERE movies_fts MATCH @q

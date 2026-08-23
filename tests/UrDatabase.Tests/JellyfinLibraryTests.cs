@@ -327,5 +327,139 @@ namespace UrDatabase.Tests
 
             Assert.Contains(LibraryGrouping.Uncategorised, LibraryGrouping.BuildGenreList(films));
         }
+
+        // ---------- one film, two sources, two names ----------
+
+        /// <summary>
+        /// The reported case. A file named <c>El Drama (The Drama) (2026).mkv</c> is catalogued as
+        /// "El Drama" and the same film is "The Drama" on the server, so the wall showed it twice
+        /// and nothing could be told they were one film. Normalisation folds case, accents and
+        /// punctuation — it does not translate a title.
+        /// </summary>
+        [Fact]
+        public void One_film_the_two_sources_call_different_things_is_one_card()
+        {
+            var local = Local(1, "El Drama", 2026);
+            local.TmdbId = 901;
+
+            var server = Film("s1", "The Drama", 2026);
+            server.TmdbId = "901";
+
+            var merged = JellyfinLibrary.Merge(new[] { local }, JellyfinLibrary.ToUiMovies(new[] { server }));
+
+            var card = Assert.Single(merged);
+            Assert.Equal("El Drama", card.Title);
+            Assert.True(card.IsOnThisComputer);
+            Assert.True(card.IsOnServer);
+            Assert.Equal("s1", card.RemoteId);
+        }
+
+        /// <summary>
+        /// The same two films with nothing identifying either. Matching on the title is all that is
+        /// left, and it genuinely cannot tell these apart — so two cards is the honest answer, not
+        /// a regression. This is what the picker on the details screen is for.
+        /// </summary>
+        [Fact]
+        public void Without_an_id_on_either_side_the_two_names_stay_two_cards()
+        {
+            var merged = JellyfinLibrary.Merge(
+                new[] { Local(1, "El Drama", 2026) },
+                JellyfinLibrary.ToUiMovies(new[] { Film("s1", "The Drama", 2026) }));
+
+            Assert.Equal(2, merged.Count);
+        }
+
+        [Fact]
+        public void An_id_folds_a_film_the_year_alone_would_have_refused()
+        {
+            // Release dates differ by region, and the title index treats a different year as a
+            // different film. The id says otherwise.
+            var local = Local(1, "El Drama", 2026);
+            local.TmdbId = 901;
+
+            var server = Film("s1", "El Drama", 2025);
+            server.TmdbId = "901";
+
+            var merged = JellyfinLibrary.Merge(new[] { local }, JellyfinLibrary.ToUiMovies(new[] { server }));
+
+            var card = Assert.Single(merged);
+            Assert.True(card.IsOnServer);
+        }
+
+        [Fact]
+        public void Two_different_films_that_share_an_identity_with_neither_are_not_folded()
+        {
+            var local = Local(1, "One Film", 2001);
+            local.TmdbId = 11;
+
+            var server = Film("s1", "Another Film", 2001);
+            server.TmdbId = "22";
+
+            var merged = JellyfinLibrary.Merge(new[] { local }, JellyfinLibrary.ToUiMovies(new[] { server }));
+
+            Assert.Equal(2, merged.Count);
+        }
+
+        /// <summary>
+        /// Jellyfin reports a provider id as text and reports none at all for a film it could not
+        /// identify. Read carelessly that becomes zero, and every unidentified film on the server
+        /// then shares one id and folds onto whichever local film happened to be read first.
+        /// </summary>
+        [Fact]
+        public void A_server_film_with_no_usable_id_carries_none()
+        {
+            Assert.Null(JellyfinLibrary.ParseTmdbId(null));
+            Assert.Null(JellyfinLibrary.ParseTmdbId(""));
+            Assert.Null(JellyfinLibrary.ParseTmdbId("   "));
+            Assert.Null(JellyfinLibrary.ParseTmdbId("not-a-number"));
+            Assert.Null(JellyfinLibrary.ParseTmdbId("0"));
+            Assert.Null(JellyfinLibrary.ParseTmdbId("-5"));
+            Assert.Equal(901, JellyfinLibrary.ParseTmdbId(" 901 "));
+        }
+
+        [Fact]
+        public void Unidentified_films_on_both_sides_do_not_collapse_onto_one_card()
+        {
+            var merged = JellyfinLibrary.Merge(
+                new[] { Local(1, "One Film", 2001), Local(2, "Another Film", 2002) },
+                JellyfinLibrary.ToUiMovies(new[]
+                {
+                    Film("s1", "A Third Film", 2003),
+                    Film("s2", "A Fourth Film", 2004)
+                }));
+
+            Assert.Equal(4, merged.Count);
+        }
+
+        /// <summary>
+        /// A film only the server has identified. Folding it on the title is all that was possible,
+        /// and taking its id afterwards is what lets the next merge hold on identity instead.
+        /// </summary>
+        [Fact]
+        public void A_fold_made_on_the_title_adopts_the_id_the_server_knew()
+        {
+            var local = Local(1, "A Wholly Invented Film", 1994);
+
+            var server = Film("s1", "A Wholly Invented Film", 1994);
+            server.TmdbId = "77";
+
+            var merged = JellyfinLibrary.Merge(new[] { local }, JellyfinLibrary.ToUiMovies(new[] { server }));
+
+            Assert.Equal(77, Assert.Single(merged).TmdbId);
+        }
+
+        [Fact]
+        public void A_corrected_local_answer_is_never_overwritten_by_the_servers()
+        {
+            var local = Local(1, "A Wholly Invented Film", 1994);
+            local.TmdbId = 901;
+
+            var server = Film("s1", "A Wholly Invented Film", 1994);
+            server.TmdbId = "77";
+
+            var merged = JellyfinLibrary.Merge(new[] { local }, JellyfinLibrary.ToUiMovies(new[] { server }));
+
+            Assert.Equal(901, Assert.Single(merged).TmdbId);
+        }
     }
 }
