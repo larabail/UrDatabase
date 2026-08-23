@@ -30,7 +30,13 @@ namespace UrDatabase.Services
     public static class PlayTargetResolver
     {
         /// <summary>
-        /// Files the catalogue says belong to this film, best first.
+        /// Files the catalogue says belong to this film, best first, and only the ones a scan can
+        /// still find.
+        ///
+        /// The <c>missing_since</c> test is the catalogue's own answer to "is it still there",
+        /// and it is asked before the filesystem is. Without it a film whose only copy had been
+        /// deleted was offered that copy right up to the moment the operating system refused to
+        /// open it, and a suggestion could be conjured out of a second path that was equally gone.
         ///
         /// The tie-break is largest, then most recently updated, then path. A library with two
         /// prints of one film is ordinary rather than exceptional, so this has to be decided
@@ -47,19 +53,20 @@ namespace UrDatabase.Services
         private const string LinkedFilesSql = @"
 SELECT file_path AS FilePath
 FROM files
-WHERE movie_id = @movie_id
+WHERE movie_id = @movie_id AND missing_since IS NULL
 ORDER BY COALESCE(size_bytes, 0) DESC, COALESCE(updated_at, '') DESC, file_path ASC;
 ";
 
         /// <summary>
-        /// Candidates for a suggestion: files no other film has claimed. A file already linked to
-        /// a different movie is, by the catalogue's own account, not this film, so offering it
-        /// would be proposing to break a link that something already got right.
+        /// Candidates for a suggestion: files no other film has claimed, and that the last scan
+        /// still found. A file already linked to a different movie is, by the catalogue's own
+        /// account, not this film, so offering it would be proposing to break a link that
+        /// something already got right; and a file marked missing is not a candidate for anything.
         /// </summary>
         private const string UnclaimedFilesSql = @"
 SELECT file_path
 FROM files
-WHERE movie_id IS NULL OR movie_id = @movie_id
+WHERE (movie_id IS NULL OR movie_id = @movie_id) AND missing_since IS NULL
 ORDER BY file_path ASC;
 ";
 
@@ -158,6 +165,11 @@ ORDER BY file_path ASC;
         /// Unlike a scan, this overwrites an existing link. A scan's link comes from parsing a
         /// filename and defers to whatever is already recorded; this one comes from a person
         /// pointing at the file, which is better evidence than a filename has ever been.
+        ///
+        /// It also clears <c>missing_since</c>, for the same reason the scan's own upsert does:
+        /// the path was just checked and is there, so whatever a previous scan concluded about it
+        /// is out of date. Leaving the mark would make the link take and then be ignored, since
+        /// the queries above will not offer a file the catalogue still calls gone.
         /// </summary>
         /// <exception cref="ArgumentException">
         /// The file is missing, or is not one of the video types the app opens. Refusing here
@@ -180,9 +192,10 @@ ORDER BY file_path ASC;
 INSERT INTO files (movie_id, file_path, size_bytes, created_at, updated_at)
 VALUES (@movie_id, @file_path, @size_bytes, @created_at, @updated_at)
 ON CONFLICT(file_path) DO UPDATE SET
-    movie_id   = excluded.movie_id,
-    size_bytes = excluded.size_bytes,
-    updated_at = excluded.updated_at;
+    movie_id      = excluded.movie_id,
+    size_bytes    = excluded.size_bytes,
+    updated_at    = excluded.updated_at,
+    missing_since = NULL;
 ";
 
             conn.Execute(sql, new
