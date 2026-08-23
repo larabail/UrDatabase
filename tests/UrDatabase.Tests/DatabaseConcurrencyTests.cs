@@ -356,7 +356,7 @@ namespace UrDatabase.Tests
             cts.Cancel();
             await alongside;
 
-            Assert.Equal(250, scanned);
+            Assert.Equal(250, scanned.Inserted);
             Assert.True(written > 0, "the competing writer never got a turn, so this proved nothing");
 
             using var verify = Database.Connect(DbPath);

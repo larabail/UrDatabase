@@ -52,7 +52,7 @@ namespace UrDatabase.Tests
             }
 
             var dbPath = Path.Combine(_root, "movies.db");
-            var updated = await ScanService.ScanLibraryAsync(dbPath, new[] { films });
+            var result = await ScanService.ScanLibraryAsync(dbPath, new[] { films });
 
             using var conn = Database.Open(dbPath);
             var movies = conn.Query<UiMovie>(LoadMoviesSql).ToList();
@@ -64,7 +64,7 @@ namespace UrDatabase.Tests
                 .Where(items => items.Count > 0)
                 .ToList();
 
-            Assert.Equal(4, updated);
+            Assert.Equal(4, result.Inserted);
             Assert.Equal(4, movies.Count);
 
             // No TMDB key in a test run, so nothing has a genre yet. The library still has to be
