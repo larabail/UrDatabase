@@ -13,12 +13,19 @@ name: Release
 # thing it does is work out whether there is anything to release, and end
 # quietly when there is not. It must succeed in that case: a red X on a merge
 # that was never going to publish anything is how a pipeline gets ignored.
+#
+# The exception, and the one thing here that fails on purpose, is a merge that
+# changed `src/` and still found its tag taken. That is shipped code sitting on
+# `main` in no release, it is always a mistake, and it reported success for
+# long enough to cost two of them.
 on:
   push:
     branches: [main]
   # Available by hand for the case where a release was deleted, or where the
   # tag was pushed but the publish failed halfway. Re-running against a version
-  # whose tag already exists is a no-op, so this is safe to press.
+  # whose tag already exists publishes nothing, so this is safe to press --
+  # though on a `main` that is carrying unreleased `src/` changes it will
+  # report that, which is the point.
   workflow_dispatch:
 
 # `contents: write` to push the tag and create the release; `deployments: write`
@@ -78,55 +85,81 @@ jobs:
 
       # Whether there is anything to do, decided before any build starts.
       #
-      # Two ways there is not:
+      # Three answers, not two, and the third is why this is a script with
+      # tests rather than four lines of shell:
       #
       #   * No version in the tree at all. That is the state of `main` until
       #     Directory.Build.props lands, and every merge in the meantime would
       #     otherwise fail on a file that is somebody else's to add.
-      #   * The tag already exists, which is the ordinary case: a merge that
-      #     changed only documentation leaves the version where it was.
+      #   * The tag exists and nothing under `src/` has changed since it was
+      #     published. The ordinary case: a merge that touched only docs leaves
+      #     the version where it was and has nothing to ship.
+      #   * The tag exists and `src/` *has* changed since it was published.
+      #     Somebody's shipped code is on `main` and in no release, which is
+      #     only reachable by a mistake -- two branches taking the same version,
+      #     or a bump that was forgotten. This used to be indistinguishable
+      #     from the case above and reported success, and it cost two
+      #     unnoticed releases before anybody worked out why the download was
+      #     still the old one. It now fails the run.
       #
-      # Checked against the remote rather than against the local clone, because
-      # the local one is a snapshot from the moment this run started and
-      # another run may have tagged since.
+      # The rule and every message it prints live in
+      # `tool/check_release_gate.py`, with its own tests, for the same reason
+      # the pull request's version check does: a decision this expensive to get
+      # wrong has to be arguable with on a laptop.
+      #
+      # Whether the tag exists is asked of the remote rather than of the local
+      # clone, because the local one is a snapshot from the moment this run
+      # started and another run may have tagged since. That answer is the one
+      # thing here that needs a network, so it is the one thing the workflow
+      # does itself.
       - name: Decide whether to publish
         id: gate
         env:
-          PRESENT: ${{ steps.version.outputs.present }}
+          VERSION: ${{ steps.version.outputs.version }}
           TAG: ${{ steps.version.outputs.tag }}
+          HEAD_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
 
-          if [ "$PRESENT" != 'true' ]; then
-            echo 'publish=false' >> "$GITHUB_OUTPUT"
-            cat >> "$GITHUB_STEP_SUMMARY" <<'NOVERSION'
-          ### Nothing released
-
-          `Directory.Build.props` does not set a `<Version>`, so there is no
-          version to tag. Add one at the repository root and the next merge
-          publishes it.
-          NOVERSION
-            exit 0
+          TAG_EXISTS=false
+          if [ -n "$TAG" ]; then
+            # The exit code is read rather than the plain success/failure,
+            # because `git ls-remote --exit-code` says 2 for "the remote
+            # answered and has no such tag" and 128 for "could not ask it".
+            # An `if` treats those the same, and reading a network failure as
+            # "the tag is free" sends this run on to build, sign and notarize
+            # for the best part of an hour before failing on a tag push that
+            # was never going to work.
+            LOOKUP=0
+            git ls-remote --exit-code --tags origin "refs/tags/$TAG" \
+              >/dev/null 2>&1 || LOOKUP=$?
+            case "$LOOKUP" in
+              0)
+                TAG_EXISTS=true
+                # Fetched rather than assumed present. The checkout above
+                # brings the tags that existed when it ran, and the whole
+                # reason the remote is consulted is that one may have appeared
+                # since. Without this, a tag pushed by a run that finished
+                # moments ago would be unreadable here -- and `set -e` makes
+                # that stop the job rather than let the comparison below
+                # quietly find nothing.
+                git fetch --force origin "+refs/tags/$TAG:refs/tags/$TAG"
+                ;;
+              2)
+                echo "The remote has no $TAG."
+                ;;
+              *)
+                echo "::error title=Release gate could not reach the remote::git ls-remote exited $LOOKUP, so whether $TAG already exists is unknown."
+                exit 1
+                ;;
+            esac
           fi
 
-          if git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null 2>&1; then
-            echo 'publish=false' >> "$GITHUB_OUTPUT"
-            echo "$TAG is already tagged, so this merge publishes nothing."
-            cat >> "$GITHUB_STEP_SUMMARY" <<TAGGED
-          ### Nothing released
-
-          The tag \`$TAG\` already exists, so this merge did not change the
-          version and there is nothing new to publish. That is the ordinary
-          outcome for a merge that only touched docs, workflows or the
-          downloads site.
-
-          To release, raise \`<Version>\` in \`Directory.Build.props\`.
-          TAGGED
-            exit 0
-          fi
-
-          echo 'publish=true' >> "$GITHUB_OUTPUT"
-          echo "$TAG does not exist yet. Publishing."
+          python3 tool/check_release_gate.py \
+            --version "$VERSION" \
+            --tag "$TAG" \
+            --tag-exists "$TAG_EXISTS" \
+            --head "$HEAD_SHA"
 
       - uses: actions/setup-dotnet@v4
         if: steps.gate.outputs.publish == 'true'

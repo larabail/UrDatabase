@@ -1088,6 +1088,15 @@ to bump the version above whatever `main` carries at the moment the check runs
 collide with a tag that already exists. How far to bump is in
 [AGENTS.md](AGENTS.md#versioning).
 
+That check narrows the collision rather than closing it: two branches can still
+take the same version, both go green and merge minutes apart, and the second
+merge then ships nothing. So the release run *fails* when it finds code under
+`src/` that has changed since the existing tag was published — that code is on
+`main` and in no release, and the state used to report success, which is how it
+went unnoticed twice. Clearing it is a pull request that raises `<Version>` and
+nothing else; the release it triggers carries everything stranded since the last
+tag.
+
 Hosting is the only Firebase product involved, and only CI touches it: the
 site is a few static files describing where to get the binaries. There is no
 database, no authentication and no functions, and nothing in `src/` talks to
@@ -1115,7 +1124,8 @@ src/UrDatabase.App/          the application: one cross-platform project
   UrDatabase.App.entitlements  hardened runtime exceptions the .NET JIT needs
 tests/UrDatabase.Tests/      xUnit suite
 tool/                        Python helpers with their own unittest suite:
-                             the version-bump check and the macOS bundler
+                             the version-bump check, the release gate and the
+                             macOS bundler
 Directory.Build.props        the single <Version> for the whole solution
 web/                         the downloads site served by Firebase Hosting
 docs/                        design notes

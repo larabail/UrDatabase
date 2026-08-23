@@ -237,6 +237,70 @@ class CheckTests(unittest.TestCase):
         self.assertTrue(result.ok)
 
 
+class LosingTheVersionTests(unittest.TestCase):
+    """A pull request may ship nothing. It may not leave nothing to tag.
+
+    The release gate reports a merge that stranded shipped code by comparing
+    `main` against the tag its version names. A version it cannot read names no
+    tag, so that check reports "nothing to release" and passes -- which is the
+    silence the gate was written to end, reached by a different door. Nothing
+    downstream can close it, so it is closed here, before the merge.
+
+    Reachable without anything looking wrong: `read-version` treats
+    `0.15.0-preview` and `$(BuildVersion)` exactly as it treats an absent file,
+    and until this rule existed a pull request touching only
+    `Directory.Build.props` never reached any version branch of this check at
+    all.
+    """
+
+    def test_blanking_the_version_fails_even_though_nothing_ships(self):
+        result = check(props("0.4.1"), "<Project></Project>", ["docs/releases.md"])
+        self.assertFalse(result.ok)
+        self.assertIn("main carries 0.4.1", result.message)
+        self.assertIn("<Version>0.4.1</Version>", result.message)
+
+    def test_deleting_the_file_fails_too(self):
+        result = check(props("0.4.1"), None, ["README.md"])
+        self.assertFalse(result.ok)
+
+    def test_a_version_the_release_workflow_could_not_read_fails(self):
+        # Each of these is rejected by .github/actions/read-version, which then
+        # reports the same "no version" the workflow reads as "nothing to
+        # tag" -- so each is this hole, not a cosmetic complaint.
+        for version in ["0.15.0-preview", "$(BuildVersion)", "1.2.3.4", ""]:
+            with self.subTest(version=version):
+                result = check(
+                    props("0.4.1"), props(version), ["web/downloads/index.html"]
+                )
+                self.assertFalse(result.ok, version)
+
+    def test_a_props_only_pull_request_that_keeps_a_version_still_passes(self):
+        # The ordinary bump, and a props edit that changes something else. The
+        # rule is about leaving nothing to tag, not about touching the file.
+        for version in ["0.4.1", "0.4.2"]:
+            with self.subTest(version=version):
+                result = check(
+                    props("0.4.1"), props(version), ["Directory.Build.props"]
+                )
+                self.assertTrue(result.ok, version)
+
+    def test_a_repository_that_has_no_version_yet_is_not_dragged_into_this(self):
+        # Nothing to lose, so nothing to complain about. Blocking here would
+        # block every pull request on a repository that has not adopted a
+        # version.
+        result = check(None, "<Project></Project>", ["docs/releases.md"])
+        self.assertTrue(result.ok)
+
+    def test_a_branch_that_repairs_an_unreadable_version_on_main_passes(self):
+        result = check(props("garbage"), props("0.4.1"), ["docs/releases.md"])
+        self.assertTrue(result.ok)
+
+    def test_the_message_says_what_to_put_back(self):
+        result = check(props("0.4.1"), "<Project></Project>", ["docs/releases.md"])
+        self.assertIn("Directory.Build.props", result.message)
+        self.assertIn("0.4.1 or above", result.message)
+
+
 class PropsAtRefTests(unittest.TestCase):
     def setUp(self):
         self.repo = temporary_repository(self)

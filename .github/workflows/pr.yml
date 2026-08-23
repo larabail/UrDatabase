@@ -307,7 +307,9 @@ jobs:
   # protection does not catch that either, because merging `main` into a branch
   # that already holds the identical version resolves cleanly with no conflict
   # to notice. Only a merge queue closes it. This narrows the window to the gap
-  # between the check running and the merge button being pressed.
+  # between the check running and the merge button being pressed; the release
+  # workflow catches what gets through, by failing rather than skipping quietly
+  # when a merge leaves src/ newer than the tag it would have released as.
   version:
     name: Version
     # `workflow_dispatch` has no pull request, so there is no base to compare
