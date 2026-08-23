@@ -129,13 +129,26 @@ def version_from_props(text):
     is an ordinary state on a repository that has not adopted one yet, and the
     caller says something different about it than about a version it cannot
     read.
+
+    The **last** element wins when a file somehow holds several, and every
+    space inside one is removed rather than only the space around it. Neither
+    is a preference: `.github/actions/read-version` -- the thing that decides
+    what actually gets tagged -- reads the file with a greedy `sed` expression
+    and then a `tr -d '[:space:]'`, so it takes the last element and squeezes
+    it, and MSBuild's last-property-wins evaluation lands in the same place.
+    Reading it any other way here would let this check clear a file the release
+    workflow goes on to read differently, and the direction that hurts is
+    silent: a version this reads and that one does not tags nothing and reports
+    success forever. One `<Version>`, written plainly, is still the rule; this
+    is about the two readers agreeing when somebody breaks it.
     """
     if not isinstance(text, str):
         return None
-    match = VERSION_ELEMENT.search(text)
-    if not match:
-        return None
-    return match.group(1).strip() or None
+    for raw in reversed(VERSION_ELEMENT.findall(text)):
+        squeezed = re.sub(r"\s+", "", raw)
+        if squeezed:
+            return squeezed
+    return None
 
 
 def changed_paths(text):
