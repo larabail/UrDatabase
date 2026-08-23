@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Collections.ObjectModel;
 using System.Linq;
 using UrDatabase.Models;
 
@@ -115,5 +116,61 @@ namespace UrDatabase.Services
         /// </remarks>
         public static string CountLabel(int count)
             => count == 1 ? "1 FILM" : $"{count} FILMS";
+
+        /// <summary>
+        /// Every shelf the library page shows, in the order it shows them: Continue watching
+        /// first, then one per genre.
+        /// </summary>
+        /// <remarks>
+        /// Built here rather than in the window so the ordering is a rule rather than the order
+        /// somebody happened to write two loops in. Continue watching goes above every genre
+        /// because it is the only shelf that answers a question the viewer already has when they
+        /// open the app; a genre answers one they are browsing for.
+        ///
+        /// It is a shelf and never a chip: it is not a genre, nothing is in it by being a kind of
+        /// film, and a filter called "Continue watching" would be a fourth thing competing with
+        /// the source row for the same corner of the screen.
+        ///
+        /// An empty row is left out entirely rather than shown empty. A heading with nothing under
+        /// it reads as a shelf that failed to load, and on an install with no server — or one
+        /// whose owner finishes what they start — that would be the permanent state of the top of
+        /// the page. A genre with nothing in it is dropped for the same reason.
+        /// </remarks>
+        public static IReadOnlyList<GenreGroup> BuildShelves(
+            IEnumerable<UiMovie>? movies,
+            IEnumerable<string>? genres,
+            IReadOnlyList<UiMovie>? continueWatching = null)
+        {
+            var shelves = new List<GenreGroup>();
+
+            if (continueWatching is { Count: > 0 })
+            {
+                shelves.Add(new GenreGroup
+                {
+                    Name = ResumeRow.Heading,
+                    Count = continueWatching.Count,
+                    Items = new ObservableCollection<UiMovie>(continueWatching)
+                });
+            }
+
+            foreach (var genre in genres ?? Array.Empty<string>())
+            {
+                if (string.IsNullOrWhiteSpace(genre)) continue;
+                if (string.Equals(genre, AllGenres, StringComparison.OrdinalIgnoreCase)) continue;
+
+                var items = ItemsForGenre(movies, genre);
+                if (items.Count == 0) continue;
+
+                shelves.Add(new GenreGroup
+                {
+                    Name = genre,
+                    Count = items.Count,
+                    Items = new ObservableCollection<UiMovie>(items)
+                });
+            }
+
+            return shelves;
+        }
+
     }
 }

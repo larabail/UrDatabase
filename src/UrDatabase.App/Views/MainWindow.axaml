@@ -37,11 +37,39 @@
                         Background="Transparent"
                         Cursor="Hand"
                         PointerPressed="MovieCard_Click"
-                        ToolTip.Tip="{Binding Title}">
+                        ToolTip.Tip="{Binding CardTooltip}">
                 <Grid>
                     <ctrls:PosterCard SourcePath="{Binding DisplayPosterPath}"
                                       Title="{Binding Title}"
                                       Year="{Binding Year}"/>
+
+                    <!-- How far through the film is, for one somebody is part
+                         way through. A 3px rule along the bottom edge of the
+                         poster, in the same brass the status bar's live track
+                         uses, over the same hairline: this room already has a
+                         vocabulary for "something is in progress" and a
+                         chunkier bar would be a second one. It is over the
+                         artwork rather than under the title because that is
+                         where it is read without being looked for, and it is
+                         clipped by the poster's own corners, which is why it
+                         does not need a radius of its own.
+
+                         Deliberately shown wherever the card appears and not
+                         only in the Continue watching row: it is the same film
+                         and the same fact. The tooltip says it in words. -->
+                    <ProgressBar Minimum="0"
+                                 Maximum="100"
+                                 Value="{Binding ResumePercent}"
+                                 IsVisible="{Binding HasResume}"
+                                 Height="3"
+                                 MinHeight="3"
+                                 CornerRadius="0"
+                                 Padding="0"
+                                 BorderThickness="0"
+                                 Background="{StaticResource EdgeBrush}"
+                                 Foreground="{StaticResource BrassBrush}"
+                                 VerticalAlignment="Bottom"
+                                 HorizontalAlignment="Stretch"/>
 
                     <!-- The hover edge. A Border of its own rather than the
                          card's, so pointing at a film lights it without
@@ -124,11 +152,23 @@
 
                 <!-- The year alone. The library query reads title, year, genres
                      and poster and nothing else, so a runtime here would be a
-                     number the app does not have. -->
-                <TextBlock Classes="mono"
-                           FontSize="10.5"
-                           Text="{Binding Year}"
-                           IsVisible="{Binding Year, Converter={x:Static ObjectConverters.IsNotNull}}"/>
+                     number the app does not have.
+
+                     Beside it, for a part-watched film, how much of it is
+                     left — which is the question somebody scanning the
+                     Continue watching row is actually asking, and the one the
+                     rule above can only gesture at. -->
+                <StackPanel Orientation="Horizontal" Spacing="7">
+                    <TextBlock Classes="mono"
+                               FontSize="10.5"
+                               Text="{Binding Year}"
+                               IsVisible="{Binding Year, Converter={x:Static ObjectConverters.IsNotNull}}"/>
+                    <TextBlock Classes="mono"
+                               FontSize="10.5"
+                               Foreground="{StaticResource BrassBrush}"
+                               Text="{Binding ResumeNote}"
+                               IsVisible="{Binding HasResume}"/>
+                </StackPanel>
             </StackPanel>
         </DataTemplate>
     </Window.Resources>

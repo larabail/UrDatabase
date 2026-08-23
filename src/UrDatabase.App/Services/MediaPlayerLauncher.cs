@@ -26,13 +26,44 @@ namespace UrDatabase.Services
     public static class MediaPlayerLauncher
     {
         /// <summary>A player the app knows how to drive, and where its executable lives.</summary>
-        public sealed record PlayerCandidate(string Name, string ExecutablePath);
+        public sealed record PlayerCandidate(string Name, string ExecutablePath)
+        {
+            /// <summary>
+            /// The name VLC is listed under, and the only player this app can follow while it
+            /// plays. Compared rather than hardcoded at the two places that care.
+            /// </summary>
+            public const string Vlc = "VLC";
+
+            /// <summary>
+            /// True when this player has the HTTP control interface progress reporting needs.
+            /// </summary>
+            /// <remarks>
+            /// IINA is deliberately not included, and cannot be by adding a name here. It is mpv
+            /// underneath and exposes a JSON IPC socket rather than an HTTP interface, which is a
+            /// different protocol over a different transport — so it plays films exactly as it
+            /// always has and reports nothing.
+            /// </remarks>
+            public bool CanReportProgress =>
+                string.Equals(Name, Vlc, StringComparison.OrdinalIgnoreCase);
+        }
+
+        /// <summary>
+        /// What a launch produced: the player that was started, and the control interface it was
+        /// given, when it was given one.
+        /// </summary>
+        /// <remarks>
+        /// <see cref="Control"/> is null for IINA, for a VLC that could not be offered a port, and
+        /// whenever the caller asked for no interface. Null means "this film plays and nothing
+        /// will be reported about it", which is an ordinary outcome rather than a failure.
+        /// </remarks>
+        public sealed record LaunchedPlayer(PlayerCandidate Player, VlcControlEndpoint? Control);
 
         /// <summary>Shown when nothing is installed. Names both players, because either will do.</summary>
         public const string NotInstalledMessage =
             "No video player was found. Films on a Jellyfin server are streamed rather than " +
             "downloaded, and need VLC or IINA to play — the system default opens them in a " +
             "browser, which cannot play them. Install either one and try again.";
+
 
         /// <summary>
         /// Where the two players install, most likely first. VLC leads on every platform simply
@@ -96,21 +127,38 @@ namespace UrDatabase.Services
         /// in <c>ArgumentList</c> rather than a command string: it carries an access token and
         /// query separators, and letting a shell see either would break or leak it.
         /// </summary>
-        public static ProcessStartInfo BuildStartInfo(PlayerCandidate player, string url)
+        /// <param name="control">
+        /// The loopback control interface to add, or null for a plain launch. Only ever supplied
+        /// for VLC; see <see cref="PlayerCandidate.CanReportProgress"/>.
+        /// </param>
+        public static ProcessStartInfo BuildStartInfo(PlayerCandidate player, string url, VlcControlEndpoint? control = null)
         {
             if (player is null) throw new ArgumentNullException(nameof(player));
             if (string.IsNullOrWhiteSpace(url)) throw new ArgumentException("A stream URL is required.", nameof(url));
 
             var psi = new ProcessStartInfo(player.ExecutablePath) { UseShellExecute = false };
             psi.ArgumentList.Add(url);
+
+            if (control is not null && player.CanReportProgress)
+            {
+                foreach (var argument in VlcControl.BuildArguments(control))
+                    psi.ArgumentList.Add(argument);
+            }
+
             return psi;
         }
 
         /// <summary>
-        /// Streams <paramref name="url"/> in whichever player is installed.
+        /// Streams <paramref name="url"/> in whichever player is installed, and returns what was
+        /// started.
         /// </summary>
+        /// <param name="withProgressReporting">
+        /// Whether to ask VLC for the control interface that lets the app follow the film. False
+        /// when there is nowhere to report to — no server, or a film with no id on it — so a
+        /// player is not given an interface nothing is going to read.
+        /// </param>
         /// <exception cref="MediaPlayerNotFoundException">Neither player is installed.</exception>
-        public static void Play(string url)
+        public static LaunchedPlayer Play(string url, bool withProgressReporting = false)
         {
             if (string.IsNullOrWhiteSpace(url))
                 throw new ArgumentException("A stream URL is required.", nameof(url));
@@ -118,9 +166,31 @@ namespace UrDatabase.Services
             var player = Find();
             if (player is null) throw new MediaPlayerNotFoundException(NotInstalledMessage);
 
-            // Only the player's name is logged. The URL is a credential.
-            AppLog.Write("jellyfin.log", $"streaming through {player.Name}");
-            Process.Start(BuildStartInfo(player, url));
+            // Failing to get a port must not stop the film. It costs the resume position for this
+            // viewing and nothing else, which is why this is a null rather than an exception.
+            var control = withProgressReporting && player.CanReportProgress ? VlcControl.TryCreate() : null;
+
+            // Only the player's name and the port are logged. The URL is a credential and so is
+            // the interface password; neither ever reaches a log, a dialog or the status line.
+            AppLog.Write("jellyfin.log", VlcControl.Describe(player.Name, control));
+
+            try
+            {
+                Process.Start(BuildStartInfo(player, url, control));
+            }
+            catch when (control is not null)
+            {
+                // Vanishingly unlikely, and worth one retry: a VLC too old to understand these
+                // arguments would refuse to start at all, and the film matters more than the
+                // position. Anything that fails without an interface too is a real failure and is
+                // left to the caller.
+                AppLog.Write("jellyfin.log", "the control interface was refused; playing without it");
+                Process.Start(BuildStartInfo(player, url));
+                return new LaunchedPlayer(player, null);
+            }
+
+            return new LaunchedPlayer(player, control);
         }
+
     }
 }

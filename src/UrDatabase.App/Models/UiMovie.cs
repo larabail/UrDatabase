@@ -183,6 +183,67 @@ namespace UrDatabase.Models
         public string? DisplayPosterPath =>
             string.IsNullOrWhiteSpace(PosterPath) ? RemotePosterPath : PosterPath;
 
+        private double? _resumeFraction;
+
+        /// <summary>
+        /// How far through this film the server says the viewer is, between 0 and 1, or null for a
+        /// film that is not part-watched — which is nearly every card.
+        /// </summary>
+        /// <remarks>
+        /// Stamped onto the card by <see cref="Services.ResumeRow"/> rather than read from the
+        /// catalogue, because it is the one fact about a film that belongs to a person and a
+        /// moment rather than to the film. It is left set wherever the card appears, not only in
+        /// the Continue watching row: it is the same film and the same fact, and a mark that
+        /// vanished as soon as you looked at the Drama shelf would be answering "where was I" only
+        /// in the one place you already knew.
+        /// </remarks>
+        public double? ResumeFraction
+        {
+            get => _resumeFraction;
+            set
+            {
+                var clamped = value is double f && !double.IsNaN(f) ? Math.Clamp(f, 0d, 1d) : (double?)null;
+                if (_resumeFraction == clamped) return;
+
+                _resumeFraction = clamped;
+                OnPropertyChanged();
+                OnPropertyChanged(nameof(HasResume));
+                OnPropertyChanged(nameof(ResumePercent));
+            }
+        }
+
+        private string? _resumeNote;
+
+        /// <summary>How much of the film is left, as printed on the card: <c>"42 MIN LEFT"</c>.</summary>
+        public string? ResumeNote
+        {
+            get => _resumeNote;
+            set
+            {
+                if (_resumeNote == value) return;
+                _resumeNote = value;
+                OnPropertyChanged();
+                OnPropertyChanged(nameof(CardTooltip));
+            }
+        }
+
+        /// <summary>True when this film is part-watched, and so carries a progress mark.</summary>
+        public bool HasResume => _resumeFraction is > 0;
+
+        /// <summary>
+        /// The same fraction on the 0–100 scale a <c>ProgressBar</c> wants, so the view binds a
+        /// number rather than reaching for a converter.
+        /// </summary>
+        public double ResumePercent => (_resumeFraction ?? 0) * 100d;
+
+        /// <summary>
+        /// What hovering the card says. The title, and how far through it is when that is known —
+        /// a 3px rule along the bottom of a poster is legible at a glance and says nothing to
+        /// somebody meeting it for the first time, and this is where it explains itself.
+        /// </summary>
+        public string CardTooltip =>
+            string.IsNullOrWhiteSpace(_resumeNote) ? Title : $"{Title} — {_resumeNote}";
+
         /// <summary>
         /// Records that the server holds this film too, folding its copy into this card.
         /// </summary>

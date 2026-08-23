@@ -44,6 +44,13 @@ namespace UrDatabase.Services
         public const int PageSize = 100;
 
         /// <summary>
+        /// How many part-watched films to ask for. A row is something you glance along, not a
+        /// second library, and a server that has accumulated two hundred abandoned films should
+        /// not put all of them above the genres.
+        /// </summary>
+        public const int ResumeLimit = 24;
+
+        /// <summary>
         /// Everything the list needs in one pass. Without <c>Fields</c> Jellyfin returns a stub
         /// with no genres, overview or provider ids, and the app would be back to guessing.
         /// </summary>
@@ -448,6 +455,126 @@ namespace UrDatabase.Services
             }
 
             return movies;
+        }
+
+        // ---------- continue watching ----------
+
+        /// <summary>
+        /// Films the server says this user is part way through, newest first.
+        /// </summary>
+        /// <remarks>
+        /// <c>/UserItems/Resume</c> is the server's own answer to "where was I", so the row is the
+        /// same one every other Jellyfin client shows rather than something this app worked out.
+        /// Narrowed to films: the endpoint will happily return television episodes, and an app
+        /// whose filename parser has no concept of an episode would show one as an oddly titled
+        /// film.
+        ///
+        /// Only the position is kept. Titles, years and artwork are already cached with the
+        /// library, and a second copy of them here would be a second thing to keep true.
+        /// </remarks>
+        public async Task<IReadOnlyList<JellyfinResumeItem>> GetResumeAsync(CancellationToken ct = default)
+        {
+            await ConnectAsync(ct);
+
+            var path =
+                "UserItems/Resume" +
+                $"?userId={Uri.EscapeDataString(_userId!)}" +
+                "&IncludeItemTypes=Movie&MediaTypes=Video" +
+                $"&Limit={ResumeLimit.ToString(CultureInfo.InvariantCulture)}" +
+                "&Fields=UserData,RunTimeTicks" +
+                "&EnableTotalRecordCount=false";
+
+            var page = await GetAsync<JellyfinItemsDto>(path, ct);
+            var items = page?.Items ?? new List<JellyfinItemDto>();
+
+            var resume = new List<JellyfinResumeItem>();
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var order = 0;
+
+            foreach (var item in items)
+            {
+                var entry = item.ToResumeItem(order);
+                if (entry is null || !seen.Add(entry.ItemId)) continue;
+
+                resume.Add(entry);
+                order++;
+            }
+
+            return resume;
+        }
+
+        // ---------- reporting playback ----------
+
+        /// <summary>
+        /// Tells the server a film has started, so it appears as a session and, once it stops,
+        /// in Continue watching.
+        /// </summary>
+        /// <remarks>
+        /// These three go through the client that already holds the token rather than through
+        /// anything of their own: a report has to be signed in as the user whose row it will
+        /// appear in, and a second sign-in would be a second place for the credential to live.
+        ///
+        /// None of them raises for a server that has gone away. A viewer mid-film is owed their
+        /// film, not a dialog about a resume position, and the caller is a background loop with
+        /// nowhere to show one.
+        /// </remarks>
+        public Task ReportPlaybackStartAsync(string itemId, long positionTicks, CancellationToken ct = default) =>
+            ReportPlaybackAsync("Sessions/Playing", itemId, positionTicks, isPaused: false, ct);
+
+        /// <inheritdoc cref="ReportPlaybackStartAsync"/>
+        public Task ReportPlaybackProgressAsync(string itemId, long positionTicks, bool isPaused, CancellationToken ct = default) =>
+            ReportPlaybackAsync("Sessions/Playing/Progress", itemId, positionTicks, isPaused, ct);
+
+        /// <inheritdoc cref="ReportPlaybackStartAsync"/>
+        public Task ReportPlaybackStoppedAsync(string itemId, long positionTicks, CancellationToken ct = default) =>
+            ReportPlaybackAsync("Sessions/Playing/Stopped", itemId, positionTicks, isPaused: false, ct);
+
+        /// <summary>
+        /// The body all three reports share.
+        /// </summary>
+        /// <remarks>
+        /// <c>MediaSourceId</c> is the item id, which is what a direct play of the original file
+        /// uses, and <c>PlayMethod</c> says so — the stream URL asks for <c>static=true</c>, so
+        /// nothing is being transcoded and claiming otherwise would put a wrong line in the
+        /// server's own dashboard.
+        /// </remarks>
+        internal static string BuildPlaybackReportBody(string itemId, long positionTicks, bool isPaused) =>
+            JsonSerializer.Serialize(new
+            {
+                ItemId = itemId,
+                MediaSourceId = itemId,
+                PositionTicks = Math.Max(0, positionTicks),
+                IsPaused = isPaused,
+                IsMuted = false,
+                CanSeek = true,
+                PlayMethod = "DirectStream"
+            });
+
+        private async Task ReportPlaybackAsync(
+            string relativePath,
+            string itemId,
+            long positionTicks,
+            bool isPaused,
+            CancellationToken ct)
+        {
+            if (string.IsNullOrWhiteSpace(itemId)) return;
+
+            await ConnectAsync(ct);
+
+            using var request = new HttpRequestMessage(HttpMethod.Post, BuildUri(relativePath))
+            {
+                Content = new StringContent(
+                    BuildPlaybackReportBody(itemId.Trim(), positionTicks, isPaused),
+                    Encoding.UTF8,
+                    "application/json")
+            };
+            request.Headers.TryAddWithoutValidation("Authorization", BuildAuthorizationHeader(_token));
+
+            using var response = await SendAsync(request, ct);
+
+            if (!response.IsSuccessStatusCode)
+                throw new JellyfinException(
+                    $"Jellyfin refused a playback report (HTTP {(int)response.StatusCode}).");
         }
 
         // ---------- plumbing ----------
