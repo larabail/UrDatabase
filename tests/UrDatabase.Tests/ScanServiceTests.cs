@@ -138,9 +138,9 @@ namespace UrDatabase.Tests
             using var conn = Database.Open(Path.Combine(_root, "test.db"));
             var scanner = new ScanService();
 
-            var updated = await scanner.ScanAsync(conn, new[] { moviesDir });
+            var result = await scanner.ScanAsync(conn, new[] { moviesDir });
 
-            Assert.Equal(2, updated);
+            Assert.Equal(2, result.Inserted);
 
             using var cmd = conn.CreateCommand();
             cmd.CommandText = "SELECT COUNT(*) FROM files";
@@ -171,9 +171,11 @@ namespace UrDatabase.Tests
             using var conn = Database.Open(Path.Combine(_root, "test.db"));
             var scanner = new ScanService();
 
-            var updated = await scanner.ScanAsync(conn, new[] { Path.Combine(_root, "gone"), @"D:\Movies" });
+            var result = await scanner.ScanAsync(conn, new[] { Path.Combine(_root, "gone"), @"D:\Movies" });
 
-            Assert.Equal(0, updated);
+            Assert.Equal(0, result.FilesSeen);
+            Assert.Empty(result.Roots);
+            Assert.Equal(2, result.SkippedRoots.Count);
         }
 
         [Fact]
@@ -316,7 +318,7 @@ namespace UrDatabase.Tests
             for (var i = 0; i < 50 && messages.Count < 2; i++) await Task.Delay(10);
 
             Assert.Contains(messages, m => m.StartsWith("Scanning:", StringComparison.Ordinal));
-            Assert.Contains(messages, m => m.Contains("1 movies added", StringComparison.Ordinal));
+            Assert.Contains(messages, m => m.Contains("1 added", StringComparison.Ordinal));
         }
 
         [Fact]
@@ -329,10 +331,10 @@ namespace UrDatabase.Tests
             // moment the task completes.
             var moviesDir = MakeFiles("The Matrix (1999).mkv", "Heat.1995.mkv");
 
-            var updated = await ScanService.ScanLibraryAsync(DbPath, new[] { moviesDir });
+            var result = await ScanService.ScanLibraryAsync(DbPath, new[] { moviesDir });
 
             using var verify = Database.Open(DbPath);
-            Assert.Equal(2, updated);
+            Assert.Equal(2, result.Inserted);
             Assert.Equal(2L, verify.QuerySingle<long>("SELECT COUNT(*) FROM movies"));
             Assert.Equal(2L, verify.QuerySingle<long>("SELECT COUNT(*) FROM files WHERE movie_id IS NOT NULL"));
         }
@@ -391,9 +393,9 @@ namespace UrDatabase.Tests
             var moviesDir = MakeFiles(names);
 
             using var conn = Database.Open(DbPath);
-            var updated = await new ScanService().ScanAsync(conn, new[] { moviesDir });
+            var result = await new ScanService().ScanAsync(conn, new[] { moviesDir });
 
-            Assert.Equal(250, updated);
+            Assert.Equal(250, result.Inserted);
             Assert.Equal(250L, conn.QuerySingle<long>("SELECT COUNT(*) FROM movies"));
             Assert.Equal(0L, conn.QuerySingle<long>("SELECT COUNT(*) FROM files WHERE movie_id IS NULL"));
         }

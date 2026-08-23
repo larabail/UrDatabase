@@ -135,6 +135,19 @@ namespace UrDatabase.Services
             // only ever read back whole, for one film, to be printed.
             AddColumnIfMissing(conn, "jellyfin_movies", "cast_list", "TEXT");
             AddColumnIfMissing(conn, "jellyfin_movies", "crew_list", "TEXT");
+
+            // What a scan knows about a file between one run and the next. Without these a scan
+            // could only ever add: it had no way to tell a file it did not find from one it never
+            // walked past, so a deleted film stayed in the catalogue for good.
+            //
+            // All three are nullable with no default, which is both what SQLite requires of a
+            // column added in place and the honest starting value — a row from an older library
+            // has genuinely not been looked at by any scan yet. Defaulting the other way would
+            // either claim a scan that never ran had seen every file, or mark somebody's entire
+            // catalogue missing the moment they upgraded.
+            AddColumnIfMissing(conn, "files", "last_seen_at", "TEXT");
+            AddColumnIfMissing(conn, "files", "last_seen_scan_id", "INTEGER");
+            AddColumnIfMissing(conn, "files", "missing_since", "TEXT");
         }
 
         /// <summary>
@@ -201,10 +214,27 @@ CREATE TABLE IF NOT EXISTS files (
     file_path  TEXT NOT NULL,
     size_bytes INTEGER,
     created_at TEXT,
-    updated_at TEXT
+    updated_at TEXT,
+    last_seen_at      TEXT,
+    last_seen_scan_id INTEGER,
+    missing_since     TEXT
 );
 CREATE UNIQUE INDEX IF NOT EXISTS ux_files_path ON files(file_path);
 CREATE INDEX IF NOT EXISTS ix_files_movie ON files(movie_id);
+CREATE TABLE IF NOT EXISTS scans (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    started_at    TEXT NOT NULL,
+    finished_at   TEXT,
+    status        TEXT NOT NULL,
+    roots         TEXT,
+    skipped_roots TEXT,
+    inserted      INTEGER NOT NULL DEFAULT 0,
+    moved         INTEGER NOT NULL DEFAULT 0,
+    updated       INTEGER NOT NULL DEFAULT 0,
+    unchanged     INTEGER NOT NULL DEFAULT 0,
+    failed        INTEGER NOT NULL DEFAULT 0,
+    missing       INTEGER NOT NULL DEFAULT 0
+);
 CREATE TABLE IF NOT EXISTS imdb_ratings (
     imdb_id    TEXT PRIMARY KEY,
     movie_id   INTEGER REFERENCES movies(id) ON DELETE SET NULL,

@@ -630,10 +630,18 @@ namespace UrDatabase.Views
             try
             {
                 SetStatus("Scanning…");
-                var updated = await RunScanAsync(_cts.Token);
+                var result = await RunScanAsync(_cts.Token);
 
                 await _searchLoop.RefreshAsync();
-                SetStatus($"Scan complete. {updated} file entries updated, {_allMovies.Count} movies in the library.");
+
+                // The scan's own sentence, not a rewrite of it. It is the one thing that knows
+                // whether it finished, what it added and what it could no longer find; a status
+                // line that reduced all of that back to a single "updated" number is the reason
+                // nobody could tell a scan that did nothing from one that did everything.
+                //
+                // Said after the reload rather than before it, because the reload now carries a
+                // status line of its own and would otherwise overwrite this one.
+                SetStatus($"{result.Summary} {_allMovies.Count} movies in the library.");
             }
             catch (OperationCanceledException)
             {
@@ -658,7 +666,7 @@ namespace UrDatabase.Views
         /// Enumerating a film folder and writing thousands of rows is synchronous work underneath;
         /// left on the dispatcher it froze the window and no progress message ever painted.
         /// </summary>
-        private Task<int> RunScanAsync(CancellationToken ct)
+        private Task<ScanResult> RunScanAsync(CancellationToken ct)
         {
             var folders = _config.WatchFolders ?? Array.Empty<string>();
             var progress = new Progress<string>(msg => Dispatcher.UIThread.Post(() => SetStatus(msg)));

@@ -93,6 +93,19 @@ It runs on Windows and macOS from one codebase, built with
   gives you a library; re-scanning is idempotent, so two spellings of one title
   collapse onto a single film rather than multiplying
   (`Services/ScanService`, `Services/FilenameParser`, `Services/MovieIndex`).
+- **A re-scan notices what changed, including what is gone.** Every scan is
+  recorded, and every file it walks past is stamped with the scan that saw it.
+  A film you deleted is therefore *marked* missing rather than sitting in the
+  catalogue forever — and marked rather than deleted, because from the app's
+  side an unplugged drive and a deleted film are the same absence and only one
+  of them should cost you a library. A folder that is not there when the scan
+  runs is skipped, and nothing under it is touched. A film you dragged into
+  another folder updates the row it already had instead of becoming a second
+  copy. A scan you cancel keeps what it catalogued and concludes nothing about
+  the rest. The result is reported as what it is — added, updated, unchanged,
+  moved, failed and now missing, counted separately — rather than one number
+  that meant all of them (`Services/ScanService`, `Services/ScanFileIndex`,
+  `Services/ScanSessions`).
 - **Play.** The details window opens the file the catalogue links to this film —
   the link the scan wrote, not a guess at the filename — and hands it to whatever
   the operating system uses. A film with no link, or whose only linked copy has
@@ -424,9 +437,18 @@ out of it first.
 
 Point `DatabasePath` anywhere and the app creates what it needs on first
 launch. `src/UrDatabase.App/Data/schema.sql` is the full schema — the `movies`
-and `files` tables, the `jellyfin_movies` cache, the `movies_fts` FTS5 index and
-the triggers that keep it current — and every statement is `IF NOT EXISTS`, so
-it runs against a library you already have without touching your data.
+and `files` tables, the `scans` table each scan records itself in, the
+`jellyfin_movies` cache, the `movies_fts` FTS5 index and the triggers that keep
+it current — and every statement is `IF NOT EXISTS`, so it runs against a
+library you already have without touching your data.
+
+`IF NOT EXISTS` covers a whole new table and does nothing at all for a new
+column on a table that already exists, so `Database.Migrate` runs straight after
+the script and adds those with `ALTER TABLE`. A column added to the schema file
+alone would reach new installs only, and every existing library would fail on
+"no such column" — which is to say it would work perfectly on a fresh clone and
+break for everybody with films in it. Anything added to a table in the script
+has to be added there too.
 
 From there, filling the catalogue is a scan. Set `WatchFolders`, press the scan
 button, and the films appear.
@@ -560,7 +582,8 @@ src/UrDatabase.App/          the application: one cross-platform project
   Services/                  config, SQLite, scanning, search, TMDB, OMDb,
                              Jellyfin, posters
   Assets/UrDatabase.icns     the macOS application icon
-  Data/schema.sql            the full schema, applied on first launch
+  Data/schema.sql            the shape a database is created with; Database.Migrate
+                             brings an older one up to it
   appsettings.example.json   configuration template, copied to the user's data
                              directory on first run; the real file is ignored
   UrDatabase.App.entitlements  hardened runtime exceptions the .NET JIT needs
@@ -608,10 +631,23 @@ Stated plainly, so nobody has to find out by using it:
 - **Files are matched to films by heuristic when nothing is linked.** The scan
   records which film each file belongs to and Play uses only that, so the
   heuristic no longer decides what opens. It still decides what gets *offered*
-  for a film with no link — a catalogue built before the scanner recorded one, or
-  a film whose copy has moved — and there it can still be wrong; it asks before
-  opening anything, and declines to answer rather than guess between two equally
-  good candidates.
+  for a film with no link — a catalogue built before the scanner recorded one —
+  and there it can still be wrong; it asks before opening anything, and declines
+  to answer rather than guess between two equally good candidates.
+- **A film that was missing stays in the catalogue until you say otherwise.**
+  A scan marks a file it could not find and never removes it, because nothing
+  in the app can tell a film you deleted from one on a drive you unplugged.
+  Nothing yet prunes a row that has been missing across many scans, and there is
+  no screen that lists the missing ones or lets you clear them, so for now the
+  mark is a fact recorded in the database rather than anything you can see or
+  act on.
+- **A moved film is followed by name and size, and only those.** A file that
+  turns up somewhere new is treated as one that moved when exactly one missing
+  row has the same filename and the same byte count, and the old path is really
+  gone. Rename a film as well as moving it and the scan sees a deletion and an
+  addition instead. Two files that share a name and a size are not guessed
+  between at all: both are left as they are, which loses a link rather than
+  attaching one to the wrong film.
 - **Two prints of one film, and the app picks.** When several linked files
   survive, Play opens the largest, then the most recently written, then the first
   by path. That is a guess at which is the better copy, not a preference you can
