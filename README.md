@@ -608,6 +608,38 @@ do nothing but write films — no shell, chrooted, its own key — and such acco
 are set up key-only. Offering a password field would invite a server password
 into a configuration file for no gain.
 
+**The server's host key is checked against `~/.ssh/known_hosts`, and an upload is
+refused if it does not match.** SSH.NET trusts whatever key it is handed unless
+told otherwise, which would be quietly weaker than the `sftp` command this
+replaces — that one checks the same file and hard-fails on a mismatch. The
+private key is never at risk either way, since public key authentication does not
+disclose it; what would be at risk is the film, handed to whatever answered on
+that address.
+
+Three outcomes, and they read differently because they mean different things:
+
+| What the file says | What happens |
+| --- | --- |
+| The host is listed and this is one of its keys | The upload proceeds |
+| The host is listed with a **different** key | Refused, naming both explanations — a rebuilt server, or something else answering — with the `ssh-keygen -R` line for the harmless one |
+| The host is **not listed at all** | Refused, with the two ways to add it |
+
+**An unknown host is refused rather than trusted on first use.** There is no
+prompt and nothing is remembered: a key nothing has vouched for does not get a
+film. If you have ever reached the server with `sftp` or `ssh` the entry is
+already there and nothing needs doing. If you have not:
+
+```bash
+ssh-keyscan -p 2222 media-box >> ~/.ssh/known_hosts
+# or simply connect once and accept the key
+sftp -P 2222 uploader@media-box
+```
+
+The refusal names the file, the fingerprint the server offered — in the same
+`SHA256:…` form `ssh-keygen -l` prints, so it can be compared against the server
+directly — and the command that fixes it. Both fingerprints go to `jellyfin.log`
+too, since a mismatch cannot be diagnosed without them and neither is a secret.
+
 What arrives is `movies/Title (Year)/Title (Year).ext`: one directory per film,
 named from the catalogue rather than from the local filename, which is the layout
 Jellyfin's own libraries use and what lets it identify what it finds. A film
@@ -642,7 +674,7 @@ dependency Windows has only shipped since 2018. Everything above the socket talk
 to `ISftpTransport`, so the whole of it is tested against a fake filesystem and
 no test in this repository opens a connection (`Services/JellyfinUpload`,
 `Services/JellyfinUploader`, `Services/SshNetSftpTransport`,
-`Services/SftpFailure`).
+`Services/SftpFailure`, `Services/KnownHosts`).
 
 ### The catalogue
 
@@ -918,8 +950,7 @@ Stated plainly, so nobody has to find out by using it:
   no way to fetch a whole genre, and leaving the film stops the transfer —
   though what it got is kept and starting again resumes from there. Nothing in
   the app deletes a download either: that is Finder's job.
-- **Uploads are one at a time, do not resume, and need an SFTP account.** The
-  same shape as downloads — one film, from the details screen, stopped by leaving
+- **Uploads are one at a time, do not resume, and need an SFTP account.** The  same shape as downloads — one film, from the details screen, stopped by leaving
   it — with two differences. There is no resume: a stopped or dropped upload
   removes what it had transferred and starting again sends the film from the
   beginning, because verifying which of the bytes already on the server are the
@@ -935,6 +966,15 @@ Stated plainly, so nobody has to find out by using it:
   has to be told, by **Sync Jellyfin**, before the film shows as being in both
   places. Pressing it immediately is usually too early. Nothing polls, and
   nothing deletes a film from the server either — that is the server's job.
+- **Host key checking reads `~/.ssh/known_hosts` and understands most of it, not
+  all of it.** Plain and hashed entries, the bracketed `[host]:port` form,
+  comma-separated patterns with wildcards and negations, several keys per host
+  and `@revoked` are all handled. `@cert-authority` is not: validating one means
+  validating a certificate, so a host vouched for only by a CA is refused with a
+  message saying exactly that rather than being reported as unknown. There is no
+  setting for the file's location and no way to trust a key from inside the app —
+  a host with no entry is refused, and adding one is a step you take with
+  `ssh-keyscan` or by connecting once with `sftp`.
 - **Windows builds are not signed.** SmartScreen warns on first run and there
   is no way around it short of a Windows code signing certificate. The macOS
   side of this closed in 0.2.1; the Windows side has not.

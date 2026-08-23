@@ -26,14 +26,34 @@ namespace UrDatabase.Services
     {
         private readonly JellyfinSftpSettings _settings;
         private readonly TimeSpan _connectTimeout;
+        private readonly string _knownHostsPath;
 
         private SftpClient? _client;
         private PrivateKeyFile? _key;
         private bool _disposed;
 
-        public SshNetSftpTransport(JellyfinSftpSettings settings, TimeSpan? connectTimeout = null)
+        /// <summary>
+        /// What <c>known_hosts</c> said about the key the server offered, once it has offered one.
+        /// Kept because SSH.NET reports a refused key as an ordinary failed connection, and the
+        /// user needs to know which of those two it was.
+        /// </summary>
+        private HostKeyCheck? _hostKey;
+        private string? _offeredFingerprint;
+
+        /// <param name="knownHostsPath">
+        /// Overridable only so a test can point at a fixture. Left null it is the real
+        /// <c>~/.ssh/known_hosts</c>, which is where the entry already is for anybody who has
+        /// connected to their server by hand.
+        /// </param>
+        public SshNetSftpTransport(
+            JellyfinSftpSettings settings,
+            TimeSpan? connectTimeout = null,
+            string? knownHostsPath = null)
         {
             _settings = settings ?? throw new ArgumentNullException(nameof(settings));
+            _knownHostsPath = string.IsNullOrWhiteSpace(knownHostsPath)
+                ? PlatformPaths.KnownHostsPath
+                : knownHostsPath;
 
             // Long enough for a server that has to spin a disk up, short enough that an address
             // typed wrong says so while the user still remembers typing it.
@@ -63,6 +83,14 @@ namespace UrDatabase.Services
 
             var client = new SftpClient(connection);
 
+            _hostKey = null;
+            _offeredFingerprint = null;
+
+            // Without this SSH.NET trusts whatever key it is handed, which is weaker than the
+            // sftp command this feature replaces — that one checks known_hosts and refuses on a
+            // mismatch. The film would otherwise go to whatever answered on that address.
+            client.HostKeyReceived += OnHostKeyReceived;
+
             try
             {
                 await client.ConnectAsync(ct);
@@ -75,14 +103,68 @@ namespace UrDatabase.Services
             catch (Exception ex)
             {
                 client.Dispose();
+
+                // Asked first: SSH.NET reports a key this app refused as an ordinary failed
+                // connection, and "could not reach the server" is the wrong thing to tell somebody
+                // whose server answered with the wrong key.
+                if (RejectedHostKey() is JellyfinException refusal) throw refusal;
+
                 AppLog.Write("jellyfin.log", $"sftp connect failed: {ex.GetType().Name}: {ex.Message}");
                 throw new JellyfinException(
                     SftpFailure.Describe(ex, _settings.Host, _settings.Port, _settings.PrivateKeyPath), ex);
             }
 
+            // Belt and braces. A connection that somehow completed without the key being checked
+            // is a connection this app has no opinion about, and proceeding would be exactly the
+            // silent trust the handler above exists to remove.
+            if (_hostKey is not { Verdict: HostKeyVerdict.Trusted })
+            {
+                client.Dispose();
+                throw RejectedHostKey() ?? new JellyfinException(
+                    $"{SftpFailure.Endpoint(_settings.Host, _settings.Port)} did not present a host key, " +
+                    "so this app cannot tell whether it is really your server.");
+            }
+
             _client?.Dispose();
             _client = client;
         }
+
+        /// <summary>
+        /// Decides whether to go on, against <c>known_hosts</c> and nothing else. No prompt, no
+        /// remembering, no "trust this once": a key nothing has vouched for is refused, and the
+        /// message that follows says how to vouch for it.
+        /// </summary>
+        private void OnHostKeyReceived(object? sender, HostKeyEventArgs e)
+        {
+            var fingerprint = KnownHosts.Fingerprint(e.HostKey);
+            var check = KnownHosts.CheckFile(
+                _knownHostsPath,
+                _settings.Host,
+                _settings.Port,
+                e.HostKeyName,
+                e.HostKey);
+
+            _hostKey = check;
+            _offeredFingerprint = fingerprint;
+
+            e.CanTrust = check.Verdict == HostKeyVerdict.Trusted;
+
+            // A host key's public half is offered to anyone who connects, so neither fingerprint
+            // is a secret — and without both of them in the log a mismatch cannot be diagnosed.
+            if (!e.CanTrust)
+            {
+                AppLog.Write(
+                    "jellyfin.log",
+                    $"host key refused ({check.Verdict}) for " +
+                    $"{KnownHosts.CanonicalName(_settings.Host, _settings.Port)}: offered {fingerprint}");
+            }
+        }
+
+        private JellyfinException? RejectedHostKey() =>
+            _hostKey is { Verdict: not HostKeyVerdict.Trusted } check
+                ? new JellyfinException(
+                    KnownHosts.Describe(check, _settings.Host, _settings.Port, _offeredFingerprint, _knownHostsPath))
+                : null;
 
         private PrivateKeyFile ReadKey()
         {

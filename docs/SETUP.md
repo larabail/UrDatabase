@@ -99,6 +99,15 @@ Uploading needs all three of `Host`, `Username` and `PrivateKeyPath`; with any o
 there is no button. Passwords are deliberately not supported: the account worth pointing this at
 is one that can do nothing but write films, and such accounts are set up key-only.
 
+The server's host key is checked against `~/.ssh/known_hosts` and an upload is refused if it does
+not match — the same check `sftp` makes, and for the same reason. A host with no entry is refused
+too, rather than trusted on first use. If you have ever connected by hand the entry is already
+there; otherwise:
+
+```bash
+ssh-keyscan -p 2222 media-box >> ~/.ssh/known_hosts
+```
+
 `<app data>` is `%APPDATA%` on Windows and `~/Library/Application Support` on macOS. Paths may
 use `%APPDATA%`, `%USERPROFILE%` or a leading `~`; a config file written on Windows still
 resolves on macOS.

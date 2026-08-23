@@ -49,6 +49,19 @@ namespace UrDatabase.Services
         public static string LogDirectory => Path.Combine(AppDataRoot, "logs");
 
         /// <summary>
+        /// OpenSSH's record of which host keys belong to which machines, which is what says
+        /// whether the server an upload is about to go to is the one it went to last time.
+        ///
+        /// Deliberately the same file every other SSH tool on the machine uses, rather than a
+        /// private copy: the entry is usually already there from connecting by hand once, and a
+        /// second list would go stale without anybody noticing. Built from
+        /// <see cref="HomeDirectory"/> rather than from a literal <c>~</c>, which resolves to
+        /// nothing on Windows — where this app also runs, and where OpenSSH keeps the file in the
+        /// same place under the user profile.
+        /// </summary>
+        public static string KnownHostsPath => Path.Combine(HomeDirectory, ".ssh", "known_hosts");
+
+        /// <summary>
         /// Where a user's movies most likely live: <c>~/Movies</c> on macOS, the Videos
         /// known folder on Windows, <c>~/Videos</c> elsewhere.
         /// </summary>
