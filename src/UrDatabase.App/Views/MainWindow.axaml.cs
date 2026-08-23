@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
-using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -10,7 +9,6 @@ using Avalonia.Controls.Primitives;
 using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Threading;
-using Dapper;
 using UrDatabase.Models;
 using UrDatabase.Services;
 
@@ -41,7 +39,7 @@ namespace UrDatabase.Views
         public ObservableCollection<GenreGroup> VisibleGroups { get; } = new();
         public ObservableCollection<UiMovie> FlatResults { get; } = new();
 
-        private List<UiMovie> _allMovies = new();
+        private IReadOnlyList<UiMovie> _allMovies = Array.Empty<UiMovie>();
 
         /// <summary>
         /// The library as the window is currently showing it: everything, or only what is on this
@@ -50,7 +48,6 @@ namespace UrDatabase.Views
         /// is filtered consistently rather than in the one place somebody remembered.
         /// </summary>
         private IReadOnlyList<UiMovie> VisibleMovies => LibraryFilter.Apply(_allMovies, _source);
-        private List<UiMovie> _localMovies = new();
 
         /// <summary>The server's whole library as cards, unfiltered. Empty when Jellyfin is off.</summary>
         private List<UiMovie> _remoteMovies = new();
@@ -67,6 +64,23 @@ namespace UrDatabase.Views
 
         /// <summary>Rebuilt whenever the configuration changes; never null once the window exists.</summary>
         private ImdbRatingService _ratings = null!;
+
+        /// <summary>Rebuilt with the configuration, because the catalogue can move. Never null once the window exists.</summary>
+        private LibraryLoader _library = null!;
+
+        /// <summary>
+        /// Every library read goes through here, so only one is ever in flight and only the newest
+        /// one reaches the screen. Built once: it reads <see cref="_library"/> at the moment a
+        /// request runs, so a change of database needs no new coordinator.
+        /// </summary>
+        private readonly SearchCoordinator<LibraryView> _searchLoop;
+
+        /// <summary>
+        /// The last read that reached the screen. Kept because the source row filters what is
+        /// already here rather than asking the database again: changing where you are looking
+        /// does not change what the query matched.
+        /// </summary>
+        private LibraryView _view = LibraryView.Empty;
 
         /// <summary>Null unless a server is configured, which is what keeps this feature off by default.</summary>
         private JellyfinClient? _jellyfin;
@@ -87,19 +101,30 @@ namespace UrDatabase.Views
 
             ApplyConfig();
 
+            _searchLoop = new SearchCoordinator<LibraryView>(
+                run: (query, ct) => _library.LoadAsync(query, _remoteMovies, ct),
+                apply: ApplyLibrary,
+                lifetime: _cts.Token,
+                onError: ReportLibraryFailure);
+
             // Runs after the poster drain in OnClosing, and has to: cancelling this first would
             // cut short the very fetches the drain is there to let finish.
-            Closed += (_, __) => { _cts.Cancel(); _posterLoader?.Dispose(); _ratings.Dispose(); _jellyfin?.Dispose(); };
+            Closed += (_, __) => { _cts.Cancel(); _searchLoop.Dispose(); _posterLoader?.Dispose(); _ratings.Dispose(); _jellyfin?.Dispose(); };
 
             DataContext = this;
 
             WireSearchShortcut();
 
             LoadRemoteCache();
-            LoadMovies();
-            BuildGenres();
-            RebuildGroups();
-            ShowAllGenres();
+
+            // Not awaited, because a constructor cannot be. Reading a large catalogue used to
+            // happen here, on the UI thread, so the window did not appear until it had finished.
+            //
+            // Nothing chooses a panel until the read lands: the grouped view starts visible and
+            // empty, which shows nothing for an instant, whereas asking ShowAllGenres now would
+            // see an empty library and flash the "there is nothing here yet" invitation at
+            // somebody whose library is about to appear.
+            _ = _searchLoop.RefreshAsync();
 
             // Last of the four, because each of them writes the status line and a configuration
             // the app could not understand is the more important thing for it to be saying.
@@ -197,6 +222,10 @@ namespace UrDatabase.Views
             _posterFailuresReported = 0;
             _posterLoader = new PosterAutoLoader(_config, _dbPath, maxConcurrency: 4, onFailure: ReportPosterFailure);
 
+            _library = new LibraryLoader(
+                new MovieRepository(_dbPath),
+                onQueryFailed: ex => AppLog.Write("startup.log", $"LoadMovies failed: {ex}"));
+
             if (JellyfinButton is not null) JellyfinButton.IsVisible = _jellyfin is not null;
         }
 
@@ -229,81 +258,95 @@ namespace UrDatabase.Views
             }
         }
 
-        private void LoadMovies(string? query = null)
+        /// <summary>
+        /// Puts one settled library read on screen. Called by <see cref="_searchLoop"/>, on the UI
+        /// thread, and only ever for the newest request — a search for "ma" that finished after
+        /// the search for "matrix" never gets here.
+        /// </summary>
+        private void ApplyLibrary(string? query, LibraryView view)
         {
-            // Built once so both halves agree on what counts as a search: text with no word in
-            // it at all is not one, and showing the whole local library while hiding every
-            // server film would look like the server had dropped out.
-            var match = FtsQuery.Build(query);
+            _view = view;
+            _allMovies = view.All;
 
-            _localMovies = LoadLocalMovies(match);
-
-            var remote = match is null
-                ? (IReadOnlyList<UiMovie>)_remoteMovies
-                : JellyfinLibrary.Search(_remoteMovies, query);
-
-            _allMovies = JellyfinLibrary.Merge(_localMovies, remote).ToList();
-
-            SetStatus(LibraryStatus.Describe(
-                localCount: _localMovies.Count,
-                localWithPosters: _localMovies.Count(x => !string.IsNullOrWhiteSpace(x.PosterPath)),
-                remoteCount: remote.Count,
-                hasLocalDatabase: File.Exists(_dbPath),
-                databasePath: _dbPath));
-
+            SetStatus(view.Status);
             WarmPosters(_allMovies);
+
+            // searching → flat view
+            if (view.IsSearch)
+            {
+                ShowSearchResults();
+                return;
+            }
+
+            // not searching → grouped view
+            BuildGenres();
+
+            // A genre that no longer exists — because the source changed while a search was up,
+            // or because the library did — would otherwise stay selected, match no shelf and
+            // render a blank page that looks like the library having emptied itself.
+            if (!GenreChips.Any(c => string.Equals(c.Name, SelectedGenre, StringComparison.OrdinalIgnoreCase)))
+            {
+                SelectedGenre = LibraryGrouping.AllGenres;
+                BuildGenres();
+            }
+
+            RebuildGroups();
+            ShowAllGenres();
         }
 
         /// <summary>
-        /// The local half of the library. Returns an empty list rather than throwing for any
-        /// reason it might fail, because a server library still has to be browsable when the
-        /// local catalogue is missing or was written by an older schema.
+        /// The search results, narrowed to wherever the user is currently looking.
         /// </summary>
-        /// <param name="match">
-        /// An FTS5 MATCH expression from <see cref="FtsQuery.Build"/>, or <c>null</c> to list the
-        /// whole catalogue. Never raw text from the search box: FTS5 would read its punctuation
-        /// as operators and fail the query.
-        /// </param>
-        private List<UiMovie> LoadLocalMovies(string? match)
+        /// <remarks>
+        /// The one place the flat list is built, deliberately. A search landing and a source being
+        /// picked are the same question — "these films, from this place" — and having each answer
+        /// it separately is precisely how they came to disagree: clicking a source while results
+        /// were up went off to rebuild the shelves instead and threw the search away.
+        ///
+        /// The source row is rebuilt from the results rather than left describing the whole
+        /// library, so the row and the list below it always agree, and a place these results do
+        /// not reach is not offered at all. Offering it would let a click empty the page with
+        /// nothing left on screen to say how to get back.
+        /// </remarks>
+        private void ShowSearchResults()
         {
-            if (!File.Exists(_dbPath)) return new List<UiMovie>();
+            BuildSources();
 
-            try
+            FlatResults.Clear();
+
+            // Grouped on Key rather than Id: every server film carries id 0, so grouping on
+            // the local id would collapse the whole remote half of the results into one card.
+            foreach (var m in VisibleMovies
+                    .GroupBy(x => x.Key)
+                    .Select(g => g.First())
+                    .OrderByDescending(x => x.Year ?? 0)
+                    .ThenBy(x => x.Title))
             {
-                // Not Database.Open: the read path has no business migrating the schema, and this
-                // runs on the UI thread on every keystroke in the search box. Database.Connect is
-                // still the only way a catalogue connection is built, so this query gets the same
-                // busy timeout and the same WAL snapshot as every write it might be racing.
-                using var conn = Database.Connect(_dbPath);
-
-                string sql;
-                object param;
-                if (match is null)
-                {
-                    sql = "SELECT id AS Id, title AS Title, year AS Year, genres AS Genres, poster_path AS PosterPath FROM movies ORDER BY COALESCE(year,0) DESC, title";
-                    param = new { };
-                }
-                else
-                {
-                    sql = @"
-SELECT m.id AS Id, m.title AS Title, m.year AS Year, m.genres AS Genres, m.poster_path AS PosterPath
-FROM movies_fts f
-JOIN movies m ON m.id = f.rowid
-WHERE movies_fts MATCH @q
-ORDER BY rank";
-                    param = new { q = match };
-                }
-
-                return conn.Query<UiMovie>(sql, param).ToList();
+                FlatResults.Add(m);
             }
-            catch (Exception ex)
-            {
-                // A database from an older build may lack the tables this query needs.
-                // Report it instead of taking the window down.
-                AppLog.Write("startup.log", $"LoadMovies failed: {ex}");
-                SetStatus($"Could not read the library: {ex.Message}");
-                return new List<UiMovie>();
-            }
+
+            SearchCountText.Text = LibraryGrouping.CountLabel(FlatResults.Count);
+
+            // A search that found nothing has to say so. Silence reads as a broken search box.
+            NoResultsText.IsVisible = FlatResults.Count == 0;
+            NoResultsText.Text = $"Nothing in the library matches \u201c{_view.Query}\u201d.";
+
+            // The genre row deliberately keeps describing the whole library rather than the
+            // current results, so it does not rearrange itself under the cursor between one
+            // keystroke and the next.
+            ShowSearch();
+        }
+
+        /// <summary>
+        /// A library read that failed outright, as opposed to one that found nothing. The loader
+        /// already handles and logs a query SQLite refused; this is for anything left over, and it
+        /// exists mainly so that nothing thrown on the search path escapes into an event handler,
+        /// where it would end the process rather than the search.
+        /// </summary>
+        private void ReportLibraryFailure(Exception ex)
+        {
+            AppLog.Write("startup.log", $"the library could not be updated: {ex}");
+            SetStatus($"Could not read the library: {ex.Message}");
         }
 
         private void SetStatus(string message)
@@ -439,6 +482,15 @@ ORDER BY rank";
             if (sender is not ToggleButton tb || tb.DataContext is not SourceChip chip) return;
 
             _source = chip.Source;
+
+            // A search and a source are two filters over one library, not two views of it, so
+            // narrowing to one place has to narrow the results already in front of you. This used
+            // to fall through to the shelves below and discard whatever had been typed.
+            if (_view.IsSearch)
+            {
+                ShowSearchResults();
+                return;
+            }
 
             // A genre that only the other source had would otherwise stay selected and show an
             // empty page.
@@ -580,15 +632,15 @@ ORDER BY rank";
                 SetStatus("Scanning…");
                 var result = await RunScanAsync(_cts.Token);
 
-                LoadMovies();
-                BuildGenres();
-                RebuildGroups();
-                ShowAllGenres();
+                await _searchLoop.RefreshAsync();
 
                 // The scan's own sentence, not a rewrite of it. It is the one thing that knows
                 // whether it finished, what it added and what it could no longer find; a status
                 // line that reduced all of that back to a single "updated" number is the reason
                 // nobody could tell a scan that did nothing from one that did everything.
+                //
+                // Said after the reload rather than before it, because the reload now carries a
+                // status line of its own and would otherwise overwrite this one.
                 SetStatus($"{result.Summary} {_allMovies.Count} movies in the library.");
             }
             catch (OperationCanceledException)
@@ -654,10 +706,7 @@ ORDER BY rank";
                 }, _cts.Token);
 
                 LoadRemoteCache();
-                LoadMovies();
-                BuildGenres();
-                RebuildGroups();
-                ShowAllGenres();
+                await _searchLoop.RefreshAsync();
 
                 SetStatus($"Jellyfin: {count} {(count == 1 ? "film" : "films")} from the server.");
             }
@@ -733,43 +782,20 @@ ORDER BY rank";
             }
         }
 
+        /// <summary>
+        /// Every keystroke, and nothing more than a keystroke. Deliberately not <c>async void</c>:
+        /// the work is handed to <see cref="_searchLoop"/>, which debounces it, cancels whatever
+        /// it supersedes and routes any failure to <see cref="ReportLibraryFailure"/>. An
+        /// exception escaping an <c>async void</c> handler ends the process rather than the
+        /// search, and this handler used to run the whole library query inline.
+        /// </summary>
         private void SearchBox_TextChanged(object? sender, TextChangedEventArgs e)
         {
-            var q = (sender as TextBox)?.Text?.Trim();
+            var query = (sender as TextBox)?.Text?.Trim();
 
-            if (string.IsNullOrWhiteSpace(q))
-            {
-                // not searching → grouped view
-                LoadMovies(null);
-                BuildGenres();
-                RebuildGroups();
-                ShowAllGenres();
-                return;
-            }
-
-            // searching → flat view
-            LoadMovies(q);
-            FlatResults.Clear();
-
-            // Grouped on Key rather than Id: every server film carries id 0, so grouping on the
-            // local id would collapse the whole remote half of the results into one card.
-            foreach (var m in VisibleMovies
-                    .GroupBy(x => x.Key)
-                    .Select(g => g.First())
-                    .OrderByDescending(x => x.Year ?? 0)
-                    .ThenBy(x => x.Title))
-            {
-                FlatResults.Add(m);
-            }
-
-            SearchCountText.Text = LibraryGrouping.CountLabel(FlatResults.Count);
-
-            // A search that found nothing has to say so. Silence reads as a broken search box.
-            NoResultsText.IsVisible = FlatResults.Count == 0;
-            NoResultsText.Text = $"Nothing in the library matches \u201c{q}\u201d.";
-
-            WarmPosters(FlatResults);
-            ShowSearch();
+            // Discarded on purpose: the returned task never faults, and nothing here waits for a
+            // search that the next keystroke may well throw away.
+            _ = _searchLoop.PostAsync(string.IsNullOrWhiteSpace(query) ? null : query);
         }
 
         private void GenreChip_Click(object? sender, RoutedEventArgs e)
@@ -819,10 +845,7 @@ ORDER BY rank";
             // A server that has just been switched off leaves a cached library behind in SQLite.
             // Reloading with no client drops it from view, which is what turning it off meant.
             LoadRemoteCache();
-            LoadMovies();
-            BuildGenres();
-            RebuildGroups();
-            ShowAllGenres();
+            await _searchLoop.RefreshAsync();
 
             if (_jellyfin is not null)
                 await SyncJellyfinAsync(announceFailure: true);
