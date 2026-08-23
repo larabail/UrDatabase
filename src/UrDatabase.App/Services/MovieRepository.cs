@@ -25,12 +25,32 @@ namespace UrDatabase.Services
     /// </summary>
     public sealed class MovieRepository
     {
-        private const string ListSql =
-            "SELECT id AS Id, title AS Title, year AS Year, genres AS Genres, poster_path AS PosterPath, tmdb_id AS TmdbId " +
-            "FROM movies ORDER BY COALESCE(year,0) DESC, title";
+        /// <summary>
+        /// Whether the catalogue still holds a file for a film, and whether it holds one a scan
+        /// could not find. Two facts rather than one, because they are not opposites: a film with
+        /// no file rows at all has neither, and that is an ordinary "nothing linked yet" rather
+        /// than a film somebody deleted.
+        ///
+        /// Selected here rather than joined, so a film with several prints stays one row. The
+        /// index on <c>files.movie_id</c> is what makes two correlated existence tests per film
+        /// cheaper than the join and the grouping they replace.
+        ///
+        /// What the answers mean is deliberately not decided here; see
+        /// <see cref="MissingFilms.Decide(bool, bool, bool)"/>.
+        /// </summary>
+        private const string FileFacts = @"
+       EXISTS (SELECT 1 FROM files WHERE files.movie_id = m.id AND files.missing_since IS NULL)     AS HasFileHere,
+       EXISTS (SELECT 1 FROM files WHERE files.movie_id = m.id AND files.missing_since IS NOT NULL) AS HasFileMissing";
+
+        private const string ListSql = @"
+SELECT m.id AS Id, m.title AS Title, m.year AS Year, m.genres AS Genres, m.poster_path AS PosterPath, m.tmdb_id AS TmdbId,
+" + FileFacts + @"
+FROM movies m
+ORDER BY COALESCE(m.year,0) DESC, m.title";
 
         private const string SearchSql = @"
-SELECT m.id AS Id, m.title AS Title, m.year AS Year, m.genres AS Genres, m.poster_path AS PosterPath, m.tmdb_id AS TmdbId
+SELECT m.id AS Id, m.title AS Title, m.year AS Year, m.genres AS Genres, m.poster_path AS PosterPath, m.tmdb_id AS TmdbId,
+" + FileFacts + @"
 FROM movies_fts f
 JOIN movies m ON m.id = f.rowid
 WHERE movies_fts MATCH @q

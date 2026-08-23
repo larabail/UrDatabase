@@ -130,13 +130,24 @@ It runs on Windows and macOS from one codebase, built with
   moved, failed and now missing, counted separately — rather than one number
   that meant all of them (`Services/ScanService`, `Services/ScanFileIndex`,
   `Services/ScanSessions`).
+- **A film whose file is gone stops pretending otherwise.** Once a completed
+  scan can no longer find any of the files a film has, the film stops claiming
+  to be on this computer: no **Offline** badge, no answer to the **Offline**
+  filter, and nothing offered to Play. If a Jellyfin server has it, it stays in
+  the library as a server film, keeping its poster, its genres and any TMDB
+  match you corrected by hand. If nowhere else has it, it leaves the library
+  altogether. Nothing is deleted from the database, so putting the file back —
+  or linking one by hand — brings the same film back on the next scan rather
+  than a fresh copy of it (`Services/MissingFilms`).
 - **Play.** The details window opens the file the catalogue links to this film —
   the link the scan wrote, not a guess at the filename — and hands it to whatever
   the operating system uses. A film with no link, or whose only linked copy has
   been moved or deleted, does not silently fall back to whichever file looks
   closest: if something unclaimed on disk resembles the title it is offered by
   name and Play asks first, and otherwise the window says plainly that nothing is
-  linked. Linking a file by hand from the file picker settles it, and is
+  linked. A file the last scan marked missing is offered for neither, on the
+  catalogue's own account and before the disk is consulted. Linking a file by
+  hand from the file picker settles it, and is
   remembered. Only the video types the scanner recognises can be linked or
   opened, checked both when the link is made and again before anything is
   launched — the app asks the operating system to open a path, and an OS will run
@@ -148,7 +159,9 @@ It runs on Windows and macOS from one codebase, built with
   this machine. A film the server has and this computer has too is one card, not
   two, badged **Server** and **Offline**: it is the same film, and the pair of
   badges says both things about it — where it came from, and that it still plays
-  with the network down. The server describes its own films, cast and crew
+  with the network down. Delete this computer's copy and it loses the
+  **Offline** badge and carries on as a server film, rather than either
+  disappearing or claiming a file that is not there. The server describes its own films, cast and crew
   included, so a
   Jellyfin library is complete without a TMDB key. The library is cached in SQLite, so the window opens instantly
   and stays browsable with the server switched off or the laptop away from home
@@ -485,6 +498,49 @@ nothing, including on an install with no TMDB key. What is already answered is
 left alone, or correcting a match would appear not to have taken
 (`Services/ServerDetails`).
 
+Delete this computer's copy and the card degrades rather than disappearing: the
+next completed scan marks the file gone, the **Offline** badge comes off, and
+what is left is a server film that streams. The catalogue row stays exactly
+where it was, which is the point — it is what carries `movies.tmdb_id` and
+`movies.scan_title`, so a match you corrected by hand outlives the file, and
+putting the film back is a scan rather than a re-correction.
+
+#### When a film is no longer here
+
+A scan writes `files.missing_since` for every file it looked for and could not
+find, and the library reads it. A film all of whose files carry that mark stops
+being a film on this computer:
+
+- it loses the **Offline** badge and stops answering the **Offline** filter;
+- it is not offered to **Play**, and neither is the missing file offered as a
+  suggestion for some other film;
+- it stays in the library as a **Server** film if a Jellyfin server has it, with
+  its poster, its genres and its corrected TMDB match intact;
+- it leaves the library altogether if nowhere else has it.
+
+Which of the last two happens is decided after the two halves of the library are
+folded together, because only then does a local row know whether the server has
+the same film. The rule is three outcomes from two facts and lives in
+`Services/MissingFilms`, away from both the query that supplies the facts and
+the window that renders the answer, so it can be asserted on.
+
+Nothing is deleted from the database. A film that has left the library is a row
+that is no longer shown, not a row that is gone, for the same reason the file
+row itself is marked rather than removed: from in here, a film you deleted and a
+film on a drive you unplugged are the same absence. It also means the way back
+is cheap — put the file where it was, scan, and the film returns as the film it
+always was rather than as a new one beside it. **Link File…** does the same for
+a copy you moved somewhere the scan does not walk, but only while the film still
+has a card of its own to open; once it has left the library, or degraded to a
+server film, a scan is the way back.
+
+Three things deliberately do not trigger any of this. A scan you cancelled
+stopped somewhere arbitrary and marks nothing. A watch folder that was not there
+when the scan ran was not searched, so an unplugged drive costs you nothing. And
+a film the catalogue holds no file for at all — a row restored from an older
+library — is left alone, because only a mark a scan actually wrote is evidence
+that something went away.
+
 #### Playing a server film
 
 Films are streamed by default, and Jellyfin direct-plays most of them as
@@ -775,13 +831,30 @@ Stated plainly, so nobody has to find out by using it:
   for a film with no link — a catalogue built before the scanner recorded one —
   and there it can still be wrong; it asks before opening anything, and declines
   to answer rather than guess between two equally good candidates.
-- **A film that was missing stays in the catalogue until you say otherwise.**
-  A scan marks a file it could not find and never removes it, because nothing
-  in the app can tell a film you deleted from one on a drive you unplugged.
-  Nothing yet prunes a row that has been missing across many scans, and there is
-  no screen that lists the missing ones or lets you clear them, so for now the
-  mark is a fact recorded in the database rather than anything you can see or
-  act on.
+- **A film that was missing stays in the catalogue, out of sight.** The library
+  now takes such a film off the wall — it leaves entirely, or carries on as a
+  server film if a server has it — but the row itself is never deleted, because
+  nothing in the app can tell a film you deleted from one on a drive you
+  unplugged. So a library you have churned through accumulates rows you cannot
+  see, there is no screen that lists them or lets you clear them out, and the
+  only way to bring one back is to put its file where a scan will find it or
+  link a copy by hand. Two consequences worth knowing: an unplugged drive hides
+  every film on it until it is plugged back in and rescanned, and a film that
+  degraded to a server film degrades on the strength of the *cached* server
+  library, so a server you have never synced on this machine cannot rescue
+  anything.
+- **A film that has left the library cannot be pointed at a new file from
+  inside the app.** **Link File…** is on the details screen, and a film with no
+  copy here either has no card to open or opens as a server film, which does not
+  offer it. So the way back is a scan: put the file somewhere a watch folder
+  covers and press the scan button. Moving a film permanently outside every
+  watch folder still means adding that folder to the list.
+- **A film renamed in place is a deletion and an addition.** Move detection
+  matches on filename and byte count, so a file that keeps its path but changes
+  its name is not followed: the old row is marked missing and the new file
+  arrives as a new one. If nothing else claims the film, that reads as the film
+  leaving the library and a differently named one appearing beside it in the
+  same scan.
 - **A moved film is followed by name and size, and only those.** A file that
   turns up somewhere new is treated as one that moved when exactly one missing
   row has the same filename and the same byte count, and the old path is really
