@@ -196,6 +196,17 @@ It runs on Windows and macOS from one codebase, built with
   streams it, without transcoding, through VLC or IINA
   (`Services/JellyfinClient`, `Services/JellyfinCache`,
   `Services/JellyfinLibrary`, `Services/MediaPlayerLauncher`).
+- **Continue watching, across every device.** A row above every genre with the
+  films the server says you are part way through, in its own order — most
+  recently watched first — each card carrying a brass rule along the bottom of
+  the poster showing how far in you are and a line saying how much is left. It
+  is the server's own answer, so a film started on the television carries on
+  here. Cached like the library, so it is on screen the instant the window opens
+  and stays there with the server switched off; an empty row is not shown at
+  all. Films played here report back, so what you watch in UrDatabase appears in
+  Continue watching everywhere else too — VLC only, and see
+  [Known gaps](#known-gaps) for what that costs
+  (`Services/ResumeRow`, `Services/PlaybackReporter`, `Services/VlcStatus`).
 - **Download a server film to watch offline.** A film on the server has a
   **Download** button that keeps a copy on this disk, named the way the scanner
   reads it and catalogued the moment it finishes — so it is playable and
@@ -229,7 +240,7 @@ several are thinner than they sound.
 | CommunityToolkit.Mvvm | Observable models behind the views |
 | TMDB API v3 | Search, posters, plot, runtime, genres, cast and crew |
 | OMDb API | The IMDb rating, and nothing else |
-| Jellyfin API | Optional: a remote movie library, its artwork and its stream |
+| Jellyfin API | Optional: a remote library, its artwork, its stream, and the Continue watching row in both directions |
 | SSH.NET | Optional: the SFTP transfer that puts a film on the server's disk, which Jellyfin's API cannot do |
 
 There is no server of ours, no account and no telemetry, and the app touches no
@@ -685,6 +696,81 @@ and has nowhere to put a header. The app therefore never logs it, shows it or
 puts it in a message; anything written to `jellyfin.log` has the token redacted
 out of it first.
 
+#### Continue watching
+
+`GET /UserItems/Resume` is the server's own answer to "where was I", and the row
+above every genre is that answer rather than something this app worked out. A
+film started on the television is part way through here, and the ordering — most
+recently watched first — is the server's too.
+
+Only the position is cached, in `jellyfin_resume`, alongside the library it
+belongs to. Titles, years and artwork are already in `jellyfin_movies`, so the
+row is built by matching each entry's item id onto the card the library already
+made. That has three consequences worth knowing:
+
+- a film held both here and on the server appears once, as the same card badged
+  **Server** and **Offline** that every shelf below shows;
+- a resume entry for something the movie library does not hold — a television
+  episode, a film in a library this app was never pointed at — has no card to
+  land on and is dropped rather than rendered as an oddly titled film;
+- the row narrows with the source controls, exactly as the shelves do.
+
+It survives an unreachable server the way the library does, and for the same
+reason: the cache is only replaced once the server has answered, so a sync
+attempted away from home leaves the last good row exactly where it was. A row
+that will not load at all — an older server, a permission, a proxy rewriting a
+path — costs you the row and not the library: the sync succeeds, the previous
+row stays, and the reason goes to `jellyfin.log`. An empty answer from a server
+that *did* answer is a real answer and does clear it, and an empty row is left
+off the page entirely rather than shown as a heading with nothing under it.
+
+A film with no position in it never appears, and neither does one under a second
+in: a player that has just been handed a stream reports a position before
+anybody has watched anything.
+
+The progress mark is deliberately shown wherever the card appears rather than
+only in this row. It is the same film and the same fact, and a mark that
+vanished as soon as you looked at the Drama shelf would be answering "where was
+I" only in the place you already knew. The tooltip says it in words.
+
+#### Reporting playback back to the server
+
+Films played here report their position back, so what you watch in UrDatabase
+shows up in Continue watching on every other device. **VLC only** — see
+[Known gaps](#known-gaps).
+
+VLC 3.x has an HTTP control interface. The app launches it with `--extraintf
+http` — beside VLC's real interface, never `--intf`, because the point is to
+watch the film — bound to `127.0.0.1` on a port the operating system has just
+confirmed is free, and then reads `/requests/status.xml` every two seconds for
+`time`, `length` and `state`. Those become `POST /Sessions/Playing` when the
+film starts, `/Sessions/Playing/Progress` every ten seconds and on every pause
+or resume, and `/Sessions/Playing/Stopped` when it ends. All three go through
+the same client that holds the Jellyfin token.
+
+**The interface password is generated fresh for every launch, from the
+cryptographic random generator, and is never logged.** That is a security
+requirement rather than tidiness: VLC takes it as a command line argument, and a
+process's command line is readable by every account on the machine. A fixed
+password would let any local user drive the viewer's player — and, through VLC's
+own playlist commands, ask it to open files. A 256-bit secret that is worth
+nothing once the film ends is the mitigation, and binding to loopback is what
+keeps it off the network. The port is logged, because it is the useful half when
+this does not work; the password never is.
+
+None of it can stop a film playing. If a port cannot be found, VLC is launched
+without the interface. If VLC refuses the arguments, it is launched again
+without them. If the interface never answers — a build without it, a port taken
+in the moment between being offered and being bound, a player closed
+immediately — the app gives up after thirty seconds, reports nothing and says
+nothing. A server that has gone away mid-film costs a resume position, not an
+evening: every failure goes to `jellyfin.log` and none of them reaches a dialog.
+
+A paused film is reported as paused rather than left to go quiet, because a
+session that stops sending progress is one the server eventually times out —
+which would turn "gone to make tea" into "stopped watching". A film nobody
+actually started is never reported at all.
+
 #### Keeping a copy
 
 **Download**, on a server film, fetches the original file into `DownloadFolder`
@@ -854,7 +940,8 @@ Point `DatabasePath` anywhere and the app creates what it needs on first
 launch. `src/UrDatabase.App/Data/schema.sql` is the full schema — the `movies`
 and `files` tables, the `scans` table each scan records itself in, the
 `jellyfin_movies` cache and its television counterparts `jellyfin_series`,
-`jellyfin_seasons` and `jellyfin_episodes`, the `movies_fts` FTS5 index and the
+`jellyfin_seasons` and `jellyfin_episodes`, the `jellyfin_resume` positions
+behind the Continue watching row, the `movies_fts` FTS5 index and the
 triggers that keep it current — and every statement is `IF NOT EXISTS`, so it
 runs against a library you already have without touching your data.
 
@@ -1019,7 +1106,7 @@ src/UrDatabase.App/          the application: one cross-platform project
                              Theme.axaml: the shared control styles
   Models/                    what the views bind to
   Services/                  config, SQLite, scanning, search, TMDB, OMDb,
-                             Jellyfin, posters
+                             Jellyfin, posters, playback reporting
   Assets/UrDatabase.icns     the macOS application icon
   Data/schema.sql            the shape a database is created with; Database.Migrate
                              brings an older one up to it
@@ -1099,11 +1186,26 @@ Stated plainly, so nobody has to find out by using it:
   has not identified stays undescribed. TMDB's television catalogue is a separate
   one from its films, and using the film endpoints for it would be worse than
   using nothing.
-- **Playback position is not shared with the server.** A film played from
-  Jellyfin does not resume where you left off and is not marked watched, because
-  the app hands the stream to an external player and never hears from it again.
-  The same is true of an episode, which also means nothing tracks which episode
-  you had reached.
+- **Playback position is shared with the server through VLC, and only VLC.** A
+  film streamed through VLC now reports where it got to, so it resumes and is
+  marked watched on every device — but four cases still do not. **IINA reports
+  nothing**: it is mpv underneath and exposes a JSON IPC socket rather than an
+  HTTP interface, which is a different protocol over a different transport, so an
+  IINA user plays films exactly as before and contributes nothing to Continue
+  watching. **A downloaded film reports nothing**, because it is opened with the
+  system's default opener, which is not necessarily VLC and may well be away from
+  the server anyway — the position is simply not recorded, rather than queued for
+  later delivery. **Television is neither reported nor shown in the row**: the
+  resume list is asked for films only, so an episode you are part way through
+  appears in Continue watching everywhere except here, and playing one here
+  records nothing. Putting episodes in the row would mean a card for something
+  that is neither a programme nor a film but one episode of one, which is a card
+  this app does not have. And **the last few seconds are lost**: the position is
+  read every two seconds and a player that goes away is noticed after six, so the
+  stop is recorded up to about six seconds behind where the film actually
+  reached. That is deliberate — a stop at nearly the right place beats no stop at
+  all — but it means a film you quit at the very end may not tip over into
+  "watched".
 - **One Jellyfin server.** There is no way to add a second. The setup screen
   configures the first one and tests it, but a household with two servers has to
   pick one.

@@ -347,6 +347,14 @@ CREATE TABLE IF NOT EXISTS jellyfin_episodes (
     synced_at        TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS ix_jellyfin_episodes_series ON jellyfin_episodes(series_id);
+CREATE TABLE IF NOT EXISTS jellyfin_resume (
+    item_id           TEXT PRIMARY KEY,
+    position_ticks    INTEGER NOT NULL,
+    runtime_ticks     INTEGER,
+    played_percentage REAL,
+    sort_order        INTEGER NOT NULL,
+    synced_at         TEXT NOT NULL
+);
 CREATE VIRTUAL TABLE IF NOT EXISTS movies_fts USING fts5(title, genres, content='movies', content_rowid='id');
 CREATE TRIGGER IF NOT EXISTS movies_ai AFTER INSERT ON movies BEGIN
     INSERT INTO movies_fts(rowid, title, genres) VALUES (new.id, new.title, new.genres);

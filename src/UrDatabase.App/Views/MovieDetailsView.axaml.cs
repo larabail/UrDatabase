@@ -77,6 +77,17 @@ namespace UrDatabase.Views
         private CancellationTokenSource? _uploadCts;
 
         /// <summary>
+        /// The window's own lifetime, for work that has to outlive this screen.
+        /// </summary>
+        /// <remarks>
+        /// Only progress reporting uses it, and it has to: a film keeps playing after the viewer
+        /// goes back to the library, and following it on <see cref="_cts"/> would stop reporting
+        /// the moment they pressed Back. It is still bounded — the app closing ends it, with a
+        /// final stop at the last position seen.
+        /// </remarks>
+        private CancellationToken _appLifetime = CancellationToken.None;
+
+        /// <summary>
         /// True once a download has finished while this screen was open. Read by the caller after
         /// <see cref="ShowAsync"/> returns: the library behind it now has a row it did not have.
         /// </summary>
@@ -104,7 +115,8 @@ namespace UrDatabase.Views
             string? dbPath = null,
             AppConfig? config = null,
             Func<string?, long?, CancellationToken, Task<double?>>? ratingLookup = null,
-            JellyfinClient? jellyfin = null)
+            JellyfinClient? jellyfin = null,
+            CancellationToken appLifetime = default)
         {
             // Leaving one film open behind another would strand its completion source and hang
             // whichever caller was awaiting it.
@@ -115,6 +127,7 @@ namespace UrDatabase.Views
             _config = config;
             _ratingLookup = ratingLookup;
             _jellyfin = jellyfin;
+            _appLifetime = appLifetime;
             DownloadedSomething = false;
             RenamedSomething = false;
             DataContext = vm;
@@ -367,7 +380,17 @@ namespace UrDatabase.Views
 
             try
             {
-                MediaPlayerLauncher.Play(Vm.StreamUrl);
+                // The interface is only asked for when there is somewhere for it to report to. A
+                // port and a password for a film with no id on it, or with no server behind it,
+                // would be a socket opened for nothing.
+                var canReport = _jellyfin is not null && !string.IsNullOrWhiteSpace(Vm.RemoteId);
+
+                var launch = MediaPlayerLauncher.Play(Vm.StreamUrl, withProgressReporting: canReport);
+
+                // Not awaited: it lasts as long as the film, and the viewer is going back to the
+                // library. Given the app's lifetime rather than this screen's, so leaving the film
+                // does not stop the reporting — and so closing the window does, with a last word.
+                _ = PlaybackTracking.Follow(launch, _jellyfin, Vm.RemoteId, _appLifetime);
             }
             catch (MediaPlayerNotFoundException ex)
             {
