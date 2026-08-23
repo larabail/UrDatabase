@@ -106,6 +106,40 @@ namespace UrDatabase.Services
                 // a UI event handler, and an uncontended lane never yields, so without this the
                 // continuation is posted back to a UI thread that may be waiting on the result.
                 await cmd.ExecuteNonQueryAsync(token).ConfigureAwait(false);
+
+                // Only when a name was actually discarded. A rename is the moment the catalogue
+                // gains a discarded name, so it is the moment to notice that some empty row is
+                // already sitting under it — that row can only be this film catalogued a second
+                // time by something that did not know to look for the alias, and it is now
+                // provably redundant, because the row that owns the name is the one just
+                // corrected.
+                //
+                // The poster loader comes through here too, with no title, several times a second
+                // on a fresh library. Reading the whole catalogue for each of those would be a
+                // sweep looking for debris that by definition cannot have appeared.
+                //
+                // Inside the lane and before it is given back, so the rename and the tidying are
+                // one write rather than two a reader can catch between.
+                if (title is not null) await SweepDiscardedAsync(conn, token).ConfigureAwait(false);
             }, ct);
+
+        /// <summary>
+        /// Best effort, deliberately. Correcting a film's match is the user's action and it has
+        /// already succeeded by the time this runs; failing it over a tidy-up would report a
+        /// correction as broken when the thing they asked for is written down and correct.
+        /// </summary>
+        private static async Task SweepDiscardedAsync(SqliteConnection conn, CancellationToken ct)
+        {
+            try
+            {
+                await DiscardedNames.SweepAsync(conn, tx: null, ct).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                // The next completed scan sweeps too, so nothing is lost by giving up here — but
+                // a sweep that always fails changes nothing visible and would leave no trace.
+                AppLog.Write("app.log", $"could not sweep discarded names: {ex.Message}");
+            }
+        }
     }
 }
