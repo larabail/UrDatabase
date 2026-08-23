@@ -140,7 +140,9 @@ fail loudly when it is missing, and check that the path you were handed is
 actually under the temporary root before writing a byte. `AppConfig`,
 `ConfigStore` and `Database` all accept an explicit path for exactly this
 reason — use it. If a piece of code offers no way to be pointed elsewhere, that
-is a bug in the code and not a licence to run it against real data.
+is a bug in the code and not a licence to run it against real data. `AppLog` was
+exactly that and now takes `AppLog.Redirect(dir)`, which returns a scope and is
+async-local so two test classes running in parallel cannot see each other's.
 
 ## Commit convention
 

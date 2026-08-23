@@ -160,23 +160,51 @@ namespace UrDatabase.Tests
             Assert.Contains("***", redacted);
         }
 
+        /// <summary>
+        /// Belt and braces: <see cref="UrActorService.Redact"/> above is the mechanism, and this
+        /// asserts the whole failure path actually goes through it.
+        /// </summary>
+        /// <remarks>
+        /// Written against a redirected log directory, never the real one. AGENTS.md forbids a
+        /// test from reading or writing the per-user app data directory at all — it holds
+        /// somebody's catalogue and their credentials — and a test about not leaking a key would
+        /// be a poor place to start appending to a stranger's log file.
+        /// </remarks>
         [Fact]
         public async Task Nothing_here_ever_writes_a_key_into_a_log_file()
         {
-            // Belt and braces: the redaction above is the mechanism, and this asserts the whole
-            // failure path uses it.
-            var logRoot = Path.Combine(PlatformPaths.AppDataRoot, "logs");
-            var log = Path.Combine(logRoot, "oscars.log");
-            var before = File.Exists(log) ? File.ReadAllText(log) : "";
+            var dir = Path.Combine(Path.GetTempPath(), "urdb-oscars-log-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(dir);
 
-            using var svc = new UrActorService(
-                "a-very-distinctive-key-" + Guid.NewGuid().ToString("N"),
-                new FakeHttpMessageHandler(_ => throw new HttpRequestException("boom")));
+            try
+            {
+                using (AppLog.Redirect(dir))
+                {
+                    Assert.StartsWith(dir, AppLog.Directory, StringComparison.Ordinal);
 
-            await svc.LookupAsync("F1");
+                    var key = "a-very-distinctive-key-" + Guid.NewGuid().ToString("N");
+                    using var svc = new UrActorService(
+                        key,
+                        new FakeHttpMessageHandler(_ => throw new HttpRequestException(
+                            $"boom: https://api.uractor.com/person/name=F1/apikey={key}")));
 
-            var after = File.Exists(log) ? File.ReadAllText(log) : "";
-            Assert.DoesNotContain("a-very-distinctive-key-", after[before.Length..]);
+                    Assert.Null(await svc.LookupAsync("F1"));
+
+                    // The line has to be there, or this passes for the wrong reason.
+                    var written = File.ReadAllText(Path.Combine(dir, "oscars.log"));
+                    Assert.Contains("lookup failed", written);
+                    Assert.Contains("***", written);
+                    Assert.DoesNotContain(key, written);
+                }
+
+                // And the switch is off again, so nothing after this writes to a temporary
+                // directory that is about to be deleted.
+                Assert.Equal(PlatformPaths.LogDirectory, AppLog.Directory);
+            }
+            finally
+            {
+                try { Directory.Delete(dir, recursive: true); } catch { }
+            }
         }
     }
 }

@@ -18,16 +18,23 @@ namespace UrDatabase.Tests
     {
         private readonly string _dir;
         private readonly string _dbPath;
+        private readonly IDisposable _log;
 
         public OscarsServiceTests()
         {
             _dir = Path.Combine(Path.GetTempPath(), "urdb-oscars-" + Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(_dir);
             _dbPath = Path.Combine(_dir, "movies.db");
+
+            // This service logs when a cache read or write fails. Nothing here means it to, but a
+            // test that starts appending to somebody's real log the day it regresses is the shape
+            // of accident AGENTS.md forbids, so the switch is thrown rather than relied upon.
+            _log = AppLog.Redirect(Path.Combine(_dir, "logs"));
         }
 
         public void Dispose()
         {
+            _log.Dispose();
             try { Directory.Delete(_dir, recursive: true); } catch { }
         }
 
