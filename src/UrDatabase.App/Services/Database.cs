@@ -28,6 +28,13 @@ namespace UrDatabase.Services
         public const int LockWaitSeconds = BusyTimeoutMilliseconds / 1000;
 
         /// <summary>
+        /// A generic SQL error. <c>SQLITE_ERROR</c>, which is what "duplicate column name" and a
+        /// genuine mistake in a statement both arrive as — so it is never sufficient on its own to
+        /// decide a failure was harmless.
+        /// </summary>
+        private const int SqliteError = 1;
+
+        /// <summary>
         /// Opens a connection to the catalogue configured the way every caller needs it, and does
         /// nothing else. Reads want this. Anything that could be the first thing to touch a fresh
         /// install wants <see cref="Open"/>, which also lays the schema down.
@@ -154,15 +161,44 @@ namespace UrDatabase.Services
         /// Adds a column when it is absent, and does nothing when it is already there. SQLite has
         /// no <c>ADD COLUMN IF NOT EXISTS</c>, so the table is inspected first.
         /// </summary>
+        /// <remarks>
+        /// The inspection is a fast path, not the mechanism, because it is check-then-act: two
+        /// connections can both read the old shape before either has altered the table, and the
+        /// second one's <c>ALTER</c> then fails with "duplicate column name". That is
+        /// <c>SQLITE_ERROR</c> rather than <c>SQLITE_BUSY</c>, so <see cref="DatabaseWriteLane"/>
+        /// deliberately does not retry it, and it surfaces to whoever asked for the database.
+        ///
+        /// Not hypothetical, and not rare. <c>PosterAutoLoader</c> calls <see cref="Open"/> from
+        /// four tasks at once, and on an install with no Jellyfin server nothing has migrated
+        /// before them: the window's read path uses <see cref="Connect"/>, which does not migrate,
+        /// and the cache load returns without opening anything at all. So the first code ever to
+        /// run <see cref="Migrate"/> on such a library is four concurrent poster fetches, on the
+        /// first launch after an upgrade.
+        ///
+        /// The failure is therefore caught and treated as success — but only once the column is
+        /// confirmed present, which is the post-condition this method promises whoever ended up
+        /// producing it. An <c>ALTER</c> that failed for any other reason leaves the column
+        /// absent, so a genuine schema mistake still throws rather than being quietly buried.
+        /// Deliberately not matched on the message: this repository already settled that question
+        /// in <see cref="DatabaseWriteLane.IsTransientLockFailure"/>, where the note is that the
+        /// text is localised and has changed between provider versions.
+        /// </remarks>
         internal static void AddColumnIfMissing(SqliteConnection conn, string table, string column, string type)
         {
             if (!TableExists(conn, table)) return;
             if (ColumnExists(conn, table, column)) return;
 
-            using var cmd = conn.CreateCommand();
-            // The names here are compile-time constants from Migrate, never user input.
-            cmd.CommandText = $"ALTER TABLE {table} ADD COLUMN {column} {type}";
-            cmd.ExecuteNonQuery();
+            try
+            {
+                using var cmd = conn.CreateCommand();
+                // The names here are compile-time constants from Migrate, never user input.
+                cmd.CommandText = $"ALTER TABLE {table} ADD COLUMN {column} {type}";
+                cmd.ExecuteNonQuery();
+            }
+            catch (SqliteException ex) when (ex.SqliteErrorCode == SqliteError && ColumnExists(conn, table, column))
+            {
+                // Somebody else added it between the check above and the statement. See remarks.
+            }
         }
 
         internal static bool TableExists(SqliteConnection conn, string table)

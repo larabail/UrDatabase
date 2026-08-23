@@ -1,7 +1,9 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Reflection;
+using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Data.Sqlite;
 using UrDatabase.Models;
@@ -221,6 +223,162 @@ VALUES (1, '/films/Ran (1985).mkv', 1234, '2020-01-01T00:00:00.0000000', '2020-0
             using var cmd = conn.CreateCommand();
             cmd.CommandText = "SELECT COUNT(*) FROM files";
             Assert.Equal(2L, (long)cmd.ExecuteScalar()!);
+        }
+
+        /// <summary>
+        /// The migration under the concurrency it actually runs under.
+        ///
+        /// <c>AddColumnIfMissing</c> inspects the table and then alters it, which is check-then-act:
+        /// two connections can both read the old shape before either has committed, and the loser's
+        /// <c>ALTER</c> fails with "duplicate column name". That is <c>SQLITE_ERROR</c>, not
+        /// <c>SQLITE_BUSY</c>, so the write lane does not retry it and it reaches whoever asked for
+        /// the database.
+        ///
+        /// This is the arrangement a real install produces rather than a contrived one. The poster
+        /// loader opens the catalogue from four tasks at once, and on a machine with no Jellyfin
+        /// server nothing has migrated before them — the read path uses <c>Connect</c>, which does
+        /// not migrate, and the cache load returns without opening anything. So the first thing
+        /// ever to migrate such a library is several poster fetches racing, on the first launch
+        /// after an upgrade.
+        ///
+        /// A test that only opened the database once would pass against the broken version, which
+        /// is exactly why this one opens it many times at the same instant.
+        /// </summary>
+        [Fact]
+        public void A_library_migrated_by_many_connections_at_once_still_upgrades_exactly_once()
+        {
+            CreateOldFilmLibrary();
+
+            const int racers = 8;
+
+            // Real threads and a barrier, not pooled tasks. Tasks queued on the thread pool ramp
+            // up one at a time and end up politely serialising, at which point every one after the
+            // first finds the work already done and the race never happens — a test that passes
+            // against the broken code and proves nothing.
+            using var gate = new Barrier(racers);
+            var failures = new List<Exception>();
+            var threads = new Thread[racers];
+
+            for (var i = 0; i < racers; i++)
+            {
+                threads[i] = new Thread(() =>
+                {
+                    gate.SignalAndWait();
+
+                    try
+                    {
+                        using var conn = Database.Open(_dbPath);
+                        Assert.True(Database.ColumnExists(conn, "files", "last_seen_at"));
+                    }
+                    catch (Exception ex)
+                    {
+                        lock (failures) failures.Add(ex);
+                    }
+                });
+
+                threads[i].Start();
+            }
+
+            foreach (var thread in threads) Assert.True(thread.Join(TimeSpan.FromSeconds(30)));
+
+            Assert.True(
+                failures.Count == 0,
+                $"{failures.Count} of {racers} concurrent migrations failed: "
+                + string.Join(" | ", failures.Select(f => f.Message)));
+
+            // And the column exists exactly once rather than having been added repeatedly.
+            using var conn = Database.Open(_dbPath);
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = "PRAGMA table_info(files)";
+
+            var seen = 0;
+            using var reader = cmd.ExecuteReader();
+            while (reader.Read())
+                if (string.Equals(reader.GetString(1), "last_seen_at", StringComparison.OrdinalIgnoreCase))
+                    seen++;
+
+            Assert.Equal(1, seen);
+        }
+
+
+        /// <summary>
+        /// The check-then-act window itself, with nothing else serialising it.
+        ///
+        /// Going through <c>Database.Open</c> mostly hides this: the schema script runs first and
+        /// takes the write lock, so connections tend to queue and each one after the first finds
+        /// the column already committed. The window is still there, and this is what is inside it.
+        /// </summary>
+        [Fact]
+        public void Two_connections_adding_one_column_at_the_same_moment_do_not_fight()
+        {
+            CreateOldFilmLibrary();
+
+            const int racers = 8;
+            using var gate = new Barrier(racers);
+
+            var failures = new List<Exception>();
+            var connections = new List<SqliteConnection>();
+            var threads = new Thread[racers];
+
+            try
+            {
+                for (var i = 0; i < racers; i++)
+                {
+                    // Connect rather than Open: Connect lays down no schema, so the only thing
+                    // these threads contend over is the ALTER this test is about.
+                    var conn = Database.Connect(_dbPath);
+                    lock (connections) connections.Add(conn);
+
+                    threads[i] = new Thread(() =>
+                    {
+                        gate.SignalAndWait();
+
+                        try
+                        {
+                            Database.AddColumnIfMissing(conn, "files", "last_seen_at", "TEXT");
+                        }
+                        catch (Exception ex)
+                        {
+                            lock (failures) failures.Add(ex);
+                        }
+                    });
+
+                    threads[i].Start();
+                }
+
+                foreach (var thread in threads) Assert.True(thread.Join(TimeSpan.FromSeconds(30)));
+
+                Assert.True(
+                    failures.Count == 0,
+                    $"{failures.Count} of {racers} racing migrations failed: "
+                    + string.Join(" | ", failures.Select(f => f.Message)));
+
+                Assert.True(Database.ColumnExists(connections[0], "files", "last_seen_at"));
+            }
+            finally
+            {
+                foreach (var conn in connections) conn.Dispose();
+            }
+        }
+
+        /// <summary>
+        /// And the other half of the bargain: the guard treats a lost race as success, not every
+        /// failure as success. A column SQLite refuses outright leaves the table as it was, so it
+        /// has to be reported rather than buried — otherwise a genuine mistake in a future
+        /// migration would look like it had been applied.
+        /// </summary>
+        [Fact]
+        public void A_column_sqlite_refuses_is_still_reported()
+        {
+            CreateOldFilmLibrary();
+
+            using var conn = Database.Open(_dbPath);
+
+            // SQLite cannot add a NOT NULL column with no default to a table that has rows in it.
+            Assert.Throws<SqliteException>(
+                () => Database.AddColumnIfMissing(conn, "files", "demanded", "TEXT NOT NULL"));
+
+            Assert.False(Database.ColumnExists(conn, "files", "demanded"));
         }
 
         [Fact]
