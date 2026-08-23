@@ -48,6 +48,24 @@ namespace UrDatabase.Views
         /// </summary>
         private string? _selectedSeason;
 
+        /// <summary>
+        /// The season to land on the first time the list is built, when the screen was opened from
+        /// something that knows which one it wants — an episode in the Continue watching row.
+        /// </summary>
+        /// <remarks>
+        /// Only ever consulted before the user has chosen a season, so the refresh that follows
+        /// the cache does not drag them back to it. Null is the ordinary case and means the first
+        /// season, as it always did.
+        /// </remarks>
+        private int? _openAtSeason;
+
+        /// <summary>
+        /// The window's own lifetime, for work that has to outlive this screen: an episode goes on
+        /// playing after the viewer has gone back to the library, and progress reporting has to go
+        /// on with it. Bounded by the app closing, which sends a last stop.
+        /// </summary>
+        private CancellationToken _appLifetime = CancellationToken.None;
+
         public SeriesDetailsView()
         {
             InitializeComponent();
@@ -64,7 +82,19 @@ namespace UrDatabase.Views
         /// Where the seasons and episodes come from. Null shows the series with no episode list at
         /// all, which is what the XAML designer gets.
         /// </param>
-        public Task ShowAsync(SeriesDetailsVm vm, SeriesLoader? loader = null, JellyfinClient? jellyfin = null)
+        /// <param name="appLifetime">
+        /// The window's lifetime, not this screen's. Progress reporting for an episode is given
+        /// this so that going back to the library does not stop it mid-episode.
+        /// </param>
+        /// <param name="openAtSeason">
+        /// The season to open on, when the caller knows which one is wanted.
+        /// </param>
+        public Task ShowAsync(
+            SeriesDetailsVm vm,
+            SeriesLoader? loader = null,
+            JellyfinClient? jellyfin = null,
+            CancellationToken appLifetime = default,
+            int? openAtSeason = null)
         {
             if (_closed is not null) Close();
 
@@ -72,6 +102,8 @@ namespace UrDatabase.Views
             _loader = loader;
             _jellyfin = jellyfin;
             _selectedSeason = null;
+            _openAtSeason = openAtSeason;
+            _appLifetime = appLifetime;
 
             _cts?.Cancel();
             _cts = new CancellationTokenSource();
@@ -200,8 +232,7 @@ namespace UrDatabase.Views
             // to be a control, and its episodes are already the whole list below it.
             SeasonRow.IsVisible = Seasons.Count > 1;
 
-            var selected = Seasons.FirstOrDefault(s =>
-                string.Equals(s.Name, _selectedSeason, StringComparison.OrdinalIgnoreCase)) ?? Seasons.FirstOrDefault();
+            var selected = SeriesGrouping.SeasonToShow(groups, _selectedSeason, _openAtSeason);
 
             SelectSeason(selected);
 
@@ -254,6 +285,13 @@ namespace UrDatabase.Views
         /// carried on every row: it contains an access token, and a list of twenty-four of them is
         /// twenty-four credentials sitting in a bound collection.
         /// </summary>
+        /// <remarks>
+        /// Followed afterwards exactly as a film is. Nothing in that path was ever about films —
+        /// the report is an item id, a position and a state — so an episode watched here appears
+        /// in Continue watching on the television, and one watched on the television appears here.
+        /// Without this an episode played from this app was invisible to every other client, which
+        /// is precisely the complaint the film half of the feature was built to answer.
+        /// </remarks>
         private async void Episode_Click(object? sender, PointerPressedEventArgs e)
         {
             if (!e.GetCurrentPoint(sender as Control).Properties.IsLeftButtonPressed) return;
@@ -275,7 +313,15 @@ namespace UrDatabase.Views
                 // stream URL is only valid with a token, and the token comes from a sign-in.
                 await _jellyfin.ConnectAsync(deadline.Token);
 
-                MediaPlayerLauncher.Play(_jellyfin.BuildStreamUrl(episode.ItemId));
+                var launch = MediaPlayerLauncher.Play(
+                    _jellyfin.BuildStreamUrl(episode.ItemId),
+                    withProgressReporting: PlaybackTracking.CanReport(_jellyfin, episode.ItemId));
+
+                // Not awaited: it lasts as long as the episode, and the viewer is going back to
+                // the list. Given the window's lifetime rather than this screen's, so leaving the
+                // programme does not stop the reporting — and so closing the app does, with a
+                // last word.
+                _ = PlaybackTracking.Follow(launch, _jellyfin, episode.ItemId, _appLifetime);
             }
             catch (OperationCanceledException)
             {

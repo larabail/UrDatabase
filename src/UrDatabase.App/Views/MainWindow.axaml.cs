@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
+using System.ComponentModel;
 using System.IO;
 using System.Linq;
 using System.Threading;
@@ -85,6 +86,28 @@ namespace UrDatabase.Views
         /// anything and stays there when it cannot be asked at all.
         /// </summary>
         private IReadOnlyList<JellyfinResumeItem> _resume = Array.Empty<JellyfinResumeItem>();
+
+        /// <summary>
+        /// What the owner has taken out of that row. Held beside <see cref="_resume"/> rather than
+        /// subtracted from it on load, so a dismissal made while the app is open costs one small
+        /// write and a rebuild rather than a reload — and so undoing one is the same.
+        /// </summary>
+        private IReadOnlyList<ResumeDismissal> _dismissals = Array.Empty<ResumeDismissal>();
+
+        /// <summary>
+        /// The card the context menu was opened on. Recorded on the press that opens the menu
+        /// rather than read off the menu's own data context, which is a chain of inheritance
+        /// through a popup that is not in this window's visual tree.
+        /// </summary>
+        private UiMovie? _cardMenuTarget;
+
+        /// <summary>
+        /// The last thing dismissed, for as long as it can be put back with one keystroke. Cleared
+        /// when it is undone, and deliberately not persisted: undo is for the click you have just
+        /// made, and a dismissal that outlives the session ends the way the README says it does —
+        /// when the position moves.
+        /// </summary>
+        private ResumeDismissal? _lastDismissal;
 
         private PosterAutoLoader? _posterLoader;
         private int _posterFailuresReported;
@@ -308,6 +331,8 @@ namespace UrDatabase.Views
             _remoteById = new Dictionary<string, JellyfinMovie>(StringComparer.OrdinalIgnoreCase);
             _remoteSeriesById = new Dictionary<string, JellyfinSeries>(StringComparer.OrdinalIgnoreCase);
             _resume = Array.Empty<JellyfinResumeItem>();
+            _dismissals = Array.Empty<ResumeDismissal>();
+            _lastDismissal = null;
 
             if (_jellyfin is null) return;
 
@@ -328,6 +353,7 @@ namespace UrDatabase.Views
                     .ToList();
 
                 _resume = JellyfinResumeCache.Load(conn);
+                _dismissals = ResumeDismissalStore.Load(conn);
             }
             catch (Exception ex)
             {
@@ -458,19 +484,28 @@ namespace UrDatabase.Views
         /// Prints the shortcut on the search field, and makes it work. The app has always been
         /// able to focus search from the keyboard in the sense that Tab reaches it; this is the
         /// shortcut people actually try, and nothing else in the window would ever mention it.
+        ///
+        /// Undo rides along here because it is the same mechanism and the same question of which
+        /// modifier this platform uses. It puts back the last thing removed from Continue
+        /// watching, and does nothing at all when nothing has been removed.
         /// </summary>
         private void WireSearchShortcut()
         {
             var mac = OperatingSystem.IsMacOS();
+            var modifier = mac ? KeyModifiers.Meta : KeyModifiers.Control;
 
             SearchKeycapText.Text = mac ? "\u2318F" : "Ctrl F";
 
-            var gesture = new KeyGesture(Key.F, mac ? KeyModifiers.Meta : KeyModifiers.Control);
+            KeyBindings.Add(new KeyBinding
+            {
+                Gesture = new KeyGesture(Key.F, modifier),
+                Command = new FocusSearchCommand(this)
+            });
 
             KeyBindings.Add(new KeyBinding
             {
-                Gesture = gesture,
-                Command = new FocusSearchCommand(this)
+                Gesture = new KeyGesture(Key.Z, modifier),
+                Command = new UndoDismissalCommand(this)
             });
         }
 
@@ -498,6 +533,36 @@ namespace UrDatabase.Views
 
                 _window.SearchBox.Focus();
                 _window.SearchBox.SelectAll();
+            }
+        }
+
+        /// <summary>
+        /// Puts back the last thing taken out of the Continue watching row.
+        /// </summary>
+        /// <remarks>
+        /// Never while a film or a programme is open, and never while the search box has focus:
+        /// undo in a text field means undo the typing, and quietly restoring a card behind a
+        /// screen the user is reading would be an action with no visible effect.
+        /// </remarks>
+        private sealed class UndoDismissalCommand : System.Windows.Input.ICommand
+        {
+            private readonly MainWindow _window;
+
+            public UndoDismissalCommand(MainWindow window) => _window = window;
+
+            public event EventHandler? CanExecuteChanged { add { } remove { } }
+
+            public bool CanExecute(object? parameter) =>
+                _window._lastDismissal is not null &&
+                !_window.DetailsView.IsShowing &&
+                !_window.SeriesView.IsShowing &&
+                !_window.SearchBox.IsFocused;
+
+            public void Execute(object? parameter)
+            {
+                if (!CanExecute(parameter)) return;
+
+                _window.UndoLastDismissal();
             }
         }
 
@@ -757,7 +822,7 @@ namespace UrDatabase.Views
             //
             // Called unconditionally, because building it is also what clears the progress mark
             // off a film that is no longer part-watched.
-            var continueWatching = ResumeRow.Build(visible, _resume);
+            var continueWatching = ResumeRow.Build(visible, _resume, _dismissals);
 
             foreach (var shelf in LibraryGrouping.BuildShelves(
                          visible,
@@ -1292,8 +1357,14 @@ namespace UrDatabase.Views
 
         private async void MovieCard_Click(object? sender, PointerPressedEventArgs e)
         {
-            if (!e.GetCurrentPoint(sender as Control).Properties.IsLeftButtonPressed) return;
             if ((sender as Control)?.DataContext is not UiMovie m) return;
+
+            // Recorded on every press, including the right-hand one that is about to open the
+            // context menu. The menu is a popup outside this window's visual tree, so this is what
+            // it acts on rather than a data context inherited across that boundary.
+            _cardMenuTarget = m;
+
+            if (!e.GetCurrentPoint(sender as Control).Properties.IsLeftButtonPressed) return;
 
             await OpenAsync(m);
         }
@@ -1318,9 +1389,17 @@ namespace UrDatabase.Views
             {
                 var current = next;
 
+                // An episode only ever appears in the Continue watching row, and it opens its
+                // programme rather than playing on the spot. Every other card in this app opens a
+                // screen and everything is played from one, so a card that started a stream on a
+                // single click — in the first row on the page, under the cursor as the window
+                // opens — would be the one exception and the easiest thing here to hit by
+                // accident.
+                if (current.IsEpisode) await ShowEpisodesProgrammeAsync(current);
+
                 // A series is not a film with episodes attached: it opens a different screen, and
                 // it is never sent to TMDB, which would answer about a film of the same name.
-                if (current.IsSeries) await ShowSeriesDetailsAsync(current);
+                else if (current.IsSeries) await ShowSeriesDetailsAsync(current);
                 else if (current.IsRemote) await ShowRemoteDetailsAsync(current);
                 else await ShowLocalDetailsAsync(current);
 
@@ -1537,10 +1616,29 @@ namespace UrDatabase.Views
         /// instantly and opens at all with the server down; the episodes are asked for afterwards
         /// and the screen says which of the two it is showing.
         /// </summary>
-        private async Task ShowSeriesDetailsAsync(UiMovie m)
+        private Task ShowSeriesDetailsAsync(UiMovie m) =>
+            ShowProgrammeAsync(m.RemoteId, m.DisplayPosterPath, openAtSeason: null);
+
+        /// <summary>
+        /// Opens the programme an episode in the Continue watching row belongs to, on the season
+        /// that episode is in.
+        /// </summary>
+        /// <remarks>
+        /// The season matters. A card that said "S4E7, 22 minutes left" and then opened on season
+        /// one would have answered a question with a different question, and a viewer of a
+        /// programme with nine seasons would have to find the episode again by hand.
+        ///
+        /// The poster comes off the card, which borrowed it from the programme's own card when the
+        /// row was built, so opening the show cannot show different artwork from the card that
+        /// opened it.
+        /// </remarks>
+        private Task ShowEpisodesProgrammeAsync(UiMovie episode) =>
+            ShowProgrammeAsync(episode.SeriesId, episode.DisplayPosterPath, episode.SeasonNumber);
+
+        private async Task ShowProgrammeAsync(string? seriesId, string? posterPath, int? openAtSeason)
         {
-            if (string.IsNullOrWhiteSpace(m.RemoteId)) return;
-            if (!_remoteSeriesById.TryGetValue(m.RemoteId, out var show)) return;
+            if (string.IsNullOrWhiteSpace(seriesId)) return;
+            if (!_remoteSeriesById.TryGetValue(seriesId, out var show)) return;
 
             try
             {
@@ -1553,7 +1651,7 @@ namespace UrDatabase.Views
                     Overview = show.Overview,
                     CommunityRating = show.CommunityRating,
                     ImdbId = show.ImdbId,
-                    PosterPath = m.DisplayPosterPath,
+                    PosterPath = posterPath,
                     BackdropUrl = _jellyfin?.BuildBackdropUrl(show.ItemId),
                     SeasonCount = show.SeasonCount,
                     EpisodeCount = show.EpisodeCount,
@@ -1576,7 +1674,7 @@ namespace UrDatabase.Views
 
                 try
                 {
-                    await SeriesView.ShowAsync(vm, _series, _jellyfin);
+                    await SeriesView.ShowAsync(vm, _series, _jellyfin, _cts.Token, openAtSeason);
                 }
                 finally
                 {
@@ -1591,6 +1689,139 @@ namespace UrDatabase.Views
             {
                 await MessageBoxWindow.ShowAsync(this, "UrDatabase", $"Could not load details:{Environment.NewLine}{ex.Message}");
             }
+        }
+
+        /// <summary>
+        /// Whether the card the pointer is over has anything to offer a menu, which today means
+        /// whether it is in the Continue watching row.
+        /// </summary>
+        /// <remarks>
+        /// <c>HasResume</c> is exactly the population of that row: the mark is stamped on when the
+        /// row is built and cleared off everything else. So the same film's card on the Drama
+        /// shelf offers the same dismissal, which is right — it is the same film and the same
+        /// fact — and the four hundred cards that are in no row at all show no menu rather than an
+        /// empty box.
+        /// </remarks>
+        private void CardMenu_Opening(object? sender, CancelEventArgs e)
+        {
+            if (_cardMenuTarget is not { HasResume: true }) e.Cancel = true;
+        }
+
+        private void DismissFromRow_Click(object? sender, RoutedEventArgs e) => DismissFromRow(_cardMenuTarget);
+
+        /// <summary>
+        /// Takes one item out of the Continue watching row, here and nowhere else.
+        /// </summary>
+        /// <remarks>
+        /// Nothing is sent to the server. Jellyfin's own answer to this is "mark unplayed", which
+        /// hides the item in every client in the house and throws the position away — so somebody
+        /// tidying this app's first shelf would silently lose their place on the television. This
+        /// writes one local row and leaves the position exactly where it was.
+        ///
+        /// The position is written with it, because that is what the dismissal is about: the item
+        /// comes back the moment the server reports a different one. See
+        /// <see cref="ResumeDismissals"/>.
+        /// </remarks>
+        private async void DismissFromRow(UiMovie? card)
+        {
+            if (card?.RemoteId is not { Length: > 0 } itemId) return;
+
+            var entry = _resume.FirstOrDefault(e =>
+                string.Equals(e.ItemId?.Trim(), itemId.Trim(), StringComparison.OrdinalIgnoreCase));
+
+            // Nothing to dismiss. The card carries a mark from a row the cache no longer holds,
+            // which means a sync has just replaced it underneath the screen.
+            if (entry is null) return;
+
+            var dismissal = new ResumeDismissal(entry.ItemId.Trim(), entry.PositionTicks);
+
+            try
+            {
+                using var conn = Database.Open(_dbPath);
+                await DatabaseWriteLane.RunAsync(
+                    conn,
+                    _ =>
+                    {
+                        ResumeDismissalStore.Dismiss(conn, dismissal.ItemId, dismissal.PositionTicks);
+                        return Task.CompletedTask;
+                    },
+                    _cts.Token);
+            }
+            catch (OperationCanceledException)
+            {
+                return;
+            }
+            catch (Exception ex)
+            {
+                AppLog.Write("jellyfin.log", $"could not dismiss {itemId}: {ex.Message}");
+                SetStatus("That could not be removed from Continue watching.");
+                return;
+            }
+
+            _dismissals = _dismissals.Where(d => !string.Equals(d.ItemId, dismissal.ItemId, StringComparison.OrdinalIgnoreCase))
+                                     .Append(dismissal)
+                                     .ToList();
+
+            _lastDismissal = dismissal;
+
+            RebuildGroups();
+            SetStatus(DismissalNotice(card));
+        }
+
+        /// <summary>
+        /// What the status line says after a dismissal: what went, and how to change your mind.
+        /// </summary>
+        private string DismissalNotice(UiMovie card)
+        {
+            var what = card.IsEpisode && card.EpisodeLabel.Length > 0
+                ? $"{card.Title} {card.EpisodeLabel}"
+                : card.Title;
+
+            var undo = OperatingSystem.IsMacOS() ? "\u2318Z" : "Ctrl Z";
+
+            return $"Removed \u201c{what}\u201d from Continue watching. {undo} puts it back.";
+        }
+
+        /// <summary>
+        /// Puts the last dismissed item straight back, for as long as the window has been open.
+        /// </summary>
+        /// <remarks>
+        /// One deep, and only for this session. It is for the click you have just made: a stack of
+        /// them would be a history nobody is keeping, and a dismissal from last week ends the way
+        /// every other one does, by the position moving.
+        /// </remarks>
+        private async void UndoLastDismissal()
+        {
+            if (_lastDismissal is not { } dismissal) return;
+
+            try
+            {
+                using var conn = Database.Open(_dbPath);
+                await DatabaseWriteLane.RunAsync(
+                    conn,
+                    _ =>
+                    {
+                        ResumeDismissalStore.Restore(conn, dismissal.ItemId);
+                        return Task.CompletedTask;
+                    },
+                    _cts.Token);
+            }
+            catch (OperationCanceledException)
+            {
+                return;
+            }
+            catch (Exception ex)
+            {
+                AppLog.Write("jellyfin.log", $"could not restore {dismissal.ItemId}: {ex.Message}");
+                SetStatus("That could not be put back.");
+                return;
+            }
+
+            _dismissals = _dismissals.Where(d => !string.Equals(d.ItemId, dismissal.ItemId, StringComparison.OrdinalIgnoreCase)).ToList();
+            _lastDismissal = null;
+
+            RebuildGroups();
+            SetStatus("Put back in Continue watching.");
         }
 
         /// <summary>

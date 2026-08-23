@@ -200,6 +200,13 @@ its `CFBundleShortVersionString` from it, and the release assets are named
 `.csproj`; it would silently win over the shared one for that project alone and
 produce a release whose downloads disagree with their own tag.
 
+It is also three plain numbers, always. A version that is blank, deleted or
+written as anything other than `MAJOR.MINOR.PATCH` — `0.15.0-preview`,
+`$(BuildVersion)` — is one CI reads as no version at all, and a repository with
+no version tags nothing and reports success on every merge from then on. The
+`Version` check refuses that on any pull request, including one that changes
+nothing else.
+
 How far to bump follows directly from the commit kind:
 
 | The change is | Kind | Bump |
@@ -223,10 +230,12 @@ does not.
 Bumping further than required is always allowed; nothing overrules a person who
 decides a release deserves more.
 
-This matters because every merge to `main` releases. Without a bump the release
-workflow tries to create a tag that already exists, and if it did not fail, two
-different builds would reach users under one version and no bug report could be
-tied to a revision.
+This matters because every merge to `main` releases. Without a bump there is no
+tag to create — the one that version releases as already exists — so the merge
+publishes nothing, and if the workflow did not say so, two different builds
+would reach users under one version and no bug report could be tied to a
+revision. It does say so: a merge that leaves shipped code newer than the last
+tag fails the release run instead of passing quietly.
 
 A pull request that touches nothing under `src/` needs no bump. Documentation,
 workflows, the downloads site and the test project change no shipped binary.
@@ -297,6 +306,17 @@ either: merging `main` into a branch that already holds the identical version
 resolves cleanly, with no conflict to notice. Only a merge queue would close
 that, and there is not one. So on a branch that has been open a while, look at
 what `main` says before pressing merge.
+
+What does happen, when you do not, is that the release run goes **red** rather
+than green: it fails on any merge that leaves code under `src/` newer than the
+tag it would have released as. That prevents nothing — the merge has already
+landed — but it is the difference between finding out in a mail and finding out
+weeks later when somebody asks why the download is still the old one, which is
+how both of the collisions above were found. Clearing it is a pull request that
+raises `<Version>` and changes nothing else; the release it triggers carries
+everything stranded since the last tag. Never move the existing tag onto the
+newer commit: its assets are published under that name already, and a skipped
+number is cheaper than two builds sharing one.
 
 Administrators can bypass all of it. That is a deliberate escape hatch for the
 day a required check is wedged, not an invitation — the rule against committing

@@ -166,6 +166,21 @@ namespace UrDatabase.Services
             // value: those rows are still called what the scan called them.
             AddColumnIfMissing(conn, "movies", "scan_title", "TEXT");
 
+            // What kind of thing a resume entry is about, and — for an episode — what its card has
+            // to say. The row used to be films only, so a library synced before television was in
+            // it has a jellyfin_resume table with none of these: without them the next sync fails
+            // on "no such column" and the owner loses the shelf rather than gaining episodes.
+            //
+            // item_type is left null on those existing rows rather than backfilled to 'Movie'.
+            // They were written by a build that only ever stored films, so reading a null as a
+            // film is right, and the whole table is replaced by the next sync anyway.
+            AddColumnIfMissing(conn, "jellyfin_resume", "item_type", "TEXT");
+            AddColumnIfMissing(conn, "jellyfin_resume", "series_id", "TEXT");
+            AddColumnIfMissing(conn, "jellyfin_resume", "series_name", "TEXT");
+            AddColumnIfMissing(conn, "jellyfin_resume", "season_number", "INTEGER");
+            AddColumnIfMissing(conn, "jellyfin_resume", "episode_number", "INTEGER");
+            AddColumnIfMissing(conn, "jellyfin_resume", "name", "TEXT");
+
             // What the server measured about a film's file, as JSON. Nothing asked Jellyfin for
             // its media streams until now, so every library synced before this has the column
             // absent and every film would fail on "no such column" the moment one was opened.
@@ -359,7 +374,18 @@ CREATE TABLE IF NOT EXISTS jellyfin_resume (
     runtime_ticks     INTEGER,
     played_percentage REAL,
     sort_order        INTEGER NOT NULL,
+    item_type         TEXT,
+    series_id         TEXT,
+    series_name       TEXT,
+    season_number     INTEGER,
+    episode_number    INTEGER,
+    name              TEXT,
     synced_at         TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS jellyfin_resume_dismissals (
+    item_id        TEXT PRIMARY KEY,
+    position_ticks INTEGER NOT NULL,
+    dismissed_at   TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS oscar_lookups (
     title      TEXT    NOT NULL,

@@ -216,6 +216,47 @@ namespace UrDatabase.Services
             => count == 1 ? "1 EPISODE" : $"{count.ToString(CultureInfo.InvariantCulture)} EPISODES";
 
         /// <summary>
+        /// Which season the screen should be showing: the one the reader had chosen, or the one
+        /// the screen was opened at, or the first.
+        /// </summary>
+        /// <remarks>
+        /// Three claims in a fixed order, and the order is the whole rule. A reader's own choice
+        /// wins outright, because the list is rebuilt when the server answers and a refresh that
+        /// jumped somewhere else would undo a click made while it was in flight. Then the season
+        /// the screen was asked to open at — an episode in the Continue watching row knows which
+        /// one it is in, and landing on season one after clicking "S4E7" would answer a question
+        /// with a different question. Then the first season, which is what opening a programme has
+        /// always meant.
+        ///
+        /// A wanted season that this programme does not have falls through to the first rather
+        /// than to nothing: the caller's number came from a resume entry that can be older than
+        /// the episode list beside it.
+        /// </remarks>
+        public static SeasonGroup? SeasonToShow(
+            IReadOnlyList<SeasonGroup>? seasons,
+            string? chosenName,
+            int? openAtNumber)
+        {
+            if (seasons is null || seasons.Count == 0) return null;
+
+            if (!string.IsNullOrWhiteSpace(chosenName))
+            {
+                var chosen = seasons.FirstOrDefault(s =>
+                    string.Equals(s.Name, chosenName, StringComparison.OrdinalIgnoreCase));
+
+                if (chosen is not null) return chosen;
+            }
+
+            if (openAtNumber is int wanted)
+            {
+                var asked = seasons.FirstOrDefault(s => s.Number == wanted);
+                if (asked is not null) return asked;
+            }
+
+            return seasons[0];
+        }
+
+        /// <summary>
         /// The line under a series title: how many seasons and how many episodes are actually
         /// here, counted from what was fetched rather than from what the server claimed. Empty
         /// when nothing has been fetched yet, so the screen can say "loading" instead of "0".

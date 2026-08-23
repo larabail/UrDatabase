@@ -54,6 +54,13 @@ Markdown files — requires no bump. None of it can change what a published buil
 contains, and demanding a version for a typo on a web page would publish a
 release containing nothing a user could find.
 
+The one thing no pull request may do, whether it ships anything or not, is
+leave `<Version>` unreadable — blank, deleted, `0.15.0-preview`,
+`$(BuildVersion)`. The release workflow reads that single line to decide what
+to tag; with nothing usable there it tags nothing and reports success on every
+merge afterwards, including the ones that do change `src/`. The `Version` check
+refuses it for that reason alone.
+
 How much to raise it by is a judgement call and nothing enforces it:
 
 | Change | Bump |
@@ -78,15 +85,40 @@ It still cannot make the collision impossible. A check reports the state it ran
 in, and GitHub does not re-run an open pull request's checks when something
 lands on `main`, so two branches carrying the same version can both be green
 and merge seconds apart — the first takes the tag and the second publishes
-nothing. Only a merge queue would close that gap.
+nothing. Only a merge queue would close that gap. What the release run does
+instead is refuse to let it happen quietly; see below.
 
-### Why not moving the version does nothing
+### What happens when the version does not move
 
 `release.yml` refuses to publish over an existing tag. That is what makes it
 safe to run on every merge — a documentation change lands, the workflow sees
-`v0.1.0` already tagged, writes a line saying so and exits green. It is also
-why forgetting the bump means the merge ships nothing at all, silently. Hence
-the check on the pull request.
+`v0.1.0` already tagged, writes a line saying so and exits green.
+
+Whether that skip is green or red turns on the same question the pull request
+check asks — did anything under `src/` change — measured this time between the
+tagged commit and `main` as it now stands:
+
+| The tag exists, and since it was published | The run |
+| --- | --- |
+| nothing under `src/` has changed | says so and passes. The ordinary docs, workflow or downloads-site merge. |
+| something under `src/` has changed | **fails.** Shipped code is on `main` and in no release, and only a version bump can rescue it. |
+
+The second row is not a guard. By the time it runs the merge has happened and
+nothing can be prevented; what it prevents is the *silence*. That state used to
+report success, and it was found twice by somebody wondering why the download
+was still the old one — once after two pull requests took `0.4.1` and merged
+twelve seconds apart, and again at `0.4.2` hours later. A failed run on `main`
+mails the owner; a green one saying "already tagged" teaches everybody to read
+nothing.
+
+To clear it: raise `<Version>` in a pull request of its own and merge that. The
+release it triggers carries everything that accumulated since the last tag,
+including whatever was stranded. Do not move the existing tag onto the newer
+commit — its assets are already published under that name, and a skipped
+version number is cheaper than two different builds sharing one.
+
+The rule and every message it prints live in `tool/check_release_gate.py`,
+tested alongside the bump check by the same command.
 
 ## What runs, and when
 
@@ -110,12 +142,13 @@ in the **Artifacts** section at the bottom of the run page, as
 
 ### `release.yml` — on every push to `main`
 
-Reads the version, and stops immediately if there is nothing to do. Otherwise:
-runs the tests again on the merged result, publishes all three runtime
-identifiers, signs and notarizes the two macOS ones into disk images, checksums
-everything, pushes the annotated tag `v<version>`, opens a GitHub Deployment,
-publishes the release with the three downloads, `SHA256SUMS.txt` and generated
-notes, then closes the deployment.
+Reads the version, and stops immediately if there is nothing to do — quietly
+when nothing shipped has changed since the tag, and *loudly* when something
+has. Otherwise: runs the tests again on the merged result, publishes all three
+runtime identifiers, signs and notarizes the two macOS ones into disk images,
+checksums everything, pushes the annotated tag `v<version>`, opens a GitHub
+Deployment, publishes the release with the three downloads, `SHA256SUMS.txt`
+and generated notes, then closes the deployment.
 
 The deployment is why the repository has a **Deployments** entry per release:
 it answers "what shipped and when" without reading workflow logs.
@@ -425,13 +458,18 @@ and that is the entire relationship.
 
 ## When something goes wrong
 
-**A merge published nothing.** Almost always the version did not move. The
-release run says so in its summary. Raise `<Version>` and merge again.
+**A merge published nothing.** Almost always the version did not move. Which
+kind of "nothing" it was is on the run: green with *Nothing released* means the
+merge changed nothing shippable and there was genuinely nothing to publish; red
+with *This merge shipped nothing, and it should have* means code under `src/`
+is now on `main` and in no release. Raise `<Version>` in a pull request of its
+own and merge it — the release that follows carries everything stranded since
+the last tag. Do not move the existing tag onto the newer commit.
 
 **The release failed halfway, and the tag exists.** Re-running the workflow
-does nothing, because it sees the tag. Delete the tag and the partial release
-on GitHub, then re-run — or, more simply, raise the version and release the next
-one.
+does nothing, because it sees the tag — and now says so in whichever of the two
+ways above applies. Delete the tag and the partial release on GitHub, then
+re-run — or, more simply, raise the version and release the next one.
 
 **A release shipped with no posters or ratings.** One of the API keys was empty
 when it was built. The run logs a warning saying which. Set the secret and

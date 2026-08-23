@@ -260,18 +260,24 @@ It runs on Windows and macOS from one codebase, built with
   (`Services/JellyfinClient`, `Services/JellyfinCache`,
   `Services/JellyfinLibrary`, `Services/MediaPlayerLauncher`).
 - **Continue watching, across every device.** A row above every genre with the
-  films the server says you are part way through, in its own order — most
-  recently watched first — each card carrying a brass rule along the bottom of
-  the poster showing how far in you are and a line saying how much is left. It
-  is the server's own answer, so a film started on the television carries on
-  here. Cached like the library, so it is on screen the instant the window opens
-  and stays there with the server switched off; an empty row is not shown at
-  all. Opening such a film replaces **Play** with **Continue watching**, which
-  starts it where you stopped rather than at the beginning, with **Start again**
-  beside it for when that is not what you wanted. Films played here report back,
-  so what you watch in UrDatabase appears in Continue watching everywhere else
-  too — VLC only, and see [Known gaps](#known-gaps) for what that costs
-  (`Services/ResumeRow`, `Services/PlaybackReporter`, `Services/VlcStatus`).
+  films *and episodes* the server says you are part way through, in its own
+  order — most recently watched first — each card carrying a brass rule along
+  the bottom of the poster showing how far in you are and a line saying how much
+  is left. An episode is titled with its programme and marked `S1E1`, under the
+  programme's own poster, so it reads as a sibling of the films beside it;
+  clicking it opens that programme at that season. It is the server's own
+  answer, so a film started on the television carries on here. Cached like the
+  library, so it is on screen the instant the window opens and stays there with
+  the server switched off; an empty row is not shown at all. Opening a
+  part-watched film replaces **Play** with **Continue watching**, which starts it
+  where you stopped rather than at the beginning, with **Start again** beside it.
+  Anything played here reports back, so what you watch in UrDatabase appears in
+  Continue watching everywhere else too — VLC only, and see
+  [Known gaps](#known-gaps) for what that costs. Right-click a card to take it
+  out of the row **in this app only**; it comes back if you watch any more of it
+  anywhere
+  (`Services/ResumeRow`, `Services/ResumeDismissals`,
+  `Services/PlaybackReporter`, `Services/VlcStatus`).
 - **Download a server film to watch offline.** A film on the server has a
   **Download** button that keeps a copy on this disk, named the way the scanner
   reads it and catalogued the moment it finishes — so it is playable and
@@ -651,7 +657,12 @@ somebody opening a programme wants episode one.
 
 Clicking an episode plays it, through the same VLC or IINA that plays a film and
 by the same `static=true` stream URL. That URL carries a token, so it is built at
-the moment Play is pressed rather than being held on every row in the list.
+the moment Play is pressed rather than being held on every row in the list. An
+episode played this way reports its position back exactly as a film does, so it
+appears in Continue watching here and on every other client — see
+[Reporting playback back to the server](#reporting-playback-back-to-the-server).
+An episode you are part way through is in the Continue watching row above the
+genres, and clicking that card brings you back here, at the season it is in.
 
 Seasons and episodes are **not** fetched by a sync. A library of two hundred
 programmes is several thousand episodes, and pulling them all would turn a sync
@@ -810,21 +821,43 @@ out of it first.
 #### Continue watching
 
 `GET /UserItems/Resume` is the server's own answer to "where was I", and the row
-above every genre is that answer rather than something this app worked out. A
-film started on the television is part way through here, and the ordering — most
-recently watched first — is the server's too.
+above every genre is that answer rather than something this app worked out. It
+is asked for films **and episodes**, because a half-watched episode is the
+commonest thing to be part way through and a row without them disagreed with
+every other client in the house. A film started on the television is part way
+through here, and the ordering — most recently watched first — is the server's
+too.
 
-Only the position is cached, in `jellyfin_resume`, alongside the library it
-belongs to. Titles, years and artwork are already in `jellyfin_movies`, so the
-row is built by matching each entry's item id onto the card the library already
-made. That has three consequences worth knowing:
+For a film, only the position is cached, in `jellyfin_resume`, alongside the
+library it belongs to. Titles, years and artwork are already in
+`jellyfin_movies`, so the row is built by matching each entry's item id onto the
+card the library already made. That has three consequences worth knowing:
 
 - a film held both here and on the server appears once, as the same card badged
   **Server** and **Offline** that every shelf below shows;
-- a resume entry for something the movie library does not hold — a television
-  episode, a film in a library this app was never pointed at — has no card to
+- a resume entry the library cannot place — a film in a library this app was
+  never pointed at, an episode of a programme it has never seen — has no card to
   land on and is dropped rather than rendered as an oddly titled film;
 - the row narrows with the source controls, exactly as the shelves do.
+
+An episode carries a little more, because nothing caches episodes until a
+programme is opened: the row keeps the series id, the programme's name, the
+season and episode numbers and the episode's own title. None of that can go
+stale, because the whole table is replaced by each sync and so always says
+exactly what the server last said. The card is titled with the **programme** and
+marked `S1E1`, under the programme's own poster, because an episode's own name
+identifies nothing — a real one here is "In throes of increasing wonder … ",
+which names no show, no season and no place in it. The full name is in the
+tooltip and on the series screen. Clicking an episode card opens its programme
+at that season rather than playing on the spot: every card in this app opens a
+screen, and the first row on the page is the last place to make a single click
+start a stream.
+
+An episode resolves through its programme's card, which is what supplies the
+poster, so filtering the library to **Films** takes the episodes out of the row
+too — the row describes whatever the page is showing. A programme takes no
+progress mark from an episode of it: "twenty minutes left" is true of one
+episode and says nothing about a hundred hours of television.
 
 It survives an unreachable server the way the library does, and for the same
 reason: the cache is only replaced once the server has answered, so a sync
@@ -835,14 +868,50 @@ row stays, and the reason goes to `jellyfin.log`. An empty answer from a server
 that *did* answer is a real answer and does clear it, and an empty row is left
 off the page entirely rather than shown as a heading with nothing under it.
 
-A film with no position in it never appears, and neither does one under a second
-in: a player that has just been handed a stream reports a position before
+Anything with no position in it never appears, and neither does anything under a
+second in: a player that has just been handed a stream reports a position before
 anybody has watched anything.
 
 The progress mark is deliberately shown wherever the card appears rather than
 only in this row. It is the same film and the same fact, and a mark that
 vanished as soon as you looked at the Drama shelf would be answering "where was
 I" only in the place you already knew. The tooltip says it in words.
+
+#### Taking something out of Continue watching
+
+Right-click a card in the row and choose **Remove from Continue watching**. A
+right-click because the row is the first thing on the page and a visible button
+there would be one twitch away from being pressed by accident; the menu appears
+only on a card that is actually in the row.
+
+It is local to this app, entirely. **Nothing is sent to the server**, no other
+Jellyfin client is affected, and the playback position is left exactly where it
+was. Jellyfin's own answer to this is "mark unplayed", which hides the item in
+every client in the house and throws the position away — a different act with a
+much larger blast radius, and not the one on offer here.
+
+**A dismissal lasts until the position moves.** The position it was made at is
+recorded with it, and the moment the server reports a different one the
+dismissal is stale and the item is back in the row. So:
+
+- something you have genuinely abandoned stays gone, because nothing will ever
+  move its position;
+- something you dismiss here and then watch more of on the television comes back,
+  because you have plainly not abandoned it;
+- the list cleans itself up rather than growing into a blacklist nobody can see:
+  each sync forgets the dismissals the server has moved past, and those for
+  anything that has left the resume list altogether.
+
+Dismissing one episode says nothing about the rest of its programme — the next
+episode is a different thing to be part way through — and it is keyed on the
+item, so nothing else on the shelves below changes.
+
+Immediately afterwards, **⌘Z** (Ctrl Z away from a Mac) puts the last one back,
+and the status line says so. That is one deep and for this session only; after
+that, a dismissal ends the way every other one does, by the position moving.
+Dismissals live in `jellyfin_resume_dismissals`, a table of their own rather
+than a column on `jellyfin_resume` — that one is deleted and rewritten by every
+sync, so a dismissal stored there would last minutes.
 
 #### Picking a film up where you left it
 
@@ -868,9 +937,15 @@ worse than one that never offered.
 
 #### Reporting playback back to the server
 
-Films played here report their position back, so what you watch in UrDatabase
-shows up in Continue watching on every other device. **VLC only** — see
-[Known gaps](#known-gaps).
+Films **and episodes** played here report their position back, so what you watch
+in UrDatabase shows up in Continue watching on every other device. **VLC only** —
+see [Known gaps](#known-gaps).
+
+Nothing in that path was ever about films: a report is an item id, a position
+and a state, so an episode goes through exactly the same `POST /Sessions/Playing`,
+`/Progress` and `/Stopped` as a film does. Until now the series screen simply did
+not ask for it, and an episode watched here was invisible to every other client
+in the house — which is the complaint the film half of this was built to answer.
 
 VLC 3.x has an HTTP control interface. The app launches it with `--extraintf
 http` — beside VLC's real interface, never `--intf`, because the point is to
@@ -1074,7 +1149,8 @@ launch. `src/UrDatabase.App/Data/schema.sql` is the full schema — the `movies`
 and `files` tables, the `scans` table each scan records itself in, the
 `jellyfin_movies` cache and its television counterparts `jellyfin_series`,
 `jellyfin_seasons` and `jellyfin_episodes`, the `jellyfin_resume` positions
-behind the Continue watching row, the `movies_fts` FTS5 index and the
+behind the Continue watching row and the `jellyfin_resume_dismissals` that are
+taken back out of it, the `movies_fts` FTS5 index and the
 triggers that keep it current — and every statement is `IF NOT EXISTS`, so it
 runs against a library you already have without touching your data.
 
@@ -1230,6 +1306,15 @@ to bump the version above whatever `main` carries at the moment the check runs
 collide with a tag that already exists. How far to bump is in
 [AGENTS.md](AGENTS.md#versioning).
 
+That check narrows the collision rather than closing it: two branches can still
+take the same version, both go green and merge minutes apart, and the second
+merge then ships nothing. So the release run *fails* when it finds code under
+`src/` that has changed since the existing tag was published — that code is on
+`main` and in no release, and the state used to report success, which is how it
+went unnoticed twice. Clearing it is a pull request that raises `<Version>` and
+nothing else; the release it triggers carries everything stranded since the last
+tag.
+
 Hosting is the only Firebase product involved, and only CI touches it: the
 site is a few static files describing where to get the binaries. There is no
 database, no authentication and no functions, and nothing in `src/` talks to
@@ -1258,7 +1343,8 @@ src/UrDatabase.App/          the application: one cross-platform project
   UrDatabase.App.entitlements  hardened runtime exceptions the .NET JIT needs
 tests/UrDatabase.Tests/      xUnit suite
 tool/                        Python helpers with their own unittest suite:
-                             the version-bump check and the macOS bundler
+                             the version-bump check, the release gate and the
+                             macOS bundler
 Directory.Build.props        the single <Version> for the whole solution
 web/                         the downloads site served by Firebase Hosting
 docs/                        design notes
@@ -1360,26 +1446,30 @@ Stated plainly, so nobody has to find out by using it:
   its Oscars along with its artwork. Until then the quiet failure is deliberate:
   attaching another film's Oscars would be worse than showing none.
 - **Playback position is shared with the server through VLC, and only VLC.** A
-  film streamed through VLC now reports where it got to, so it resumes and is
-  marked watched on every device — but four cases still do not. **IINA reports
-  nothing, and cannot resume**: it is mpv underneath and exposes a JSON IPC
-  socket rather than an HTTP interface, which is a different protocol over a
-  different transport, so an IINA user plays films exactly as before, sees
-  **Play** rather than **Continue watching**, and contributes nothing to the
-  row. **A downloaded film reports nothing and does not resume**, because it is
-  opened with the system's default opener, which is not necessarily VLC, takes a
-  path and nothing else, and may well be away from the server anyway — the
-  position is simply not recorded, rather than queued for later delivery. **Television is neither reported nor shown in the row**: the
-  resume list is asked for films only, so an episode you are part way through
-  appears in Continue watching everywhere except here, and playing one here
-  records nothing. Putting episodes in the row would mean a card for something
-  that is neither a programme nor a film but one episode of one, which is a card
-  this app does not have. And **the last few seconds are lost**: the position is
-  read every two seconds and a player that goes away is noticed after six, so the
-  stop is recorded up to about six seconds behind where the film actually
-  reached. That is deliberate — a stop at nearly the right place beats no stop at
-  all — but it means a film you quit at the very end may not tip over into
-  "watched".
+  film or an episode streamed through VLC now reports where it got to, so it
+  resumes and is marked watched on every device — but three cases still do not.
+  **IINA reports nothing, and cannot resume**: it is mpv underneath and exposes a
+  JSON IPC socket rather than an HTTP interface, which is a different protocol
+  over a different transport, so an IINA user plays films exactly as before, sees
+  **Play** rather than **Continue watching**, and contributes nothing to Continue
+  watching. **A downloaded film reports nothing and does not resume**, because it
+  is opened with the system's default opener, which is not necessarily VLC, takes
+  a path and nothing else, and may well be away from the server anyway — the
+  position is simply not recorded, rather than queued for later delivery. And
+  **the last few seconds are lost**: the position is read every two seconds and a
+  player that goes away is noticed after six, so the stop is recorded up to about six seconds behind where the
+  film actually reached. That is deliberate — a stop at nearly the right place
+  beats no stop at all — but it means a film you quit at the very end may not tip
+  over into "watched".
+- **A dismissal from Continue watching cannot be reviewed, only undone or
+  outlived.** Right-clicking a card takes it out of the row, and ⌘Z puts the last
+  one back while the window is still open. After that the only way it returns is
+  the position moving — watch any more of it, anywhere — because there is no
+  screen listing what you have dismissed and no way to clear the list. That is
+  the trade for a rule that expires by itself rather than a blacklist you have
+  to maintain, but something abandoned at a position nothing will ever move is
+  gone from the row for good, and the only record of it is a row in
+  `jellyfin_resume_dismissals`.
 - **One Jellyfin server.** There is no way to add a second. The setup screen
   configures the first one and tests it, but a household with two servers has to
   pick one.

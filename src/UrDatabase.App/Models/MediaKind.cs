@@ -18,6 +18,17 @@ namespace UrDatabase.Models
         Film = 0,
 
         /// <summary>A television series: a shelf of seasons, not something that plays on its own.</summary>
-        Series = 1
+        Series = 1,
+
+        /// <summary>
+        /// One episode of a programme.
+        /// </summary>
+        /// <remarks>
+        /// Only ever built for the Continue watching row, and never part of the library wall: the
+        /// library lists programmes, and a shelf holding a thousand episodes beside four hundred
+        /// films would be a different app. An episode card exists because the server says somebody
+        /// is part way through that particular episode, which a series card cannot say.
+        /// </remarks>
+        Episode = 2
     }
 }

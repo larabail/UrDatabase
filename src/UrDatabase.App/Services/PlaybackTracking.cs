@@ -21,6 +21,26 @@ namespace UrDatabase.Services
     public static class PlaybackTracking
     {
         /// <summary>
+        /// Whether there is anywhere for a launch to report to, and therefore whether the player
+        /// should be asked for a control interface at all.
+        /// </summary>
+        /// <remarks>
+        /// Asked before the launch, where <see cref="Follow"/> is only reached afterwards. Without
+        /// it a film with no id, or an install with no server, would still open a loopback port
+        /// and generate a password for a socket nothing was ever going to read.
+        ///
+        /// The same question for a film and for an episode, deliberately: this is about whether a
+        /// report has a destination and an item to be about, and neither half of that has ever
+        /// been about what kind of thing is playing. It is exposed rather than inlined at the two
+        /// call sites so that the two cannot drift, and so the answer can be asserted without a
+        /// window.
+        /// </remarks>
+        public static bool CanReport(JellyfinClient? client, string? itemId) =>
+            client is not null &&
+            client.IsConfigured &&
+            !string.IsNullOrWhiteSpace(itemId);
+
+        /// <summary>
         /// Follows <paramref name="launch"/> until the film ends, or returns null when there is
         /// nothing to follow.
         /// </summary>
@@ -35,10 +55,9 @@ namespace UrDatabase.Services
             CancellationToken ct = default)
         {
             if (launch?.Control is null) return null;
-            if (client is null || !client.IsConfigured) return null;
-            if (string.IsNullOrWhiteSpace(itemId)) return null;
+            if (!CanReport(client, itemId)) return null;
 
-            return RunAsync(launch.Control, new JellyfinPlaybackSink(client, itemId), ct);
+            return RunAsync(launch.Control, new JellyfinPlaybackSink(client!, itemId!), ct);
         }
 
         private static async Task RunAsync(
