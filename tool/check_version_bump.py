@@ -25,13 +25,27 @@ is a patch, a minor or a major is a judgement call, and a script that guessed
 would be wrong often enough to be argued with rather than trusted. Any increase
 passes.
 
-Usage, with the workflow doing the git plumbing so this stays pure and
-testable:
+The version it is compared *against* is read here, out of git, and that is what
+`--base-ref` is for. A pull request event also carries a `base.sha`, which is
+what the base branch was when the event was created, and comparing against that
+answers a question nobody asked. Two pull requests once both took 0.4.1 while
+`main` sat at 0.4.0; both cleared their own recorded base, and the one that
+merged second found `v0.4.1` already tagged and shipped nothing. So the caller
+names a ref -- a freshly fetched `refs/remotes/origin/main` -- and it is read at
+the moment the check runs.
 
-    git show "$BASE:Directory.Build.props" > base.props   # may legitimately fail
+That narrows the window rather than closing it. A required check reports the
+state at the moment it ran, and GitHub does not re-run every open pull
+request's checks when something lands on `main`, so two branches can still both
+be green and merge seconds apart. Only a merge queue closes that, and this
+repository does not have one.
+
+Usage, with the workflow deciding which files changed and this deciding what
+`main` says about the version:
+
     git diff --name-only "$BASE" "$HEAD" > changed.txt
     python3 tool/check_version_bump.py \
-        --base-props base.props \
+        --base-ref refs/remotes/origin/main \
         --head-props Directory.Build.props \
         --changed changed.txt
 
@@ -42,6 +56,7 @@ re-run rather than read.
 
 import argparse
 import re
+import subprocess
 import sys
 from collections import namedtuple
 
@@ -50,6 +65,10 @@ from collections import namedtuple
 # generated, and a half-saved file with a stray tag should report "no <Version>
 # here" rather than an XML traceback that reads like a bug in CI.
 VERSION_ELEMENT = re.compile(r"<Version>\s*([^<]*?)\s*</Version>")
+
+# The one place a version number is allowed to live, at the root of the
+# repository.
+PROPS_PATH = "Directory.Build.props"
 
 # The directories whose contents end up inside a published build. Everything
 # else can change freely without a release having anything new to say.
@@ -60,6 +79,10 @@ Result = namedtuple("Result", "ok message")
 
 class VersionError(ValueError):
     """A version that is not `MAJOR.MINOR.PATCH`."""
+
+
+class RefError(LookupError):
+    """A git ref that does not name a commit."""
 
 
 def parse_version(raw):
@@ -256,12 +279,43 @@ def check(base_props, head_props, paths):
     )
 
 
+def ref_exists(ref, repo="."):
+    """Whether [ref] names a commit in [repo]."""
+    resolved = subprocess.run(
+        ["git", "-C", repo, "rev-parse", "--verify", "--quiet", "%s^{commit}" % ref],
+        capture_output=True,
+    )
+    return resolved.returncode == 0
+
+
+def props_at_ref(ref, repo=".", path=PROPS_PATH):
+    """The props file at [ref], or None when that commit does not have one.
+
+    None means one thing only: the commit exists and does not contain the
+    file, which is the state of any repository the moment before it adopts a
+    version. A ref that does not resolve raises instead, and that distinction
+    is the point of doing this here rather than in the shell. `git show` fails
+    the same way for both, so a workflow that shrugged the failure off with
+    `|| true` would read an unreachable `main` as "main states no version yet"
+    -- and that answer passes every pull request, silently, exactly when the
+    check has stopped working.
+    """
+    if not ref_exists(ref, repo):
+        raise RefError("%s does not name a commit in %s" % (ref, repo))
+    found = subprocess.run(
+        ["git", "-C", repo, "show", "%s:%s" % (ref, path)],
+        capture_output=True,
+        text=True,
+    )
+    return found.stdout if found.returncode == 0 else None
+
+
 def read_optional(path):
     """The contents of [path], or None when it is not there.
 
-    Missing is an expected answer for the base file: `git show` fails when the
-    commit on main predates `Directory.Build.props` existing, and the workflow
-    lets that through as an absent file rather than as an error.
+    Missing is an expected answer: a branch that has not adopted a version has
+    no `Directory.Build.props` to read, and that is reported as an absent file
+    rather than as an error.
     """
     if not path:
         return None
@@ -275,13 +329,22 @@ def read_optional(path):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument(
-        "--base-props",
-        help="Directory.Build.props as it is on main. May be absent.",
+        "--base-ref",
+        required=True,
+        help="A git ref for the branch this will merge into, read as it is "
+        "now rather than as the pull request event recorded it. Usually "
+        "refs/remotes/origin/main.",
+    )
+    parser.add_argument(
+        "--repo",
+        default=".",
+        help="The repository to read --base-ref from. Defaults to the working "
+        "directory.",
     )
     parser.add_argument(
         "--head-props",
-        default="Directory.Build.props",
-        help="Directory.Build.props as it is on this branch.",
+        default=PROPS_PATH,
+        help="%s as it is on this branch." % PROPS_PATH,
     )
     parser.add_argument(
         "--changed",
@@ -295,9 +358,28 @@ def main(argv=None):
         print("Could not read the list of changed files at %s." % args.changed)
         return 1
 
-    result = check(
-        read_optional(args.base_props), read_optional(args.head_props), changed
-    )
+    try:
+        base_props = props_at_ref(args.base_ref, args.repo)
+    except RefError as error:
+        print(
+            "Could not read %s: %s.\n"
+            "\n"
+            "  What to do: this is the check being broken rather than the\n"
+            "  branch. The workflow fetches the base branch immediately\n"
+            "  before running this, so either that fetch failed or the ref it\n"
+            "  fetches and the ref it reads have drifted apart.\n"
+            "\n"
+            "  Why this is fatal rather than ignored: a base nobody can read\n"
+            "  would otherwise look exactly like a base that states no version\n"
+            "  yet, which passes every pull request." % (PROPS_PATH, error)
+        )
+        print(
+            "::error title=Version check could not read the base branch::%s"
+            % (error,)
+        )
+        return 1
+
+    result = check(base_props, read_optional(args.head_props), changed)
     print(result.message)
     if not result.ok:
         # An annotation as well as the text, so the reason shows at the top of

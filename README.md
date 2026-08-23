@@ -41,7 +41,13 @@ It runs on Windows and macOS from one codebase, built with
   accent, spent only on the focus ring, the primary action and progress that is
   genuinely running; posters at a true 2:3; and chrome dimmed to hairlines and
   text so that forty pieces of artwork are the brightest thing on screen. Every
-  colour, face and metric is a token in `Styles/Tokens.axaml`.
+  colour, face and metric is a token in `Styles/Tokens.axaml`. That accent is
+  the whole theme's, not just this app's markup: Avalonia's Fluent theme derives
+  every selected, checked and focused state from an accent it takes from the
+  operating system, so the seven shades it reads are computed from the brass
+  token at startup (`Services/AccentPalette`). Without that, a window built
+  entirely out of the palette above still turned macOS blue the moment anything
+  was selected.
 - **A film with no poster yet still says what it is.** Artwork is fetched in the
   background, so most of a freshly scanned library has none for the first
   minute. Rather than a wall of identical holes, each card shows the title and
@@ -560,8 +566,9 @@ is; [SECURITY.md](SECURITY.md) sets out why that is an acceptable trade for
 these two keys in particular and when it would not be.
 
 Because a merge releases, a pull request that changes anything under `src/` has
-to bump the version, or the release will collide with a tag that already
-exists. How far to bump is in
+to bump the version above whatever `main` carries at the moment the check runs
+— not above whatever it carried when the branch opened — or the release will
+collide with a tag that already exists. How far to bump is in
 [AGENTS.md](AGENTS.md#versioning).
 
 Hosting is the only Firebase product involved, and only CI touches it: the
@@ -576,7 +583,9 @@ is `urdatabase-downloads`.
 src/UrDatabase.App/          the application: one cross-platform project
   Views/                     windows, screens and their code-behind
   Controls/                  reusable pieces, e.g. the poster card
-  Styles/                    Tokens.axaml: every colour, face and metric.
+  Styles/                    Tokens.axaml: every colour, face and metric, plus
+                             the Fluent resources the theme would otherwise
+                             paint in the system accent.
                              Theme.axaml: the shared control styles
   Models/                    what the views bind to
   Services/                  config, SQLite, scanning, search, TMDB, OMDb,

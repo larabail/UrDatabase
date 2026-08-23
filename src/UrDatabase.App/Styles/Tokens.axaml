@@ -21,12 +21,17 @@
     barred from being the only thing marking a control as focused — that is
     BrassBrush's job. On the two raised surfaces the numbers only fall, and the
     worst case is Dim on Felt at 5.3, still above 4.5.
+
+    Those six numbers are asserted, not just written down: AccentPaletteTests
+    recomputes them from this file and fails if a token is edited to something
+    that no longer holds its ratio.
 -->
 <ResourceDictionary xmlns="https://github.com/avaloniaui"
                     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
 
     <!-- Surfaces, darkest first. -->
-    <SolidColorBrush x:Key="RoomBrush" Color="#0B0A09"/>
+    <Color x:Key="RoomColor">#0B0A09</Color>
+    <SolidColorBrush x:Key="RoomBrush" Color="{StaticResource RoomColor}"/>
     <SolidColorBrush x:Key="WallBrush" Color="#131110"/>
     <SolidColorBrush x:Key="FeltBrush" Color="#1B1816"/>
 
@@ -43,7 +48,8 @@
         action, and progress that is actually running. An accent that appears
         on every heading stops meaning anything.
     -->
-    <SolidColorBrush x:Key="BrassBrush" Color="#C8973F"/>
+    <Color x:Key="BrassColor">#C8973F</Color>
+    <SolidColorBrush x:Key="BrassBrush" Color="{StaticResource BrassColor}"/>
     <SolidColorBrush x:Key="BrassHoverBrush" Color="#D3A44E"/>
 
     <!-- "Not on this disk". Used for the badge, the sync button's edge and the
@@ -113,5 +119,67 @@
         <GradientStop Color="#00000000" Offset="0.46"/>
         <GradientStop Color="#61000000" Offset="1"/>
     </RadialGradientBrush>
+
+    <!--
+        ==========================================================================
+        Fluent's own colours, brought into the palette.
+        ==========================================================================
+
+        Everything above describes what the app paints deliberately. This section
+        is about what it painted by accident.
+
+        Avalonia's Fluent theme keeps its own idea of an accent, taken from the
+        operating system, and derives every selected, checked and focused state
+        from it — a checked ToggleButton's fill, a selected ComboBox row, the
+        highlight behind selected text, the ring around a focused button. None of
+        that is asked for anywhere in this app's markup, which is exactly why it
+        went unnoticed: a window built entirely out of the warm palette above
+        still lit up in #007AFF the moment anything was selected, and on a poster
+        wall a system blue is the one colour guaranteed to fight the artwork.
+
+        The seven accent shades themselves are not here. They are computed from
+        BrassColor by Services/AccentPalette and written into the application's
+        resources at startup, so there is one accent in this repository rather
+        than eight that can drift apart. What is here is everything Fluent picks
+        that is *not* derived from the accent.
+
+        The rule these follow is the one BrassBrush has always had: brass takes
+        dark ink. Bone on brass is 2.2:1 and is never used, so a tick, a knob or
+        a label sitting on an accent fill is inked in RoomColor at 7.5:1, not in
+        Fluent's white at 2.2.
+    -->
+
+    <!-- The check inside a ticked CheckBox, which sits on an accent fill. -->
+    <SolidColorBrush x:Key="CheckBoxCheckGlyphForegroundChecked" Color="{StaticResource RoomColor}"/>
+    <SolidColorBrush x:Key="CheckBoxCheckGlyphForegroundCheckedPointerOver" Color="{StaticResource RoomColor}"/>
+    <SolidColorBrush x:Key="CheckBoxCheckGlyphForegroundCheckedPressed" Color="{StaticResource RoomColor}"/>
+    <SolidColorBrush x:Key="CheckBoxCheckGlyphForegroundIndeterminate" Color="{StaticResource RoomColor}"/>
+    <SolidColorBrush x:Key="CheckBoxCheckGlyphForegroundIndeterminatePointerOver" Color="{StaticResource RoomColor}"/>
+    <SolidColorBrush x:Key="CheckBoxCheckGlyphForegroundIndeterminatePressed" Color="{StaticResource RoomColor}"/>
+
+    <!-- Labels on an accent fill: Fluent's accent button, and any checked
+         ToggleButton that is not one of the header's typed chips. -->
+    <SolidColorBrush x:Key="AccentButtonForeground" Color="{StaticResource RoomColor}"/>
+    <SolidColorBrush x:Key="AccentButtonForegroundPointerOver" Color="{StaticResource RoomColor}"/>
+    <SolidColorBrush x:Key="AccentButtonForegroundPressed" Color="{StaticResource RoomColor}"/>
+    <SolidColorBrush x:Key="ToggleButtonForegroundChecked" Color="{StaticResource RoomColor}"/>
+    <SolidColorBrush x:Key="ToggleButtonForegroundCheckedPointerOver" Color="{StaticResource RoomColor}"/>
+    <SolidColorBrush x:Key="ToggleButtonForegroundCheckedPressed" Color="{StaticResource RoomColor}"/>
+
+    <!-- The knob of a switch that is on, which rides on the accent track. -->
+    <SolidColorBrush x:Key="ToggleSwitchKnobFillOn" Color="{StaticResource RoomColor}"/>
+    <SolidColorBrush x:Key="ToggleSwitchKnobFillOnPointerOver" Color="{StaticResource RoomColor}"/>
+    <SolidColorBrush x:Key="ToggleSwitchKnobFillOnPressed" Color="{StaticResource RoomColor}"/>
+
+    <!--
+        The focus ring Fluent draws around a control that has none of its own.
+        It is two rectangles, and Fluent's pair is white over black — restyled
+        here rather than removed, because keyboard navigation is the only way
+        some people use the app at all. Brass over room-black keeps the ring at
+        7.5:1 against the surround and matches every focus state Theme.axaml
+        already styles by hand.
+    -->
+    <SolidColorBrush x:Key="SystemControlFocusVisualPrimaryBrush" Color="{StaticResource BrassColor}"/>
+    <SolidColorBrush x:Key="SystemControlFocusVisualSecondaryBrush" Color="{StaticResource RoomColor}"/>
 
 </ResourceDictionary>
