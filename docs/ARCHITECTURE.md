@@ -57,7 +57,8 @@ Avalonia replaces WPF. The differences that mattered during the port:
 | `KnownHosts` | Reads OpenSSH's `known_hosts` and decides whether the key a server offered is the one it offered last time. Pure, so the file's awkward corners — the bracketed `[host]:port` form, hashed entries, `@revoked` — are testable without a server. |
 | `PlatformPaths` | Every filesystem location, resolved per platform. Expands `%APPDATA%` and `~`. |
 | `Database` | Opens the SQLite database, applies `Data/schema.sql` idempotently, and migrates an existing library. The schema script is all `CREATE ... IF NOT EXISTS`, so it cannot add a column to a table somebody already has — `Migrate` does that. |
-| `ScanService` | Walks watch folders and upserts the `files` table, skipping unreadable directories. |
+| `ScanService` | Walks watch folders and upserts the `files` table, skipping unreadable directories. A completed scan stamps `files.missing_since` on every row it did not find under a folder it actually walked. |
+| `MissingFilms` | What the library does about a film whose every file a scan could not find: leave it alone, keep it as a server film, or take it out of the library. Pure. |
 | `TmdbService` | TMDB search, details and credits; builds image URLs. |
 | `OmdbService` | Fetches an IMDb rating for one IMDb id. |
 | `ImdbRatingService` | Caches ratings in SQLite so a rating is never fetched twice. |
@@ -93,7 +94,9 @@ Nothing may assume Windows. The specific decisions:
 existing library.
 
 - `movies` — the catalogue.
-- `files` — files found by the scanner, unique on `file_path` for the upsert.
+- `files` — files found by the scanner, unique on `file_path` for the upsert. `missing_since`
+  records a file a completed scan looked for and could not find; it is cleared the moment the
+  file is seen again or is linked by hand.
 - `movies_fts` — FTS5 index over `movies`, kept in sync by triggers.
 - `imdb_ratings` — cached IMDb ratings. A row with a `NULL` rating records "asked already, there
   is none", which is what stops the app re-requesting it.

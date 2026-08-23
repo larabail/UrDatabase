@@ -46,7 +46,11 @@ namespace UrDatabase.Models
         /// </summary>
         public bool IsSearch => !string.IsNullOrWhiteSpace(Query);
 
-        /// <summary>Films from the local catalogue.</summary>
+        /// <summary>
+        /// Films this computer can actually play. A film every copy of which a scan could no
+        /// longer find is not one of them, whether it left the library altogether or stayed on as
+        /// a server film.
+        /// </summary>
         public IReadOnlyList<UiMovie> Local { get; }
 
         /// <summary>Films from a Jellyfin server, already narrowed to the query.</summary>
