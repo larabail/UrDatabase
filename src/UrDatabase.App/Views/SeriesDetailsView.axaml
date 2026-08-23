@@ -17,17 +17,23 @@
     <UserControl.Styles>
         <!-- Repeated from MovieDetailsView rather than shared, because these two
              are the only screens that print a credit and a style in Theme.axaml
-             would be a global rule with two users. If a third ever appears, this
-             is the moment it should move. -->
+             would be a global rule with two users. No longer identical to it,
+             either: this column is 250 pixels wide under a 375-pixel poster and
+             has to hold ten names, where the film's cast lies across a wide row
+             with room to spare. Two pixels a line is what lands the tenth name
+             above the footer at the window's default height rather than half a
+             row below the fold. If a third screen ever prints a credit, that is
+             the moment this moves to Theme.axaml — but it will want the film's
+             metrics, not these. -->
         <Style Selector="TextBlock.castName">
             <Setter Property="Foreground" Value="{DynamicResource BoneBrush}"/>
             <Setter Property="FontSize" Value="12.5"/>
-            <Setter Property="LineHeight" Value="17"/>
+            <Setter Property="LineHeight" Value="16"/>
         </Style>
         <Style Selector="TextBlock.castRole">
             <Setter Property="Foreground" Value="{DynamicResource DimBrush}"/>
             <Setter Property="FontSize" Value="11.5"/>
-            <Setter Property="LineHeight" Value="16"/>
+            <Setter Property="LineHeight" Value="15"/>
         </Style>
 
         <!-- The episode rows. A hairline between them rather than a card each:
@@ -123,8 +129,16 @@
 
             <Grid Margin="24,8,48,0" ColumnDefinitions="250,48,*">
 
-                <StackPanel Grid.Column="0">
-                    <Border Width="250"
+                <!-- A grid rather than a stack. A StackPanel measures its
+                     children against infinite height, so this column asked for
+                     a 375-pixel poster plus ten cast entries whether or not the
+                     window had room, and nothing above it clipped the excess —
+                     the last name was drawn over the footer bar and through the
+                     note about VLC. The poster is pinned and the credits take
+                     what is left of the column. -->
+                <Grid Grid.Column="0" RowDefinitions="Auto,Auto,Auto,*">
+                    <Border Grid.Row="0"
+                            Width="250"
                             Height="375"
                             VerticalAlignment="Top"
                             CornerRadius="{StaticResource RadiusLarge}"
@@ -142,32 +156,52 @@
                          own. The episodes need the width, and a programme's
                          cast is a supporting fact here in a way it is not on a
                          film. -->
-                    <TextBlock Classes="label"
+                    <TextBlock Grid.Row="1"
+                               Classes="label"
                                Text="CAST"
                                LetterSpacing="1.6"
-                               Margin="0,20,0,5"/>
-                    <Rectangle Height="1"
+                               Margin="0,14,0,5"/>
+                    <Rectangle Grid.Row="2"
+                               Height="1"
                                Fill="{StaticResource EdgeBrush}"
                                Margin="0,0,0,8"/>
-                    <ItemsControl x:Name="CastList">
-                        <ItemsControl.ItemTemplate>
-                            <DataTemplate DataType="models:CreditEntry">
-                                <StackPanel Margin="0,0,0,4">
-                                    <TextBlock Classes="castName"
-                                               Text="{Binding Primary}"
-                                               TextTrimming="CharacterEllipsis"/>
-                                    <TextBlock Classes="castRole"
-                                               Text="{Binding Secondary}"
-                                               TextTrimming="CharacterEllipsis"
-                                               IsVisible="{Binding HasSecondary}"/>
-                                </StackPanel>
-                            </DataTemplate>
-                        </ItemsControl.ItemTemplate>
-                    </ItemsControl>
-                    <TextBlock x:Name="NoCastText"
-                               Classes="dim"
-                               IsVisible="False"/>
-                </StackPanel>
+
+                    <!-- Scrolls inside whatever the poster left it, which at the
+                         window's default height is all ten names and no bar.
+                         Shrinking the window now takes room off the bottom of
+                         this list instead of pushing it through the footer. -->
+                    <ScrollViewer Grid.Row="3"
+                                  VerticalScrollBarVisibility="Auto"
+                                  Background="Transparent"
+                                  Padding="0,0,12,0"
+                                  Margin="0,0,0,10">
+                        <StackPanel>
+                            <ItemsControl x:Name="CastList">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate DataType="models:CreditEntry">
+                                        <StackPanel Margin="0,0,0,3">
+                                            <TextBlock Classes="castName"
+                                                       Text="{Binding Primary}"
+                                                       TextTrimming="CharacterEllipsis"/>
+                                            <TextBlock Classes="castRole"
+                                                       Text="{Binding Secondary}"
+                                                       TextTrimming="CharacterEllipsis"
+                                                       IsVisible="{Binding HasSecondary}"/>
+                                        </StackPanel>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                            <!-- Wraps, unlike its twin on the film screen: the
+                                 notice is a sentence and this column is 250
+                                 pixels wide, so unwrapped it ran out sideways
+                                 across the gutter into the episode list. -->
+                            <TextBlock x:Name="NoCastText"
+                                       Classes="dim"
+                                       TextWrapping="Wrap"
+                                       IsVisible="False"/>
+                        </StackPanel>
+                    </ScrollViewer>
+                </Grid>
 
                 <Grid Grid.Column="2" RowDefinitions="Auto,Auto,Auto,Auto,Auto,*">
 
