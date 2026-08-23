@@ -176,7 +176,7 @@
                                   IsCheckedChanged="Check_Changed"/>
                         <TextBlock Classes="dim"
                                    Margin="0,6,0,0"
-                                   Text="Its films are streamed, never downloaded. Only the list and the artwork are cached here."/>
+                                   Text="Its films are streamed, and only the list and the artwork are cached here. Any one of them can be downloaded to watch offline."/>
 
                         <StackPanel x:Name="JellyfinPanel" Margin="0,16,0,0" Spacing="14">
                             <StackPanel>

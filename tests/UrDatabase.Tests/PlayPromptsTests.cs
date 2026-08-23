@@ -181,5 +181,81 @@ namespace UrDatabase.Tests
             Assert.Null(PlayPrompts.DescribeRefusal(reachable, _ => false));
             Assert.Contains("could not be reached", PlayPrompts.DescribeRefusal(unreachable, _ => false));
         }
+
+        /// <summary>
+        /// The whole point of downloading one. An unreachable server stops being a reason not to
+        /// play a film once there is a copy of it on this disk.
+        /// </summary>
+        [Fact]
+        public void A_downloaded_film_plays_with_the_server_unreachable()
+        {
+            var vm = new MovieDetailsVm
+            {
+                IsRemote = true,
+                StreamUrl = null,
+                DownloadedPath = "/movies/UrDatabase/Arrival (2016).mkv"
+            };
+
+            Assert.Null(PlayPrompts.DescribeRefusal(vm, _ => true));
+        }
+
+        [Fact]
+        public void A_downloaded_film_says_where_it_went_rather_than_talking_about_streaming()
+        {
+            var vm = new MovieDetailsVm
+            {
+                IsRemote = true,
+                StreamUrl = "http://server/stream?api_key=secret",
+                DownloadedPath = "/movies/UrDatabase/Arrival (2016).mkv"
+            };
+
+            var note = PlayPrompts.FileNote(vm);
+
+            Assert.Contains("/movies/UrDatabase/Arrival (2016).mkv", note);
+            Assert.Contains("server switched off", note);
+            Assert.DoesNotContain("api_key", note);
+        }
+
+        /// <summary>
+        /// A downloaded copy that has since been deleted in Finder is refused like any other
+        /// missing file, rather than silently falling back to a stream the user did not ask for.
+        /// </summary>
+        [Fact]
+        public void A_download_deleted_behind_the_apps_back_is_refused()
+        {
+            var vm = new MovieDetailsVm
+            {
+                IsRemote = true,
+                StreamUrl = null,
+                DownloadedPath = "/movies/UrDatabase/Arrival (2016).mkv"
+            };
+
+            var refusal = PlayPrompts.DescribeRefusal(vm, _ => false);
+
+            Assert.NotNull(refusal);
+            Assert.Contains("no longer there", refusal);
+        }
+
+        [Fact]
+        public void A_server_film_with_no_copy_still_mentions_downloading_one()
+        {
+            var vm = new MovieDetailsVm { IsRemote = true, StreamUrl = "http://server/stream" };
+
+            Assert.Contains("Download", PlayPrompts.FileNote(vm));
+        }
+
+        [Fact]
+        public void A_downloaded_film_is_never_asked_about_as_a_local_guess()
+        {
+            var vm = new MovieDetailsVm
+            {
+                IsRemote = true,
+                DownloadedPath = "/movies/UrDatabase/Arrival (2016).mkv",
+                FilePath = "/movies/Something Else.mkv",
+                FileMatch = PlayTargetKind.Suggested
+            };
+
+            Assert.False(PlayPrompts.NeedsConfirmation(vm));
+        }
     }
 }

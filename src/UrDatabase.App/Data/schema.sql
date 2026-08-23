@@ -88,7 +88,8 @@ CREATE TABLE IF NOT EXISTS imdb_ratings (
 );
 
 -- The movie library of a Jellyfin server, as of the last successful sync. Metadata only:
--- nothing here is a file, and playing one of these streams from the server.
+-- nothing here is a file. Playing one of these streams from the server, unless it has been
+-- downloaded, in which case the copy is an ordinary row in movies and files like any other.
 --
 -- Cached so the window can open instantly and stay readable on a laptop that is nowhere near
 -- the server. Replaced wholesale by each sync, so a film removed upstream disappears here too.

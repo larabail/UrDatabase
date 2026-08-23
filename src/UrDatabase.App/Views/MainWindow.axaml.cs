@@ -871,7 +871,11 @@ namespace UrDatabase.Views
 
             try
             {
-                await DetailsView.ShowAsync(vm, _dbPath, _config, LoadImdbRatingAsync);
+                await DetailsView.ShowAsync(vm, _dbPath, _config, LoadImdbRatingAsync, _jellyfin);
+
+                // A downloaded film is a row the library behind this screen does not have yet: it
+                // would still be shown as living only on the server until something reloaded it.
+                if (DetailsView.DownloadedSomething) await _searchLoop.RefreshAsync();
             }
             finally
             {
@@ -1046,6 +1050,9 @@ namespace UrDatabase.Views
                     PosterPath = m.PosterPath,
                     BackdropUrl = _jellyfin.BuildBackdropUrl(film.ItemId),
                     IsRemote = true,
+                    RemoteId = film.ItemId,
+                    DownloadFolder = _config.DownloadFolder,
+                    DatabasePath = _config.DatabasePath,
 
                     // The server has described its own cast and crew since the sync that cached
                     // it. Nothing used to ask for them, so every film from a server showed an

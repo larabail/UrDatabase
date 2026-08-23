@@ -57,6 +57,24 @@ namespace UrDatabase.Views
         /// </summary>
         private Func<string?, long?, CancellationToken, Task<double?>>? _ratingLookup;
 
+        /// <summary>
+        /// The server, for downloading a film off it. Null when none is configured, which hides
+        /// the button rather than offering something that cannot work.
+        /// </summary>
+        private JellyfinClient? _jellyfin;
+
+        /// <summary>
+        /// Cancels the transfer without leaving the film. Separate from <see cref="_cts"/> because
+        /// a download is the one thing here somebody stops while carrying on reading the page.
+        /// </summary>
+        private CancellationTokenSource? _downloadCts;
+
+        /// <summary>
+        /// True once a download has finished while this screen was open. Read by the caller after
+        /// <see cref="ShowAsync"/> returns: the library behind it now has a row it did not have.
+        /// </summary>
+        public bool DownloadedSomething { get; private set; }
+
         public MovieDetailsView()
         {
             InitializeComponent();
@@ -69,7 +87,8 @@ namespace UrDatabase.Views
             MovieDetailsVm vm,
             string? dbPath = null,
             AppConfig? config = null,
-            Func<string?, long?, CancellationToken, Task<double?>>? ratingLookup = null)
+            Func<string?, long?, CancellationToken, Task<double?>>? ratingLookup = null,
+            JellyfinClient? jellyfin = null)
         {
             // Leaving one film open behind another would strand its completion source and hang
             // whichever caller was awaiting it.
@@ -79,6 +98,8 @@ namespace UrDatabase.Views
             _dbPath = dbPath;
             _config = config;
             _ratingLookup = ratingLookup;
+            _jellyfin = jellyfin;
+            DownloadedSomething = false;
             DataContext = vm;
 
             _cts?.Cancel();
@@ -104,6 +125,10 @@ namespace UrDatabase.Views
         public void Close()
         {
             if (_closed is null) return;
+
+            // A transfer belongs to the film that is on screen. Left running, it would finish
+            // against a screen showing something else and report itself there.
+            _downloadCts?.Cancel();
 
             _cts?.Cancel();
             IsVisible = false;
@@ -154,6 +179,13 @@ namespace UrDatabase.Views
 
             LinkFileButton.IsVisible = !vm.IsRemote;
             CorrectMatchButton.IsVisible = !vm.IsRemote;
+
+            // Asked here rather than by the caller so that a film downloaded and then deleted in
+            // Finder offers its download again instead of insisting it is already there.
+            if (vm.IsRemote && string.IsNullOrWhiteSpace(vm.DownloadedPath))
+                vm.DownloadedPath = JellyfinDownload.FindExisting(vm.DownloadFolder, vm.Title, vm.Year);
+
+            UpdateDownloadButton();
 
             AttributionText.Text = vm.IsRemote
                 ? "Metadata and artwork supplied by your Jellyfin server. IMDb rating retrieved from the OMDb API; neither IMDb nor OMDb endorses this application."
@@ -279,13 +311,30 @@ namespace UrDatabase.Views
         }
 
         /// <summary>
-        /// Streams the film. Both failure modes here are ordinary rather than exceptional — the
-        /// server is not always reachable and a player is not always installed — so each gets a
-        /// sentence that says what to do about it, rather than an exception message.
+        /// Streams the film, or opens the downloaded copy when there is one. Both failure modes
+        /// here are ordinary rather than exceptional — the server is not always reachable and a
+        /// player is not always installed — so each gets a sentence that says what to do about it,
+        /// rather than an exception message.
         /// </summary>
         private async Task PlayFromServerAsync()
         {
             if (Vm is null) return;
+
+            // The point of having downloaded it: the local copy plays whether or not the server
+            // is there, so it is preferred over a stream that may be about to fail.
+            if (!string.IsNullOrWhiteSpace(Vm.DownloadedPath) && File.Exists(Vm.DownloadedPath))
+            {
+                try
+                {
+                    FileLauncher.Open(Vm.DownloadedPath);
+                }
+                catch (Exception ex)
+                {
+                    await MessageBoxWindow.ShowAsync(Owner(), "UrDatabase", $"Could not launch file:{Environment.NewLine}{ex.Message}");
+                }
+
+                return;
+            }
 
             if (string.IsNullOrWhiteSpace(Vm.StreamUrl))
             {
@@ -310,6 +359,122 @@ namespace UrDatabase.Views
                 // Deliberately not the URL, which contains an access token.
                 AppLog.Write("jellyfin.log", $"playback failed: {JellyfinClient.Redact(ex.Message)}");
                 await MessageBoxWindow.ShowAsync(Owner(), "UrDatabase", $"Could not start playback:{Environment.NewLine}{ex.Message}");
+            }
+        }
+
+        private void UpdateDownloadButton()
+        {
+            DownloadButton.IsVisible = Vm is not null && Vm.CanDownload && _jellyfin is not null;
+        }
+
+        /// <summary>
+        /// Starts the download, or stops one already running. One button for both, because there
+        /// is only ever one transfer on this screen and a separate Cancel would spend almost all
+        /// of its life disabled.
+        /// </summary>
+        private async void Download_Click(object? sender, RoutedEventArgs e)
+        {
+            if (_downloadCts is not null)
+            {
+                _downloadCts.Cancel();
+                return;
+            }
+
+            var vm = Vm;
+            if (vm is null || _jellyfin is null || string.IsNullOrWhiteSpace(vm.RemoteId)) return;
+
+            _downloadCts = CancellationTokenSource.CreateLinkedTokenSource(_cts?.Token ?? default);
+            DownloadButton.Content = "Cancel";
+            DownloadProgress.IsVisible = true;
+            DownloadProgress.IsIndeterminate = true;
+            DownloadProgress.Value = 0;
+
+            var progress = new Progress<JellyfinDownloadProgress>(report =>
+            {
+                // The screen may have moved on to another film while this was in flight.
+                if (!ReferenceEquals(Vm, vm)) return;
+
+                FileNote.Text = $"Downloading… {report.Describe()}";
+
+                // A server that sends no length leaves the bar sweeping rather than sitting at
+                // zero, which reads as stalled.
+                DownloadProgress.IsIndeterminate = report.Fraction is null;
+                if (report.Fraction is double fraction) DownloadProgress.Value = fraction;
+            });
+
+            try
+            {
+                // The first point in this screen's life where the network is needed at all.
+                await _jellyfin.ConnectAsync(_downloadCts.Token);
+
+                var result = await new JellyfinDownloader(_jellyfin).DownloadAsync(
+                    vm.RemoteId!,
+                    vm.Title,
+                    vm.Year,
+                    vm.DownloadFolder,
+                    container: null,
+                    progress: progress,
+                    ct: _downloadCts.Token);
+
+                vm.DownloadedPath = result.Path;
+                if (!result.AlreadyExisted) DownloadedSomething = true;
+
+                await RegisterDownloadAsync(result.Path);
+
+                if (ReferenceEquals(Vm, vm))
+                {
+                    FileNote.Text = result.AlreadyExisted
+                        ? $"Already downloaded to {result.Path}."
+                        : $"Downloaded {JellyfinDownload.DescribeSize(result.Bytes)} to {result.Path}. Plays with the server switched off.";
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                if (ReferenceEquals(Vm, vm))
+                    FileNote.Text = "Download stopped. What was transferred is kept, and starting again carries on from there.";
+            }
+            catch (JellyfinException ex)
+            {
+                await MessageBoxWindow.ShowAsync(Owner(), "UrDatabase", ex.Message);
+                if (ReferenceEquals(Vm, vm)) UpdateFileNote();
+            }
+            catch (Exception ex)
+            {
+                AppLog.Write("jellyfin.log", JellyfinClient.Redact($"download failed: {ex}"));
+                await MessageBoxWindow.ShowAsync(Owner(), "UrDatabase", $"Could not download this film:{Environment.NewLine}{ex.Message}");
+                if (ReferenceEquals(Vm, vm)) UpdateFileNote();
+            }
+            finally
+            {
+                _downloadCts.Dispose();
+                _downloadCts = null;
+
+                DownloadButton.Content = "Download";
+                DownloadProgress.IsVisible = false;
+                DownloadProgress.IsIndeterminate = false;
+                UpdateDownloadButton();
+            }
+        }
+
+        /// <summary>
+        /// Puts the finished file in the catalogue so it is playable and searchable straight away,
+        /// rather than after the user works out that a scan is what makes a film appear.
+        ///
+        /// Failing to record it is not worth interrupting anybody over: the film downloaded, it
+        /// plays from this screen, and the next scan of the folder catalogues it.
+        /// </summary>
+        private async Task RegisterDownloadAsync(string path)
+        {
+            if (string.IsNullOrWhiteSpace(_dbPath)) return;
+
+            try
+            {
+                using var conn = Database.Open(_dbPath);
+                await ScanService.RecordSingleFileAsync(conn, path);
+            }
+            catch (Exception ex)
+            {
+                AppLog.Write("jellyfin.log", $"downloaded film not catalogued: {ex.Message}");
             }
         }
 

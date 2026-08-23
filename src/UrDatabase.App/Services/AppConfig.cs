@@ -24,6 +24,13 @@ namespace UrDatabase.Services
         public string PosterCacheDir { get; set; } = PlatformPaths.DefaultPosterCacheDir;
 
         /// <summary>
+        /// Where a film downloaded from the Jellyfin server is written. Only ever used when the
+        /// user asks for a download, so an install that never touches the feature never creates
+        /// the folder.
+        /// </summary>
+        public string DownloadFolder { get; set; } = PlatformPaths.DefaultDownloadFolder;
+
+        /// <summary>
         /// An optional Jellyfin server to browse alongside the local library. Left blank the app
         /// makes no network call for it and shows nothing about it, which is how every install
         /// that predates this setting behaves.
@@ -123,6 +130,7 @@ namespace UrDatabase.Services
             {
                 DatabasePath = "",
                 PosterCacheDir = "",
+                DownloadFolder = "",
                 WatchFolders = Array.Empty<string>()
             };
         }
@@ -292,6 +300,7 @@ namespace UrDatabase.Services
         {
             config.DatabasePath = Fallback(PlatformPaths.Expand(config.DatabasePath), PlatformPaths.DefaultDatabasePath);
             config.PosterCacheDir = Fallback(PlatformPaths.Expand(config.PosterCacheDir), PlatformPaths.DefaultPosterCacheDir);
+            config.DownloadFolder = Fallback(PlatformPaths.Expand(config.DownloadFolder), PlatformPaths.DefaultDownloadFolder);
 
             config.WatchFolders = (config.WatchFolders ?? Array.Empty<string>())
                 .Select(PlatformPaths.Expand)

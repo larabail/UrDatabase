@@ -25,10 +25,15 @@ namespace UrDatabase.Services
 
             if (vm.IsRemote)
             {
+                // A copy on this disk is the answer to every question the server raises, so it is
+                // said first: it plays whether or not the server is reachable.
+                if (!string.IsNullOrWhiteSpace(vm.DownloadedPath))
+                    return $"Downloaded to {vm.DownloadedPath}. Plays with the server switched off.";
+
                 // Never the URL itself: it carries an access token.
                 return string.IsNullOrWhiteSpace(vm.StreamUrl)
-                    ? "On the Jellyfin server, which could not be reached. Play will not work until it is back."
-                    : "Streams from your Jellyfin server. Play opens it in VLC or IINA.";
+                    ? "On the Jellyfin server, which could not be reached. Download or Play will not work until it is back."
+                    : "Streams from your Jellyfin server. Play opens it in VLC or IINA. Download keeps a copy for offline.";
             }
 
             return vm.FileMatch switch
@@ -58,6 +63,11 @@ namespace UrDatabase.Services
 
             if (vm.IsRemote)
             {
+                // A downloaded copy is an ordinary file and answers for itself, so the server
+                // being unreachable stops mattering — which is the entire reason to download one.
+                if (!string.IsNullOrWhiteSpace(vm.DownloadedPath))
+                    return PlayTargetResolver.DescribeLinkRefusal(vm.DownloadedPath, fileExists);
+
                 return string.IsNullOrWhiteSpace(vm.StreamUrl)
                     ? "This film is on your Jellyfin server, which could not be reached. " +
                       "It will play again once you are back on the same network as the server."

@@ -4,6 +4,7 @@ using System.Globalization;
 using System.Linq;
 using System.Net;
 using System.Net.Http;
+using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
 using System.Threading;
@@ -23,13 +24,16 @@ namespace UrDatabase.Services
     }
 
     /// <summary>
-    /// Reads a Jellyfin server's movie library. Nothing it fetches is stored on this machine
-    /// except metadata: films are streamed, never downloaded.
+    /// Reads a Jellyfin server's movie library, and fetches a film from it when asked.
     ///
-    /// Deliberately narrow. It authenticates, finds the movie library, lists it, and builds the
-    /// two URLs the rest of the app needs. It does not transcode, does not touch series, and
-    /// never asks TMDB for anything — a Jellyfin item arrives complete, so a library from a
-    /// server works fully on a build with no TMDB key at all.
+    /// Deliberately narrow. It authenticates, finds the movie library, lists it, builds the URLs
+    /// the rest of the app needs and opens the response for a download. It does not transcode,
+    /// does not touch series, and never asks TMDB for anything — a Jellyfin item arrives complete,
+    /// so a library from a server works fully on a build with no TMDB key at all.
+    ///
+    /// Nothing it fetches is written to this machine: metadata goes to the cache through
+    /// <see cref="JellyfinCache"/>, and a downloaded film is written by
+    /// <see cref="JellyfinDownloader"/>, which owns every decision about where bytes land.
     /// </summary>
     public sealed class JellyfinClient : IDisposable
     {
@@ -46,6 +50,7 @@ namespace UrDatabase.Services
         public const string ItemFields = "Genres,Overview,ProviderIds,ProductionYear,RunTimeTicks,CommunityRating,People";
 
         private readonly HttpClient _http;
+        private readonly HttpClient _downloadHttp;
         private readonly JellyfinSettings _settings;
         private readonly string _deviceId;
         private readonly string _deviceName;
@@ -71,6 +76,16 @@ namespace UrDatabase.Services
 
             _http = handler is null ? new HttpClient() : new HttpClient(handler);
             _http.Timeout = timeout ?? TimeSpan.FromSeconds(15);
+
+            // A second client purely for transfers. The timeout above is a request timeout and
+            // covers reading the body too, so downloading a film through it would abort at fifteen
+            // seconds however healthy the connection was. Here the cancellation token is the only
+            // limit, which is what the user's Cancel button is for.
+            //
+            // The handler belongs to the client above, which disposes it; this one must not, or a
+            // shared handler would be disposed twice.
+            _downloadHttp = handler is null ? new HttpClient() : new HttpClient(handler, disposeHandler: false);
+            _downloadHttp.Timeout = Timeout.InfiniteTimeSpan;
         }
 
         public bool IsConfigured => _settings.IsConfigured;
@@ -145,6 +160,66 @@ namespace UrDatabase.Services
         public string BuildBackdropUrl(string itemId, int maxWidth = 1280) =>
             $"{_settings.ServerUrl}/Items/{Uri.EscapeDataString(itemId ?? "")}/Images/Backdrop/0" +
             $"?maxWidth={maxWidth.ToString(CultureInfo.InvariantCulture)}";
+
+        /// <summary>
+        /// Where the original file is served from, for keeping a copy rather than streaming one.
+        ///
+        /// Unlike <see cref="BuildStreamUrl"/> this carries no token: the request is made by this
+        /// app, which can put credentials in a header, rather than handed to an external player
+        /// that can only be given a URL. That makes the address safe to log, and it is the reason
+        /// downloading is preferred to pointing something else at a stream URL.
+        /// </summary>
+        public Uri BuildDownloadUri(string itemId) =>
+            BuildUri($"Items/{Uri.EscapeDataString(itemId ?? "")}/Download");
+
+        /// <summary>
+        /// Opens the response for a film's original file, without reading the body. The caller owns
+        /// the returned response and must dispose it.
+        ///
+        /// <paramref name="resumeFrom"/> asks the server to continue an interrupted transfer.
+        /// Jellyfin supports ranges, but a proxy in front of it might not, so the caller has to
+        /// check the status: <c>206</c> means the range was honoured and the bytes append to what
+        /// is already on disk, while <c>200</c> means it was ignored and the file starts again.
+        /// Appending a whole-file response onto a partial one would produce a corrupt film that
+        /// still plays for the first few minutes, which is the worst way for this to fail.
+        /// </summary>
+        public async Task<HttpResponseMessage> OpenDownloadAsync(
+            string itemId,
+            long resumeFrom = 0,
+            CancellationToken ct = default)
+        {
+            if (string.IsNullOrWhiteSpace(itemId))
+                throw new JellyfinException("This film has no id on the server, so it cannot be downloaded.");
+
+            using var request = new HttpRequestMessage(HttpMethod.Get, BuildDownloadUri(itemId));
+            request.Headers.TryAddWithoutValidation("Authorization", BuildAuthorizationHeader(_token));
+
+            if (resumeFrom > 0) request.Headers.Range = new RangeHeaderValue(resumeFrom, null);
+
+            HttpResponseMessage response;
+            try
+            {
+                response = await SendAsync(request, ct, _downloadHttp);
+            }
+            catch (JellyfinException)
+            {
+                throw;
+            }
+
+            if (response.IsSuccessStatusCode) return response;
+
+            var status = (int)response.StatusCode;
+            response.Dispose();
+
+            // A 404 here is genuinely a missing item, unlike everywhere else in this client: the
+            // id came from a cache that may be older than the server's library.
+            if (status == (int)HttpStatusCode.NotFound)
+                throw new JellyfinException(
+                    "The server no longer has this film. Sync Jellyfin to refresh the library.");
+
+            var state = JellyfinDiagnostics.FromStatusCode((HttpStatusCode)status);
+            throw new JellyfinException(JellyfinDiagnostics.Describe(state, _settings.ServerUrl, status));
+        }
 
         /// <summary>
         /// Removes a token from anything about to be written to a log. Called on every message
@@ -500,11 +575,11 @@ namespace UrDatabase.Services
         /// dropped one send a user to three different places, and saying only that the server
         /// could not be reached sends them nowhere.
         /// </summary>
-        private async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+        private async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct, HttpClient? client = null)
         {
             try
             {
-                return await _http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
+                return await (client ?? _http).SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {
@@ -567,7 +642,11 @@ namespace UrDatabase.Services
             catch { return "desktop"; }
         }
 
-        public void Dispose() => _http.Dispose();
+        public void Dispose()
+        {
+            _http.Dispose();
+            _downloadHttp.Dispose();
+        }
 
         /// <summary>
         /// <c>/Users/{id}/Views</c> returns the same envelope as <c>/Items</c> but with library

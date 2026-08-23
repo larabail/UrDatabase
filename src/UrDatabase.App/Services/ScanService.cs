@@ -468,6 +468,52 @@ WHERE id = @id;
         }
 
         /// <summary>
+        /// Catalogues a single file that arrived outside a scan — today, a film downloaded from
+        /// the Jellyfin server. Returns the id of the movie row it belongs to.
+        ///
+        /// It exists so a download is playable the instant it finishes rather than after the user
+        /// works out that a scan is what makes a film appear. It writes through the same upsert and
+        /// the same title index a scan uses, so the later scan that also walks the download folder
+        /// agrees with it: the path is the key, so no second file row appears, and the title
+        /// resolves through <see cref="MovieIndex"/>, so a download of a film already in the
+        /// library links to the row that is already there rather than forking it.
+        ///
+        /// <c>last_seen_scan_id</c> is left null because no scan found this file — a download is
+        /// not a scan, and borrowing an id from one would put this row in a session that never
+        /// walked past it. <c>last_seen_at</c> is stamped, because the file is demonstrably there.
+        /// </summary>
+        public static async Task<long> RecordSingleFileAsync(SqliteConnection conn, string path)
+        {
+            if (conn is null) throw new ArgumentNullException(nameof(conn));
+            if (string.IsNullOrWhiteSpace(path)) throw new ArgumentException("A path is required.", nameof(path));
+
+            var movies = await LoadMovieIndexAsync(conn);
+
+            var info = new FileInfo(path);
+            var size = info.Exists ? info.Length : 0L;
+            var created = info.Exists ? info.CreationTimeUtc.ToString("o") : null;
+            var modified = info.Exists ? info.LastWriteTimeUtc.ToString("o") : null;
+
+            using var tx = conn.BeginTransaction();
+
+            var movieId = await EnsureMovieAsync(conn, tx, movies, FilenameParser.Parse(path));
+
+            await conn.ExecuteScalarAsync<long>(InsertFileSql, new
+            {
+                movie_id = movieId,
+                file_path = path,
+                size_bytes = size,
+                created_at = created,
+                updated_at = modified,
+                last_seen_at = ScanSessions.Timestamp(DateTimeOffset.UtcNow),
+                scan_id = (long?)null,
+            }, tx);
+
+            tx.Commit();
+            return movieId;
+        }
+
+        /// <summary>
         /// Loads the catalogue into memory once per scan. A personal library is small enough that
         /// this costs less than a query per file, and it lets the matching rules stay pure.
         /// </summary>

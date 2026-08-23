@@ -121,6 +121,22 @@
                                 Height="34"
                                 Content="Wrong film?"
                                 Click="CorrectMatch_Click"/>
+                        <!-- Keeps a copy on this disk so the film survives being away
+                             from the server. Shown only for a server film that is not
+                             already here. -->
+                        <Button x:Name="DownloadButton"
+                                Classes="ghost"
+                                Height="34"
+                                Content="Download"
+                                IsVisible="False"
+                                Click="Download_Click"/>
+                        <ProgressBar x:Name="DownloadProgress"
+                                     Width="120"
+                                     Height="4"
+                                     Minimum="0"
+                                     Maximum="1"
+                                     VerticalAlignment="Center"
+                                     IsVisible="False"/>
                     </StackPanel>
 
                     <StackPanel Grid.Column="2" HorizontalAlignment="Right">

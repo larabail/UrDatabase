@@ -40,8 +40,47 @@ namespace UrDatabase.Tests
 
             Assert.Equal(PlatformPaths.DefaultDatabasePath, config.DatabasePath);
             Assert.Equal(PlatformPaths.DefaultPosterCacheDir, config.PosterCacheDir);
+            Assert.Equal(PlatformPaths.DefaultDownloadFolder, config.DownloadFolder);
             Assert.Equal("w342", config.TmdbImageSize);
             Assert.Equal("", config.TmdbApiKey);
+        }
+
+        [Fact]
+        public void The_download_folder_is_read_and_expanded_like_every_other_path()
+        {
+            var path = WriteConfig(@"{ ""DownloadFolder"": ""~/Films/FromServer"" }");
+
+            var config = AppConfig.Load(path);
+
+            Assert.Equal(
+                Path.Combine(PlatformPaths.HomeDirectory, "Films", "FromServer"),
+                config.DownloadFolder);
+        }
+
+        [Fact]
+        public void A_blank_download_folder_takes_the_platform_default()
+        {
+            var path = WriteConfig(@"{ ""DownloadFolder"": ""   "" }");
+
+            var config = AppConfig.Load(path);
+
+            Assert.Equal(PlatformPaths.DefaultDownloadFolder, config.DownloadFolder);
+        }
+
+        /// <summary>
+        /// Downloads land inside a folder the app would scan anyway, so the two halves of the
+        /// library agree: a scan finds what a download wrote, rather than treating it as a
+        /// stranger.
+        /// </summary>
+        [Fact]
+        public void The_default_download_folder_sits_under_the_default_watch_folder()
+        {
+            Assert.StartsWith(
+                PlatformPaths.DefaultWatchFolder,
+                PlatformPaths.DefaultDownloadFolder,
+                StringComparison.Ordinal);
+
+            Assert.NotEqual(PlatformPaths.DefaultWatchFolder, PlatformPaths.DefaultDownloadFolder);
         }
 
         [Fact]

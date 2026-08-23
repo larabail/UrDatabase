@@ -70,6 +70,7 @@ been configured. Editing it at all restores it to the top.
 | `DatabasePath` | Where the SQLite catalogue lives | `<app data>/UrDatabase/movies.db` |
 | `WatchFolders` | Absolute folders to scan | `~/Movies` on macOS, Videos on Windows — but nothing at all once `SetupCompleted` is set |
 | `PosterCacheDir` | Where downloaded posters are cached | `<app data>/UrDatabase/posters` |
+| `DownloadFolder` | Where a film downloaded from Jellyfin is saved | `UrDatabase` inside your films folder |
 | `TmdbApiKey` | TMDB key for metadata and posters | none |
 | `OmdbApiKey` | OMDb key for the IMDb rating | none |
 | `DownloadPosters` | Cache posters to disk instead of loading them from TMDB | `false` |
