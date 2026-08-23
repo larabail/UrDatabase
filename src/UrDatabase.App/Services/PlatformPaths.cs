@@ -125,6 +125,29 @@ namespace UrDatabase.Services
         public static string LogDirectory => Path.Combine(AppDataRoot, "logs");
 
         /// <summary>
+        /// Where a downloaded release lands.
+        ///
+        /// The user's own downloads folder, because that is what "download" means to everybody
+        /// else on the machine, it is where they will look for the file again next week, and it is
+        /// somewhere they already clear out. An eighty megabyte archive per release accumulating
+        /// unseen inside the app's data directory, which nothing in the app ever lists or empties,
+        /// would be the app quietly filling a disk.
+        ///
+        /// The folder is not guaranteed to exist — it can be renamed, and a service account may
+        /// never have had one — so the app's own directory is the fallback. The name is the one on
+        /// disk rather than the one Finder or Explorer displays: both localise it for the user
+        /// while leaving it as <c>Downloads</c> in the filesystem.
+        /// </summary>
+        public static string DefaultUpdateFolder => ResolveUpdateFolder(HomeDirectory, AppDataRoot, Directory.Exists);
+
+        /// <summary>The testable form, so the fallback can be asserted on a machine that has the folder.</summary>
+        internal static string ResolveUpdateFolder(string home, string appDataRoot, Func<string, bool> directoryExists)
+        {
+            var downloads = Path.Combine(home, "Downloads");
+            return directoryExists(downloads) ? downloads : Path.Combine(appDataRoot, "updates");
+        }
+
+        /// <summary>
         /// OpenSSH's record of which host keys belong to which machines, which is what says
         /// whether the server an upload is about to go to is the one it went to last time.
         ///

@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
+using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -122,6 +123,26 @@ namespace UrDatabase.Views
         private bool _syncing;
 
         /// <summary>
+        /// The release the banner is offering, or null when there is nothing to offer — which is
+        /// every launch on the newest build, every launch with the check switched off, and every
+        /// launch that could not reach GitHub.
+        /// </summary>
+        private AvailableUpdate? _update;
+
+        /// <summary>Non-null only while a build is being fetched, which is what makes one button do Cancel too.</summary>
+        private CancellationTokenSource? _updateCts;
+
+        /// <summary>Where the fetched build landed, so pressing the button again opens it rather than fetching it twice.</summary>
+        private string? _updateDownloadPath;
+
+        /// <summary>
+        /// Set when a fetch failed. The button then offers the website, because a failed download
+        /// that leaves somebody with nothing to press is a dead end, and the website is where they
+        /// would have gone had the app never offered at all.
+        /// </summary>
+        private bool _updateFetchFailed;
+
+        /// <summary>
         /// Set once the poster loader has been given its chance to finish, so the close that
         /// follows the drain is not deferred a second time.
         /// </summary>
@@ -166,6 +187,13 @@ namespace UrDatabase.Views
             // absent server delays nothing anybody is looking at.
             if (_jellyfin is not null)
                 Dispatcher.UIThread.Post(() => _ = SyncJellyfinAsync(announceFailure: false));
+
+            // Same reasoning, and the same posture: the check happens behind an already usable
+            // window, and an unreachable GitHub costs a background task and nothing on screen.
+            // Switched off in configuration it does not happen at all, rather than happening and
+            // having its answer hidden — an install kept off the network stays off it.
+            if (_config.CheckForUpdates)
+                Dispatcher.UIThread.Post(() => _ = CheckForUpdateAsync());
         }
 
         /// <summary>
@@ -983,6 +1011,221 @@ namespace UrDatabase.Views
 
             if (_jellyfin is not null)
                 await SyncJellyfinAsync(announceFailure: true);
+        }
+
+        // ==============================================================
+        //  the update banner
+        // ==============================================================
+
+        /// <summary>
+        /// Asks GitHub whether there is a newer release and, if there is one worth mentioning,
+        /// raises the banner.
+        ///
+        /// Runs on the UI thread and stays there: the request is awaited, so every line that
+        /// touches a control is a continuation on the same thread rather than a marshalled post.
+        /// Nothing here is allowed to matter — an update check that could take the window down
+        /// with it would be a far worse fault than one that never ran.
+        /// </summary>
+        private async Task CheckForUpdateAsync()
+        {
+            try
+            {
+                using var service = new UpdateService();
+
+                var update = await service.CheckAsync(_cts.Token);
+                if (update is null) return;
+
+                // Asked after the request rather than before it. The file records one version and
+                // this is the only place that knows which version was actually found, so reading it
+                // first would mean loading it on every launch to answer a question that usually
+                // never gets asked.
+                if (!UpdatePrompt.ShouldShow(update, UpdateState.Load().SkippedVersion))
+                {
+                    AppLog.Write("update.log", $"{update.Version} is available and was dismissed earlier; saying nothing.");
+                    return;
+                }
+
+                _update = update;
+                UpdateHeadline.Text = UpdatePrompt.Headline(update);
+                UpdateDetail.Text = UpdatePrompt.Detail(update, service.RunningVersion);
+                UpdateActionButton.Content = UpdatePrompt.ActionText(update);
+                UpdateBanner.IsVisible = true;
+
+                // The one line that makes "why was I never told about 0.12.0?" answerable. A check
+                // that finds nothing writes nothing, so this file stays empty on an up-to-date
+                // install rather than growing a line per launch.
+                AppLog.Write(
+                    "update.log",
+                    $"{service.RunningVersion} is behind {update.Version}; offering {update.Asset?.Name ?? "the downloads page"}.");
+            }
+            catch (OperationCanceledException)
+            {
+                // The window closed while the check was in flight.
+            }
+            catch (Exception ex)
+            {
+                AppLog.Write("update.log", $"update check failed: {ex}");
+            }
+        }
+
+        /// <summary>
+        /// The banner's one action, which is four depending on where things stand: stop a running
+        /// download, open one that has already landed, fetch the build, or — when there is nothing
+        /// this app can fetch — open the downloads page.
+        ///
+        /// One button rather than four, because only one of them is ever the sensible thing to do
+        /// and a row of disabled controls says less than a single live one.
+        /// </summary>
+        private async void UpdateAction_Click(object? sender, RoutedEventArgs e)
+        {
+            if (_updateCts is not null)
+            {
+                _updateCts.Cancel();
+                return;
+            }
+
+            // Checked against the disk and not just the field: the archive can be moved or thrown
+            // away between the download finishing and somebody pressing this, and re-fetching is a
+            // better answer than opening a path that no longer exists.
+            if (_updateDownloadPath is string ready && File.Exists(ready))
+            {
+                OpenDownloadedUpdate(ready);
+                return;
+            }
+
+            var update = _update;
+            if (update is null) return;
+
+            if (_updateFetchFailed || update.Asset is not UpdateAsset asset)
+            {
+                await OpenWebAsync(UpdateFeed.DownloadsPageUrl);
+                return;
+            }
+
+            await DownloadUpdateAsync(update, asset);
+        }
+
+        /// <summary>
+        /// Fetches the build, then opens it. Opening it is as far as this goes: the running app
+        /// cannot replace itself — on macOS it is a signed bundle that would invalidate its own
+        /// signature, on Windows a folder of files it holds open — so the honest end of this
+        /// journey is the archive, in front of the user, in whatever their machine opens it with.
+        /// </summary>
+        private async Task DownloadUpdateAsync(AvailableUpdate update, UpdateAsset asset)
+        {
+            _updateCts = CancellationTokenSource.CreateLinkedTokenSource(_cts.Token);
+
+            UpdateActionButton.Content = "Cancel";
+            UpdateLaterButton.IsEnabled = false;
+            UpdateProgressBar.IsVisible = true;
+            UpdateProgressBar.IsIndeterminate = true;
+            UpdateProgressBar.Value = 0;
+
+            var progress = new Progress<UpdateProgress>(report =>
+            {
+                UpdateDetail.Text = UpdatePrompt.Downloading(report);
+
+                // A server that sends no length leaves the bar sweeping rather than sitting at
+                // zero, which reads as stalled.
+                UpdateProgressBar.IsIndeterminate = report.Fraction is null;
+                if (report.Fraction is double fraction) UpdateProgressBar.Value = fraction;
+            });
+
+            try
+            {
+                using var downloader = new UpdateDownloader();
+
+                var path = await downloader.DownloadAsync(
+                    asset, PlatformPaths.DefaultUpdateFolder, progress, _updateCts.Token);
+
+                _updateDownloadPath = path;
+                _updateFetchFailed = false;
+
+                UpdateDetail.Text = UpdatePrompt.Downloaded(path);
+                UpdateActionButton.Content = UpdatePrompt.OpenAgainAction;
+
+                OpenDownloadedUpdate(path);
+            }
+            catch (OperationCanceledException)
+            {
+                // Only ever the user's own Cancel here, or the window closing, and in the second
+                // case there is nobody to tell.
+                if (!_cts.IsCancellationRequested)
+                {
+                    UpdateDetail.Text = UpdatePrompt.DownloadStopped;
+                    UpdateActionButton.Content = UpdatePrompt.ActionText(update);
+                }
+            }
+            catch (Exception ex)
+            {
+                AppLog.Write("update.log", $"could not fetch {asset.Name}: {ex}");
+
+                _updateFetchFailed = true;
+                UpdateDetail.Text = UpdatePrompt.DownloadFailed(ex is UpdateException ? ex.Message : null);
+                UpdateActionButton.Content = UpdatePrompt.WebsiteAction;
+            }
+            finally
+            {
+                _updateCts.Dispose();
+                _updateCts = null;
+
+                UpdateProgressBar.IsVisible = false;
+                UpdateLaterButton.IsEnabled = true;
+            }
+        }
+
+        /// <summary>
+        /// Hands the archive to the operating system. A failure here is not a failed update — the
+        /// file is on the disk and the message says where — so it says so rather than pretending
+        /// the download was wasted.
+        /// </summary>
+        private void OpenDownloadedUpdate(string path)
+        {
+            try
+            {
+                FileLauncher.Open(path);
+            }
+            catch (Exception ex)
+            {
+                AppLog.Write("update.log", $"could not open {path}: {ex.Message}");
+                UpdateDetail.Text = $"The update is at {path}, but it could not be opened from here.";
+            }
+        }
+
+        /// <summary>
+        /// Dismisses the banner and remembers the version, so this release is not announced again
+        /// on every launch until it is installed. A newer one still gets through.
+        /// </summary>
+        private void UpdateLater_Click(object? sender, RoutedEventArgs e)
+        {
+            UpdateBanner.IsVisible = false;
+            UpdateState.SaveSkipped(_update?.Version);
+        }
+
+        /// <summary>
+        /// The release notes, which are the only thing that answers "why should I?" — the first
+        /// question any update prompt raises and the one it is least able to answer itself.
+        /// </summary>
+        private async void UpdateNotes_Click(object? sender, RoutedEventArgs e) =>
+            await OpenWebAsync(_update?.Page ?? UpdateFeed.ReleasesPageUrl);
+
+        private async Task OpenWebAsync(string url)
+        {
+            try
+            {
+                FileLauncher.OpenUrl(url);
+            }
+            catch (Exception ex)
+            {
+                AppLog.Write("update.log", $"could not open {url}: {ex.Message}");
+
+                // The address is put on screen rather than only in a log, because a machine with
+                // no working default browser still has one somewhere the user can paste into.
+                await MessageBoxWindow.ShowAsync(
+                    this,
+                    "UrDatabase",
+                    $"Could not open your browser.{Environment.NewLine}{Environment.NewLine}{url}");
+            }
         }
 
         /// <summary>

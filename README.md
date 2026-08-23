@@ -288,6 +288,19 @@ It runs on Windows and macOS from one codebase, built with
   the film's real name only once the last one is there, so a cancelled or dropped
   upload leaves the server exactly as it was
   (`Services/JellyfinUploader`, `Services/JellyfinUpload`).
+- **It says when there is a newer version.** A build that is behind the newest
+  release raises a banner above the library — never a dialog, because an update
+  is not urgent enough to stand between somebody and the film they opened the app
+  to watch. **Update now** fetches the build for this machine into your downloads
+  folder and opens it; **What's new** opens the release notes; **Later** puts it
+  away until a newer version than the one dismissed comes out. It does not
+  install anything, and the banner says so: the running app cannot replace itself
+  — on macOS it is a signed bundle that would invalidate its own signature, on
+  Windows a folder of files it holds open — so the archive is opened and the last
+  step is yours. A machine no build is published for, or a fetch that fails, gets
+  the downloads page instead of a dead end. One request to the GitHub releases
+  API per launch, and `"CheckForUpdates": false` stops it being made at all
+  (`Services/UpdateService`, `Services/UpdateFeed`, `Services/UpdatePrompt`).
 
 [Known gaps](#known-gaps) is worth reading before you judge any of the above;
 several are thinner than they sound.
@@ -308,9 +321,11 @@ several are thinner than they sound.
 
 There is no server of ours, no account and no telemetry, and the app touches no
 Firebase: the only outbound traffic is to `api.themoviedb.org`,
-`image.tmdb.org`, `www.omdbapi.com` and, if you configure one, your own Jellyfin
-server — over HTTP for the library, and over SSH to its machine if you configure
-uploading. It works fully offline, with metadata and ratings simply absent.
+`image.tmdb.org`, `www.omdbapi.com`, `api.github.com` — once per launch, to ask
+whether there is a newer release, and not at all when `CheckForUpdates` is
+false — and, if you configure one, your own Jellyfin server, over HTTP for the
+library and over SSH to its machine if you configure uploading. It works fully
+offline, with metadata, ratings and the update check simply absent.
 
 ## Getting started
 
@@ -403,6 +418,7 @@ cp src/UrDatabase.App/appsettings.example.json src/UrDatabase.App/appsettings.js
 | `DownloadPosters` | `false` points the UI at TMDB's own image URLs; `true` caches each poster to disk |
 | `TmdbImageSize` | TMDB's poster width — `w185`, `w342`, `w500`, `original` |
 | `SetupCompleted` | Set by the setup screen once it has been answered, and the only thing that stops it being offered again |
+| `CheckForUpdates` | `true`, as it ships, asks GitHub once per launch whether there is a newer release and raises a banner if there is. `false` means no request is made at all, rather than one being made and its answer hidden |
 | `Jellyfin` | An optional server to browse. Empty, as it ships, means the feature is off entirely — see [A Jellyfin server](#a-jellyfin-server) |
 | `JellyfinSftp` | An optional SFTP account on the machine running that server, which is what makes **Upload to Jellyfin** appear. Empty, as it ships, means no upload button anywhere — see [Sending a film the other way](#sending-a-film-the-other-way) |
 
@@ -1124,6 +1140,12 @@ page deployed to Firebase Hosting. Every asset is also on the
 builds as `UrDatabase-<version>-<rid>.dmg`, Windows as
 `UrDatabase-<version>-win-x64.zip`.
 
+Once you are running a build, it tells you itself when a newer one exists: a
+banner above the library, with **Update now** to fetch the right file for the
+machine into your downloads folder and open it. Nothing installs itself — see
+[Known gaps](#known-gaps) — so the last step is the same drag or unzip described
+below. `"CheckForUpdates": false` in `appsettings.json` switches the check off.
+
 ### Opening it the first time
 
 On a Mac, open the `.dmg` and drag **UrDatabase** to Applications. The build is
@@ -1202,7 +1224,8 @@ src/UrDatabase.App/          the application: one cross-platform project
                              Theme.axaml: the shared control styles
   Models/                    what the views bind to
   Services/                  config, SQLite, scanning, search, TMDB, OMDb,
-                             UrActor, Jellyfin, posters, playback reporting
+                             UrActor, Jellyfin, posters, playback reporting,
+                             the update check
   Assets/UrDatabase.icns     the macOS application icon
   Data/schema.sql            the shape a database is created with; Database.Migrate
                              brings an older one up to it
@@ -1426,6 +1449,24 @@ Stated plainly, so nobody has to find out by using it:
 - **Windows builds are not signed.** SmartScreen warns on first run and there
   is no way around it short of a Windows code signing certificate. The macOS
   side of this closed in 0.2.1; the Windows side has not.
+- **The app tells you about an update and fetches it; it does not install it.**
+  **Update now** downloads the right build for the machine and opens it, and
+  there it stops: you still drag UrDatabase into Applications or unzip it over
+  the old copy, and you still quit the running app first. Replacing itself is not
+  something either platform lets a running application do — a macOS bundle that
+  rewrites its own contents invalidates the signature Gatekeeper checks, and a
+  Windows build cannot overwrite the files its own process has open — so a real
+  installer would be a second program that outlives this one, launched on the way
+  out. That is a larger thing than a banner, and doing half of it would mean an
+  update that sometimes leaves an app that will not start. Nothing verifies the
+  download beyond its length either. The release does publish a
+  `SHA256SUMS.txt`, but it comes from the same server over the same connection as
+  the build, so checking one against the other would prove only that the file
+  arrived intact — which is what TLS is already for — and not that either file is
+  what the release intended. Verification that meant anything would need a
+  signature made with a key the app already trusted, and there is not one, so the
+  guarantee is https and GitHub's own certificate, exactly as it would be in a
+  browser.
 - **Nothing on the library page is virtualised, so a very large library is slow
   to draw.** Every film on screen gets a real poster card, built up front,
   whether or not it has been scrolled to. Querying is no longer the expensive

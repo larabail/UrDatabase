@@ -113,5 +113,50 @@ namespace UrDatabase.Tests
         {
             Assert.Throws<ArgumentException>(() => FileLauncher.BuildStartInfo(path));
         }
+
+        [Fact]
+        public void Opens_a_web_address_through_the_platform_opener_too()
+        {
+            var psi = FileLauncher.BuildUrlStartInfo("https://urdatabase-downloads.web.app");
+
+            if (OperatingSystem.IsMacOS())
+            {
+                Assert.Equal("open", psi.FileName);
+                Assert.Equal("https://urdatabase-downloads.web.app", Assert.Single(psi.ArgumentList));
+            }
+            else if (OperatingSystem.IsWindows())
+            {
+                // The shell is what knows which browser is the default one.
+                Assert.Equal("https://urdatabase-downloads.web.app", psi.FileName);
+                Assert.True(psi.UseShellExecute);
+            }
+            else
+            {
+                Assert.Equal("xdg-open", psi.FileName);
+            }
+        }
+
+        [Theory]
+        [InlineData("https://github.com/larabail/UrDatabase/releases")]
+        [InlineData("http://example.test/page")]
+        public void Http_and_https_are_the_only_schemes_that_may_be_opened(string url)
+        {
+            Assert.True(FileLauncher.IsWebUrl(url));
+        }
+
+        [Theory]
+        [InlineData(null)]
+        [InlineData("")]
+        [InlineData("github.com/larabail/UrDatabase")]
+        [InlineData("javascript:alert(1)")]
+        [InlineData("file:///etc/passwd")]
+        [InlineData("ms-settings:privacy")]
+        public void Anything_else_is_refused_rather_than_handed_to_the_machine(string? url)
+        {
+            // Every address the app opens comes out of a GitHub API response, and the launcher
+            // runs whatever a scheme happens to be registered to.
+            Assert.False(FileLauncher.IsWebUrl(url));
+            Assert.Throws<ArgumentException>(() => FileLauncher.BuildUrlStartInfo(url!));
+        }
     }
 }

@@ -98,5 +98,30 @@ namespace UrDatabase.Tests
 
             Assert.Contains("movies", expanded);
         }
+
+        [Fact]
+        public void A_downloaded_release_lands_in_the_users_own_downloads_folder()
+        {
+            // Which is what "download" means to everything else on the machine, and somewhere they
+            // already clear out — unlike the app's data directory, which nothing here ever empties.
+            var folder = PlatformPaths.ResolveUpdateFolder("/home/someone", "/data/UrDatabase", _ => true);
+
+            Assert.Equal(Path.Combine("/home/someone", "Downloads"), folder);
+        }
+
+        [Fact]
+        public void A_machine_with_no_downloads_folder_gets_one_inside_the_app_data_directory()
+        {
+            var folder = PlatformPaths.ResolveUpdateFolder("/home/someone", "/data/UrDatabase", _ => false);
+
+            Assert.Equal(Path.Combine("/data/UrDatabase", "updates"), folder);
+        }
+
+        [Fact]
+        public void The_update_folder_is_absolute_and_carries_no_windows_tokens()
+        {
+            Assert.True(Path.IsPathRooted(PlatformPaths.DefaultUpdateFolder));
+            Assert.DoesNotContain("%", PlatformPaths.DefaultUpdateFolder);
+        }
     }
 }

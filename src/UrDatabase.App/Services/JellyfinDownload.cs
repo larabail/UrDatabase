@@ -242,29 +242,11 @@ namespace UrDatabase.Services
         }
 
         /// <summary>
-        /// Bytes as a person reads them. Binary units, because that is what a file manager on
-        /// either platform shows and a download that disagreed with Finder would look wrong.
+        /// Bytes as a person reads them. Kept as a name on this class because the download screen
+        /// and its tests call it here; the rule itself moved to <see cref="ByteSize"/> once the
+        /// update check needed the same one, and a second copy would have been a second copy.
         /// </summary>
-        public static string DescribeSize(long bytes)
-        {
-            if (bytes < 0) return "0 B";
-            if (bytes < 1024) return $"{bytes} B";
-
-            string[] units = { "KB", "MB", "GB", "TB" };
-            double value = bytes;
-            var unit = -1;
-
-            do
-            {
-                value /= 1024;
-                unit++;
-            }
-            while (value >= 1024 && unit < units.Length - 1);
-
-            return value < 10
-                ? $"{value.ToString("0.0", CultureInfo.CurrentCulture)} {units[unit]}"
-                : $"{value.ToString("0", CultureInfo.CurrentCulture)} {units[unit]}";
-        }
+        public static string DescribeSize(long bytes) => ByteSize.Describe(bytes);
 
         private static string CollapseWhitespace(string text)
         {
