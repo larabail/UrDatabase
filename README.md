@@ -552,8 +552,9 @@ is; [SECURITY.md](SECURITY.md) sets out why that is an acceptable trade for
 these two keys in particular and when it would not be.
 
 Because a merge releases, a pull request that changes anything under `src/` has
-to bump the version, or the release will collide with a tag that already
-exists. How far to bump is in
+to bump the version above whatever `main` carries at the moment the check runs
+— not above whatever it carried when the branch opened — or the release will
+collide with a tag that already exists. How far to bump is in
 [AGENTS.md](AGENTS.md#versioning).
 
 Hosting is the only Firebase product involved, and only CI touches it: the
