@@ -79,6 +79,13 @@ namespace UrDatabase.Views
         /// </summary>
         private SeriesLoader? _series;
 
+        /// <summary>
+        /// What the last sync said the viewer is part way through. Read from the cache with the
+        /// library, so the Continue watching row is on screen before the server has been asked
+        /// anything and stays there when it cannot be asked at all.
+        /// </summary>
+        private IReadOnlyList<JellyfinResumeItem> _resume = Array.Empty<JellyfinResumeItem>();
+
         private PosterAutoLoader? _posterLoader;
         private int _posterFailuresReported;
 
@@ -291,6 +298,7 @@ namespace UrDatabase.Views
             _remoteMovies = new List<UiMovie>();
             _remoteById = new Dictionary<string, JellyfinMovie>(StringComparer.OrdinalIgnoreCase);
             _remoteSeriesById = new Dictionary<string, JellyfinSeries>(StringComparer.OrdinalIgnoreCase);
+            _resume = Array.Empty<JellyfinResumeItem>();
 
             if (_jellyfin is null) return;
 
@@ -309,6 +317,8 @@ namespace UrDatabase.Views
                     .ToUiMovies(cached, m => _jellyfin.BuildPrimaryImageUrl(m.ItemId, m.ImageTag))
                     .Concat(JellyfinLibrary.ToUiSeriesList(series, s => _jellyfin.BuildPrimaryImageUrl(s.ItemId, s.ImageTag)))
                     .ToList();
+
+                _resume = JellyfinResumeCache.Load(conn);
             }
             catch (Exception ex)
             {
@@ -719,24 +729,33 @@ namespace UrDatabase.Views
         {
             VisibleGroups.Clear();
 
-            IEnumerable<string> buckets;
-            if (string.Equals(SelectedGenre, LibraryGrouping.AllGenres, StringComparison.OrdinalIgnoreCase) || string.IsNullOrWhiteSpace(SelectedGenre))
-                buckets = GenreChips.Select(c => c.Name)
-                                    .Where(x => !string.Equals(x, LibraryGrouping.AllGenres, StringComparison.OrdinalIgnoreCase));
-            else
-                buckets = new[] { SelectedGenre! };
+            var showingEverything =
+                string.IsNullOrWhiteSpace(SelectedGenre) ||
+                string.Equals(SelectedGenre, LibraryGrouping.AllGenres, StringComparison.OrdinalIgnoreCase);
 
-            foreach (var genre in buckets)
+            var buckets = showingEverything
+                ? GenreChips.Select(c => c.Name)
+                : new[] { SelectedGenre! };
+
+            // Materialised once. It is a filtered copy built on each read, and the row below has
+            // to be stamped onto the same card objects the shelves are built from.
+            var visible = VisibleMovies;
+
+            // Built from the same filtered list as the shelves below it, so narrowing to one place
+            // narrows this row too rather than leaving it describing a library nothing else on the
+            // page is showing. Only shown when every genre is on screen: a single genre is a page
+            // about one thing, and this row is not about that thing.
+            //
+            // Called unconditionally, because building it is also what clears the progress mark
+            // off a film that is no longer part-watched.
+            var continueWatching = ResumeRow.Build(visible, _resume);
+
+            foreach (var shelf in LibraryGrouping.BuildShelves(
+                         visible,
+                         buckets,
+                         showingEverything ? continueWatching : null))
             {
-                var items = LibraryGrouping.ItemsForGenre(VisibleMovies, genre);
-                if (items.Count == 0) continue;
-
-                VisibleGroups.Add(new GenreGroup
-                {
-                    Name = genre,
-                    Count = items.Count,
-                    Items = new ObservableCollection<UiMovie>(items)
-                });
+                VisibleGroups.Add(shelf);
             }
 
             foreach (var group in VisibleGroups)
@@ -1216,7 +1235,7 @@ namespace UrDatabase.Views
 
             try
             {
-                await DetailsView.ShowAsync(vm, _dbPath, _config, LoadImdbRatingAsync, _jellyfin);
+                await DetailsView.ShowAsync(vm, _dbPath, _config, LoadImdbRatingAsync, _jellyfin, _cts.Token);
 
                 // A downloaded film is a row the library behind this screen does not have yet: it
                 // would still be shown as living only on the server until something reloaded it.

@@ -59,6 +59,7 @@ Avalonia replaces WPF. The differences that mattered during the port:
 | `PlatformPaths` | Every filesystem location, resolved per platform. Expands `%APPDATA%` and `~`. |
 | `Database` | Opens the SQLite database, applies `Data/schema.sql` idempotently, and migrates an existing library. The schema script is all `CREATE ... IF NOT EXISTS`, so it cannot add a column to a table somebody already has — `Migrate` does that. |
 | `ScanService` | Walks watch folders and upserts the `files` table, skipping unreadable directories. A completed scan stamps `files.missing_since` on every row it did not find under a folder it actually walked. |
+| `DiscardedNames` | Finds and removes a catalogue row that is only another row's discarded name and holds nothing of its own — the empty duplicate a rename can leave behind. |
 | `MissingFilms` | What the library does about a film whose every file a scan could not find: leave it alone, keep it as a server film, or take it out of the library. Pure. |
 | `SeriesLoader` | Fetches one series' seasons and episodes when it is opened rather than during a sync, caches them, and falls back to the cache when the server cannot be reached. |
 | `SeriesGrouping` | Turns a server's seasons and episodes into the list the series screen shows: episodes filed under the right season even when the server numbered neither, and specials last. Pure. |

@@ -287,6 +287,39 @@ namespace UrDatabase.Models
         [JsonPropertyName("RecursiveItemCount")] public int? RecursiveItemCount { get; set; }
 
         /// <summary>
+        /// What this user has done with the item: how far in they are, and whether they finished
+        /// it. Absent unless <c>UserData</c> was among the requested fields, and absent anyway for
+        /// an item nobody has touched.
+        /// </summary>
+        [JsonPropertyName("UserData")] public JellyfinUserDataDto? UserData { get; set; }
+
+        /// <summary>
+        /// This item as one entry of the Continue watching row, or null when it is not one.
+        /// </summary>
+        /// <remarks>
+        /// An item with no id, or with no position in it, is not something to continue: the
+        /// endpoint is asked for films that are part-watched, but a server is entitled to include
+        /// one that has just been reset, and offering it under that heading would invite somebody
+        /// to carry on with a film they never started.
+        /// </remarks>
+        public JellyfinResumeItem? ToResumeItem(int sortOrder)
+        {
+            if (string.IsNullOrWhiteSpace(Id)) return null;
+
+            var position = UserData?.PlaybackPositionTicks ?? 0;
+            if (position <= 0) return null;
+
+            return new JellyfinResumeItem
+            {
+                ItemId = Id.Trim(),
+                PositionTicks = position,
+                RuntimeTicks = RunTimeTicks is > 0 ? RunTimeTicks : null,
+                PlayedPercentage = UserData?.PlayedPercentage,
+                SortOrder = sortOrder
+            };
+        }
+
+        /// <summary>
         /// Turns the wire shape into the app's own, dropping anything unusable. Returns null for
         /// an item with no id or no title, which cannot be shown or played either way.
         /// </summary>

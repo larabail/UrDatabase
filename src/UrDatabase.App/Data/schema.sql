@@ -187,6 +187,31 @@ CREATE TABLE IF NOT EXISTS jellyfin_episodes (
 
 CREATE INDEX IF NOT EXISTS ix_jellyfin_episodes_series ON jellyfin_episodes(series_id);
 
+-- Where the server says the viewer had got to in each part-watched film, as of the last
+-- successful sync. What the Continue watching row is built from.
+--
+-- Positions only, deliberately: the title, year and artwork are already in jellyfin_movies, and a
+-- second copy of them here would give the row its own idea of what a film is called. An entry
+-- whose item_id names nothing in that table — a television episode, a film in a library this app
+-- was never pointed at — simply has no card to land on and is dropped when the row is built.
+--
+-- Replaced wholesale by each sync, and only after the server has answered, so a sync attempted
+-- away from home leaves the previous row intact rather than emptying it.
+CREATE TABLE IF NOT EXISTS jellyfin_resume (
+    item_id           TEXT PRIMARY KEY,
+    -- 100-nanosecond ticks, which is the unit Jellyfin counts in. Never seconds: the app talks to
+    -- a player that answers in seconds, and one conversion in the wrong direction would report a
+    -- two hour film as seven seconds in.
+    position_ticks    INTEGER NOT NULL,
+    runtime_ticks     INTEGER,
+    -- The server's own percentage. Preferred to dividing the two columns above, because the server
+    -- knows the length of the file it is serving and a cached runtime can describe a different cut.
+    played_percentage REAL,
+    -- The server's ordering, most recently watched first, kept because it is a real answer.
+    sort_order        INTEGER NOT NULL,
+    synced_at         TEXT NOT NULL
+);
+
 -- Full text search over the catalogue, kept in sync with movies by triggers.
 CREATE VIRTUAL TABLE IF NOT EXISTS movies_fts USING fts5(
     title,
