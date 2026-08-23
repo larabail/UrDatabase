@@ -22,6 +22,36 @@ namespace UrDatabase.Models
         public bool IsRemote { get; set; }
 
         /// <summary>
+        /// The Jellyfin item id, for a film that came from the server. What a download asks for.
+        /// </summary>
+        public string? RemoteId { get; set; }
+
+        /// <summary>Where a downloaded copy is written. From configuration, not from the film.</summary>
+        public string? DownloadFolder { get; set; }
+
+        /// <summary>
+        /// The catalogue this window may write a finished download into, so the copy is playable
+        /// and searchable without waiting for a scan.
+        /// </summary>
+        public string? DatabasePath { get; set; }
+
+        /// <summary>
+        /// A copy of this film already on this disk, found when the window opened or written by a
+        /// download since. Set means the film plays with the server switched off, which is the
+        /// entire point of downloading it.
+        /// </summary>
+        public string? DownloadedPath { get; set; }
+
+        /// <summary>
+        /// True when there is something to download and somewhere to put it. False for a local
+        /// film, and false for a server film whose id never made it into the cache.
+        /// </summary>
+        public bool CanDownload =>
+            IsRemote &&
+            !string.IsNullOrWhiteSpace(RemoteId) &&
+            string.IsNullOrWhiteSpace(DownloadedPath);
+
+        /// <summary>
         /// The direct play URL, resolved when the details were opened. Null when the server could
         /// not be reached, which is what lets Play explain itself instead of failing obscurely.
         ///

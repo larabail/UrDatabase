@@ -59,6 +59,14 @@ It runs on Windows and macOS from one codebase, built with
   streams it, without transcoding, through VLC or IINA
   (`Services/JellyfinClient`, `Services/JellyfinCache`,
   `Services/MediaPlayerLauncher`).
+- **Download a server film to watch offline.** A film on the server has a
+  **Download** button that keeps a copy on this disk, named the way the scanner
+  reads it and catalogued the moment it finishes — so it is playable and
+  searchable without waiting for a scan. Afterwards **Play** opens the local
+  copy rather than the stream, which is the whole point: it works on a train.
+  A transfer can be stopped and resumes where it left off, and a half-finished
+  film is never mistaken for a whole one
+  (`Services/JellyfinDownloader`, `Services/JellyfinDownload`).
 
 [Known gaps](#known-gaps) is worth reading before you judge any of the above;
 several are thinner than they sound.
@@ -167,6 +175,7 @@ cp src/UrDatabase.App/appsettings.example.json src/UrDatabase.App/appsettings.js
 | `TmdbApiKey` | Your TMDB v3 API key. Leave it empty to run without metadata |
 | `OmdbApiKey` | Your OMDb API key. Leave it empty to run without the IMDb rating |
 | `PosterCacheDir` | Where downloaded posters go |
+| `DownloadFolder` | Where a film downloaded from Jellyfin is saved. Defaults to a `UrDatabase` subfolder of the platform's film folder — inside what a scan already walks, so both halves of the library agree about it |
 | `DownloadPosters` | `false` points the UI at TMDB's own image URLs; `true` caches each poster to disk |
 | `TmdbImageSize` | TMDB's poster width — `w185`, `w342`, `w500`, `original` |
 | `SetupCompleted` | Set by the setup screen once it has been answered, and the only thing that stops it being offered again |
@@ -334,7 +343,7 @@ other's name.
 
 #### Playing a server film
 
-Films are streamed, never downloaded, and Jellyfin direct-plays most of them as
+Films are streamed by default, and Jellyfin direct-plays most of them as
 Matroska. The system's default opener answers an `http://` URL by launching a
 browser, which cannot play that, so the app needs a real video player and looks
 for **[VLC](https://www.videolan.org/vlc/)** or
@@ -346,6 +355,36 @@ The stream URL carries an access token, because a player is handed a bare URL
 and has nowhere to put a header. The app therefore never logs it, shows it or
 puts it in a message; anything written to `jellyfin.log` has the token redacted
 out of it first.
+
+#### Keeping a copy
+
+**Download**, on a server film, fetches the original file into `DownloadFolder`
+instead of streaming it. That request is made by the app rather than by an
+external player, so it authenticates with a header and its URL carries no token
+at all — unlike the stream above, which is why a download is the safer of the
+two to log.
+
+The copy is named `Title (Year).ext` from the catalogue's own title, never from
+the filename the server sends. Only the extension is taken from the server: a
+remote name may contain path separators or `..`, and building the local name
+from it would let a server decide where this app writes. The container is
+whatever the server turns out to be holding, which is why "is this already
+downloaded?" is answered by looking for the name without its extension.
+
+Bytes land in a `.part` file and take the film's real name only once the last
+one is written. That is what makes an interrupted transfer safe: a stopped
+download keeps what it got and resumes from there, and a half-downloaded film is
+never played, scanned or counted as the whole thing. If the server ignores the
+resume request — a reverse proxy that does not implement ranges answers with the
+whole file — the download starts again rather than appending a second copy onto
+the first twenty minutes of one.
+
+A finished download is written into the catalogue immediately, through the same
+upserts a scan uses, so it is playable and searchable without anyone having to
+work out that a scan is what makes a film appear. Because it lands inside a
+folder a scan already walks, the later scan agrees with it instead of inserting a
+duplicate. Afterwards **Play** opens the local copy rather than the stream, and
+the film keeps working with the server switched off.
 
 ### The catalogue
 
@@ -501,8 +540,21 @@ Stated plainly, so nobody has to find out by using it:
   window and nothing else; reopening the film forgets it.
 - **Settings covers where your films are, and nothing else.** The screen asks
   about watch folders, a Jellyfin server and the two API keys. `DatabasePath`,
-  `PosterCacheDir`, `DownloadPosters` and `TmdbImageSize` are still file-only;
-  they survive a save untouched, but nothing in the app edits them.
+  `PosterCacheDir`, `DownloadFolder`, `DownloadPosters` and `TmdbImageSize` are
+  still file-only; they survive a save untouched, but nothing in the app edits
+  them.
+- **A downloaded film appears twice.** The copy on this disk and the film on the
+  server are both shown, one badged **Server**, because the merge deduplicates
+  by identity rather than by title and hiding either would mean hiding the only
+  one that works in some situation. It is correct, and it does look odd.
+- **Downloads are one at a time, from the details window.** There is no queue,
+  no way to fetch a whole genre, and closing the window stops the transfer —
+  though what it got is kept and starting again resumes from there. Nothing in
+  the app deletes a download either: that is Finder's job.
+- **Nothing is uploaded.** Films go from the server to this machine and never
+  the other way. Jellyfin's API has no endpoint that accepts a video, so putting
+  a film on a server means copying it to the server's own disk by some other
+  means and rescanning the library there.
 - **Windows builds are not signed.** SmartScreen warns on first run and there
   is no way around it short of a Windows code signing certificate. The macOS
   side of this closed in 0.2.1; the Windows side has not.

@@ -639,7 +639,10 @@ ORDER BY rank";
                     ImdbId = film.ImdbId,
                     PosterPath = m.PosterPath,
                     BackdropUrl = _jellyfin.BuildBackdropUrl(film.ItemId),
-                    IsRemote = true
+                    IsRemote = true,
+                    RemoteId = film.ItemId,
+                    DownloadFolder = _config.DownloadFolder,
+                    DatabasePath = _config.DatabasePath
                 };
 
                 using var cts = CancellationTokenSource.CreateLinkedTokenSource(_cts.Token);
@@ -660,8 +663,19 @@ ORDER BY rank";
                 // not the community number beside it. No local movie row owns it.
                 vm.ImdbRating = await LoadImdbRatingAsync(vm.ImdbId, null, cts.Token);
 
-                var dlg = new MovieDetailsWindow(vm);
+                var dlg = new MovieDetailsWindow(vm, _jellyfin);
                 await dlg.ShowDialog(this);
+
+                // A downloaded film is a new row in the local catalogue, so the library behind this
+                // window is now out of date: it would still show the film as living only on the
+                // server until something else happened to reload it.
+                if (dlg.DownloadedSomething)
+                {
+                    LoadMovies();
+                    BuildGenres();
+                    RebuildGroups();
+                    ShowAllGenres();
+                }
             }
             catch (OperationCanceledException)
             {

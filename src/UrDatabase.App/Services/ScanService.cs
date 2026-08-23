@@ -132,12 +132,42 @@ namespace UrDatabase.Services
         /// </summary>
         private static async Task<bool> RecordFileAsync(SqliteConnection conn, SqliteTransaction tx, MovieIndex index, string path)
         {
+            var movieId = await EnsureMovieAsync(conn, tx, index, FilenameParser.Parse(path));
+            return await UpsertFileAsync(conn, tx, movieId, path) > 0;
+        }
+
+        /// <summary>
+        /// Catalogues a single file that arrived outside a scan — today, a film downloaded from the
+        /// Jellyfin server. Returns the id of the movie row it belongs to.
+        ///
+        /// It exists so a download is playable the instant it finishes rather than after the user
+        /// works out that a scan is what makes a file appear. Every write it performs is the same
+        /// upsert a scan performs, so the later scan that also finds the file agrees with it
+        /// instead of inserting a second copy: the file path is the key, and the title is resolved
+        /// through the same index, so a download of a film already in the library links to the row
+        /// that is already there.
+        /// </summary>
+        public static async Task<long> RecordSingleFileAsync(SqliteConnection conn, string path)
+        {
+            if (conn is null) throw new ArgumentNullException(nameof(conn));
+            if (string.IsNullOrWhiteSpace(path)) throw new ArgumentException("A path is required.", nameof(path));
+
+            var index = await LoadMovieIndexAsync(conn);
+
+            using var tx = conn.BeginTransaction();
+            var movieId = await EnsureMovieAsync(conn, tx, index, FilenameParser.Parse(path));
+            await UpsertFileAsync(conn, tx, movieId, path);
+            tx.Commit();
+
+            return movieId;
+        }
+
+        private static async Task<int> UpsertFileAsync(SqliteConnection conn, SqliteTransaction tx, long movieId, string path)
+        {
             var info = new FileInfo(path);
             var size = info.Exists ? info.Length : 0L;
             var created = info.Exists ? info.CreationTimeUtc.ToString("o") : null;
             var modified = info.Exists ? info.LastWriteTimeUtc.ToString("o") : null;
-
-            var movieId = await EnsureMovieAsync(conn, tx, index, FilenameParser.Parse(path));
 
             const string sql = @"
 INSERT INTO files (movie_id, file_path, size_bytes, created_at, updated_at)
@@ -148,7 +178,7 @@ ON CONFLICT(file_path) DO UPDATE SET
     updated_at = excluded.updated_at;
 ";
 
-            var rows = await conn.ExecuteAsync(sql, new
+            return await conn.ExecuteAsync(sql, new
             {
                 movie_id = movieId,
                 file_path = path,
@@ -156,8 +186,6 @@ ON CONFLICT(file_path) DO UPDATE SET
                 created_at = created,
                 updated_at = modified
             }, tx);
-
-            return rows > 0;
         }
 
         /// <summary>

@@ -51,6 +51,18 @@ namespace UrDatabase.Services
             }
         }
 
+        /// <summary>
+        /// Where a film downloaded from Jellyfin lands: a subfolder of the platform's film folder.
+        ///
+        /// Inside the folder the app would scan anyway, deliberately. A download is registered in
+        /// the catalogue the moment it finishes, but putting it somewhere a scan can also find it
+        /// means the two agree — a user who deletes their database and rescans keeps their
+        /// downloads, and one who moves a file out of here loses nothing. Its own subfolder rather
+        /// than the root so that clearing out what the app fetched never means picking through
+        /// films the user put there themselves.
+        /// </summary>
+        public static string DefaultDownloadFolder => Path.Combine(DefaultWatchFolder, AppFolderName);
+
         public static string HomeDirectory
         {
             get

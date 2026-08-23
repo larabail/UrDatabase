@@ -180,6 +180,14 @@
                             Background="#0A84FF"
                             Foreground="White"
                             Click="PlayBtn_Click"/>
+                    <Button x:Name="DownloadBtn"
+                            Content="Download"
+                            Width="130"
+                            Height="36"
+                            Margin="0,0,12,0"
+                            HorizontalContentAlignment="Center"
+                            IsVisible="False"
+                            Click="DownloadBtn_Click"/>
                     <Button Content="Link File…"
                             Width="120"
                             Height="36"
@@ -193,6 +201,12 @@
                             HorizontalContentAlignment="Center"
                             Click="Close_Click"/>
                 </StackPanel>
+                <ProgressBar x:Name="DownloadProgress"
+                             Height="4"
+                             Minimum="0"
+                             Maximum="1"
+                             Margin="0,10,0,0"
+                             IsVisible="False"/>
                 <TextBlock x:Name="FileNote"
                            Foreground="#9E9E9E"
                            FontSize="12"
