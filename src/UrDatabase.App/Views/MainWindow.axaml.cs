@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
-using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -10,9 +9,6 @@ using Avalonia.Controls.Primitives;
 using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Threading;
-using Avalonia.VisualTree;
-using Dapper;
-using Microsoft.Data.Sqlite;
 using UrDatabase.Models;
 using UrDatabase.Services;
 
@@ -25,13 +21,33 @@ namespace UrDatabase.Views
 
         private string _dbPath = "";
 
-        public ObservableCollection<string> Genres { get; } = new();
+        /// <summary>
+        /// The genre row across the top. Each entry carries its own count, which a bare list of
+        /// names could not: a row that says a library has a Western bucket without saying whether
+        /// it holds two films or two hundred is telling you the least useful half of the fact.
+        /// </summary>
+        public ObservableCollection<GenreChip> GenreChips { get; } = new();
+
+        /// <summary>
+        /// Where films are, as opposed to what they are. Empty unless the library actually draws
+        /// on more than one place, so a single-source install grows no controls it cannot use.
+        /// </summary>
+        public ObservableCollection<SourceChip> SourceChips { get; } = new();
+
+        private LibrarySource _source = LibrarySource.Everywhere;
         public string? SelectedGenre { get; set; } = LibraryGrouping.AllGenres;
         public ObservableCollection<GenreGroup> VisibleGroups { get; } = new();
         public ObservableCollection<UiMovie> FlatResults { get; } = new();
 
-        private List<UiMovie> _allMovies = new();
-        private List<UiMovie> _localMovies = new();
+        private IReadOnlyList<UiMovie> _allMovies = Array.Empty<UiMovie>();
+
+        /// <summary>
+        /// The library as the window is currently showing it: everything, or only what is on this
+        /// machine, or only what is on the server. Genre counts, the shelves and the search
+        /// results are all built from this rather than from <c>_allMovies</c>, so a filtered view
+        /// is filtered consistently rather than in the one place somebody remembered.
+        /// </summary>
+        private IReadOnlyList<UiMovie> VisibleMovies => LibraryFilter.Apply(_allMovies, _source);
 
         /// <summary>The server's whole library as cards, unfiltered. Empty when Jellyfin is off.</summary>
         private List<UiMovie> _remoteMovies = new();
@@ -44,9 +60,27 @@ namespace UrDatabase.Views
         private Dictionary<string, JellyfinMovie> _remoteById = new(StringComparer.OrdinalIgnoreCase);
 
         private PosterAutoLoader? _posterLoader;
+        private int _posterFailuresReported;
 
         /// <summary>Rebuilt whenever the configuration changes; never null once the window exists.</summary>
         private ImdbRatingService _ratings = null!;
+
+        /// <summary>Rebuilt with the configuration, because the catalogue can move. Never null once the window exists.</summary>
+        private LibraryLoader _library = null!;
+
+        /// <summary>
+        /// Every library read goes through here, so only one is ever in flight and only the newest
+        /// one reaches the screen. Built once: it reads <see cref="_library"/> at the moment a
+        /// request runs, so a change of database needs no new coordinator.
+        /// </summary>
+        private readonly SearchCoordinator<LibraryView> _searchLoop;
+
+        /// <summary>
+        /// The last read that reached the screen. Kept because the source row filters what is
+        /// already here rather than asking the database again: changing where you are looking
+        /// does not change what the query matched.
+        /// </summary>
+        private LibraryView _view = LibraryView.Empty;
 
         /// <summary>Null unless a server is configured, which is what keeps this feature off by default.</summary>
         private JellyfinClient? _jellyfin;
@@ -55,25 +89,105 @@ namespace UrDatabase.Views
         private bool _scanning;
         private bool _syncing;
 
+        /// <summary>
+        /// Set once the poster loader has been given its chance to finish, so the close that
+        /// follows the drain is not deferred a second time.
+        /// </summary>
+        private bool _postersDrained;
+
         public MainWindow()
         {
             InitializeComponent();
 
             ApplyConfig();
-            Closed += (_, __) => { _cts.Cancel(); _posterLoader?.Dispose(); _ratings.Dispose(); _jellyfin?.Dispose(); };
+
+            _searchLoop = new SearchCoordinator<LibraryView>(
+                run: (query, ct) => _library.LoadAsync(query, _remoteMovies, ct),
+                apply: ApplyLibrary,
+                lifetime: _cts.Token,
+                onError: ReportLibraryFailure);
+
+            // Runs after the poster drain in OnClosing, and has to: cancelling this first would
+            // cut short the very fetches the drain is there to let finish.
+            Closed += (_, __) => { _cts.Cancel(); _searchLoop.Dispose(); _posterLoader?.Dispose(); _ratings.Dispose(); _jellyfin?.Dispose(); };
 
             DataContext = this;
 
+            WireSearchShortcut();
+
             LoadRemoteCache();
-            LoadMovies();
-            BuildGenres();
-            RebuildGroups();
-            ShowAllGenres();
+
+            // Not awaited, because a constructor cannot be. Reading a large catalogue used to
+            // happen here, on the UI thread, so the window did not appear until it had finished.
+            //
+            // Nothing chooses a panel until the read lands: the grouped view starts visible and
+            // empty, which shows nothing for an instant, whereas asking ShowAllGenres now would
+            // see an empty library and flash the "there is nothing here yet" invitation at
+            // somebody whose library is about to appear.
+            _ = _searchLoop.RefreshAsync();
+
+            // Last of the four, because each of them writes the status line and a configuration
+            // the app could not understand is the more important thing for it to be saying.
+            ReportUnknownSettings();
 
             // The window is already painted from the cache by the time this runs, so a slow or
             // absent server delays nothing anybody is looking at.
             if (_jellyfin is not null)
                 Dispatcher.UIThread.Post(() => _ = SyncJellyfinAsync(announceFailure: false));
+        }
+
+        /// <summary>
+        /// A close waits for the posters already being fetched instead of walking away from
+        /// them. Each one is a TMDB request that has been paid for; abandoning it at the last
+        /// moment loses the answer and asks the same question again on the next launch.
+        ///
+        /// The window is hidden first, so closing still looks instant, and the wait is bounded
+        /// by <see cref="PosterAutoLoader.DefaultStopTimeout"/> — a fetch that will not finish
+        /// is cancelled rather than allowed to hold the app open.
+        ///
+        /// Only a window being closed is deferred. An application or OS shutdown is not ours to
+        /// postpone: cancelling one to buy two seconds is how an app comes to look like it
+        /// refuses to quit.
+        /// </summary>
+        protected override void OnClosing(WindowClosingEventArgs e)
+        {
+            base.OnClosing(e);
+
+            if (e.Cancel || _postersDrained) return;
+            if (e.CloseReason != WindowCloseReason.WindowClosing) return;
+
+            var loader = _posterLoader;
+            if (loader is null) return;
+
+            e.Cancel = true;
+            Hide();
+            _ = DrainPostersThenCloseAsync(loader);
+        }
+
+        /// <summary>
+        /// Closes for real once the loader has stopped. Every path through this ends in a close:
+        /// a window that stayed open because a poster misbehaved would be a worse bug than the
+        /// one being fixed.
+        /// </summary>
+        private async Task DrainPostersThenCloseAsync(PosterAutoLoader loader)
+        {
+            try
+            {
+                if (!await loader.StopAsync())
+                    AppLog.Write("posters.log", "closed with poster fetches still running; they were cancelled.");
+            }
+            catch (Exception ex)
+            {
+                AppLog.Write("posters.log", $"draining posters on close: {ex}");
+            }
+            finally
+            {
+                Dispatcher.UIThread.Post(() =>
+                {
+                    _postersDrained = true;
+                    Close();
+                });
+            }
         }
 
         /// <summary>
@@ -105,7 +219,12 @@ namespace UrDatabase.Views
                 : null;
 
             _posterLoader?.Dispose();
-            _posterLoader = new PosterAutoLoader(_config, _dbPath, maxConcurrency: 4);
+            _posterFailuresReported = 0;
+            _posterLoader = new PosterAutoLoader(_config, _dbPath, maxConcurrency: 4, onFailure: ReportPosterFailure);
+
+            _library = new LibraryLoader(
+                new MovieRepository(_dbPath),
+                onQueryFailed: ex => AppLog.Write("startup.log", $"LoadMovies failed: {ex}"));
 
             if (JellyfinButton is not null) JellyfinButton.IsVisible = _jellyfin is not null;
         }
@@ -139,71 +258,95 @@ namespace UrDatabase.Views
             }
         }
 
-        private void LoadMovies(string? query = null)
+        /// <summary>
+        /// Puts one settled library read on screen. Called by <see cref="_searchLoop"/>, on the UI
+        /// thread, and only ever for the newest request — a search for "ma" that finished after
+        /// the search for "matrix" never gets here.
+        /// </summary>
+        private void ApplyLibrary(string? query, LibraryView view)
         {
-            _localMovies = LoadLocalMovies(query);
+            _view = view;
+            _allMovies = view.All;
 
-            var remote = string.IsNullOrWhiteSpace(query)
-                ? (IReadOnlyList<UiMovie>)_remoteMovies
-                : JellyfinLibrary.Search(_remoteMovies, query);
-
-            _allMovies = JellyfinLibrary.Merge(_localMovies, remote).ToList();
-
-            SetStatus(LibraryStatus.Describe(
-                localCount: _localMovies.Count,
-                localWithPosters: _localMovies.Count(x => !string.IsNullOrWhiteSpace(x.PosterPath)),
-                remoteCount: remote.Count,
-                hasLocalDatabase: File.Exists(_dbPath),
-                databasePath: _dbPath));
-
+            SetStatus(view.Status);
             WarmPosters(_allMovies);
+
+            // searching → flat view
+            if (view.IsSearch)
+            {
+                ShowSearchResults();
+                return;
+            }
+
+            // not searching → grouped view
+            BuildGenres();
+
+            // A genre that no longer exists — because the source changed while a search was up,
+            // or because the library did — would otherwise stay selected, match no shelf and
+            // render a blank page that looks like the library having emptied itself.
+            if (!GenreChips.Any(c => string.Equals(c.Name, SelectedGenre, StringComparison.OrdinalIgnoreCase)))
+            {
+                SelectedGenre = LibraryGrouping.AllGenres;
+                BuildGenres();
+            }
+
+            RebuildGroups();
+            ShowAllGenres();
         }
 
         /// <summary>
-        /// The local half of the library. Returns an empty list rather than throwing for any
-        /// reason it might fail, because a server library still has to be browsable when the
-        /// local catalogue is missing or was written by an older schema.
+        /// The search results, narrowed to wherever the user is currently looking.
         /// </summary>
-        private List<UiMovie> LoadLocalMovies(string? query)
+        /// <remarks>
+        /// The one place the flat list is built, deliberately. A search landing and a source being
+        /// picked are the same question — "these films, from this place" — and having each answer
+        /// it separately is precisely how they came to disagree: clicking a source while results
+        /// were up went off to rebuild the shelves instead and threw the search away.
+        ///
+        /// The source row is rebuilt from the results rather than left describing the whole
+        /// library, so the row and the list below it always agree, and a place these results do
+        /// not reach is not offered at all. Offering it would let a click empty the page with
+        /// nothing left on screen to say how to get back.
+        /// </remarks>
+        private void ShowSearchResults()
         {
-            if (!File.Exists(_dbPath)) return new List<UiMovie>();
+            BuildSources();
 
-            try
+            FlatResults.Clear();
+
+            // Grouped on Key rather than Id: every server film carries id 0, so grouping on
+            // the local id would collapse the whole remote half of the results into one card.
+            foreach (var m in VisibleMovies
+                    .GroupBy(x => x.Key)
+                    .Select(g => g.First())
+                    .OrderByDescending(x => x.Year ?? 0)
+                    .ThenBy(x => x.Title))
             {
-                // Read-only, and deliberately not Cache=Shared: a scan holds a write transaction,
-                // and shared cache would fail this query outright instead of reading the last
-                // committed snapshot.
-                using var conn = new SqliteConnection($"Data Source={_dbPath}");
-                conn.Open();
-
-                string sql;
-                object param;
-                if (string.IsNullOrWhiteSpace(query))
-                {
-                    sql = "SELECT id AS Id, title AS Title, year AS Year, genres AS Genres, poster_path AS PosterPath FROM movies ORDER BY COALESCE(year,0) DESC, title";
-                    param = new { };
-                }
-                else
-                {
-                    sql = @"
-SELECT m.id AS Id, m.title AS Title, m.year AS Year, m.genres AS Genres, m.poster_path AS PosterPath
-FROM movies_fts f
-JOIN movies m ON m.id = f.rowid
-WHERE movies_fts MATCH @q
-ORDER BY rank";
-                    param = new { q = query };
-                }
-
-                return conn.Query<UiMovie>(sql, param).ToList();
+                FlatResults.Add(m);
             }
-            catch (Exception ex)
-            {
-                // A database from an older build may lack the tables this query needs.
-                // Report it instead of taking the window down.
-                AppLog.Write("startup.log", $"LoadMovies failed: {ex}");
-                SetStatus($"Could not read the library: {ex.Message}");
-                return new List<UiMovie>();
-            }
+
+            SearchCountText.Text = LibraryGrouping.CountLabel(FlatResults.Count);
+
+            // A search that found nothing has to say so. Silence reads as a broken search box.
+            NoResultsText.IsVisible = FlatResults.Count == 0;
+            NoResultsText.Text = $"Nothing in the library matches \u201c{_view.Query}\u201d.";
+
+            // The genre row deliberately keeps describing the whole library rather than the
+            // current results, so it does not rearrange itself under the cursor between one
+            // keystroke and the next.
+            ShowSearch();
+        }
+
+        /// <summary>
+        /// A library read that failed outright, as opposed to one that found nothing. The loader
+        /// already handles and logs a query SQLite refused; this is for anything left over, and it
+        /// exists mainly so that nothing thrown on the search path escapes into an event handler,
+        /// where it would end the process rather than the search.
+        /// </summary>
+        private void ReportLibraryFailure(Exception ex)
+        {
+            AppLog.Write("startup.log", $"the library could not be updated: {ex}");
+            SetStatus($"Could not read the library: {ex.Message}");
         }
 
         private void SetStatus(string message)
@@ -212,31 +355,227 @@ ORDER BY rank";
             if (StatusText is not null) StatusText.Text = message;
         }
 
+        /// <summary>
+        /// Says so when the configuration file contains a key this app does not have. The log
+        /// alone would not do: the symptom is an empty library or an absent server, and nobody
+        /// opens <c>startup.log</c> to explain something that looks like it is working. The
+        /// status line is where the library already accounts for itself, so it is where the
+        /// reason it is empty belongs.
+        /// </summary>
+        private void ReportUnknownSettings()
+        {
+            var message = ConfigDiagnostics.Report(_config);
+            if (message is not null) SetStatus(message);
+        }
+
+        /// <summary>
+        /// Shows or hides the one moving thing in the window. The accent is spent here because
+        /// something is genuinely running; a progress bar that is always on screen is furniture.
+        /// </summary>
+        private void SetBusy(bool busy)
+        {
+            if (LiveTrack is not null) LiveTrack.IsVisible = busy;
+        }
+
+        /// <summary>
+        /// Prints the shortcut on the search field, and makes it work. The app has always been
+        /// able to focus search from the keyboard in the sense that Tab reaches it; this is the
+        /// shortcut people actually try, and nothing else in the window would ever mention it.
+        /// </summary>
+        private void WireSearchShortcut()
+        {
+            var mac = OperatingSystem.IsMacOS();
+
+            SearchKeycapText.Text = mac ? "\u2318F" : "Ctrl F";
+
+            var gesture = new KeyGesture(Key.F, mac ? KeyModifiers.Meta : KeyModifiers.Control);
+
+            KeyBindings.Add(new KeyBinding
+            {
+                Gesture = gesture,
+                Command = new FocusSearchCommand(this)
+            });
+        }
+
+        /// <summary>
+        /// Focuses and selects the search box. A command rather than a handler because
+        /// <see cref="KeyBinding"/> takes one, and selecting the existing text means the
+        /// shortcut starts a new search rather than appending to the last one.
+        /// </summary>
+        private sealed class FocusSearchCommand : System.Windows.Input.ICommand
+        {
+            private readonly MainWindow _window;
+
+            public FocusSearchCommand(MainWindow window) => _window = window;
+
+            public event EventHandler? CanExecuteChanged { add { } remove { } }
+
+            // Never while a film is open: the search box is behind the details screen, and
+            // focusing something the user cannot see is worse than doing nothing.
+            public bool CanExecute(object? parameter) => !_window.DetailsView.IsShowing;
+
+            public void Execute(object? parameter)
+            {
+                if (!CanExecute(parameter)) return;
+
+                _window.SearchBox.Focus();
+                _window.SearchBox.SelectAll();
+            }
+        }
+
         private void BuildGenres()
         {
-            Genres.Clear();
-            foreach (var genre in LibraryGrouping.BuildGenreList(_allMovies))
-                Genres.Add(genre);
+            BuildSources();
+
+            GenreChips.Clear();
+            foreach (var chip in LibraryGrouping.BuildGenreChips(VisibleMovies))
+            {
+                chip.IsSelected = string.Equals(chip.Name, SelectedGenre, StringComparison.OrdinalIgnoreCase);
+                GenreChips.Add(chip);
+            }
+
+            // The search field says how much it is about to search, which is the cheapest
+            // possible answer to "did the scan actually find anything".
+            var total = GenreChips.Count > 0 ? GenreChips[0].Count : 0;
+            if (SearchBox is not null)
+                SearchBox.Watermark = total == 1 ? "Search 1 film" : $"Search {total:N0} films";
+        }
+
+        /// <summary>
+        /// Rebuilds the source row, and hides it when the library comes from a single place.
+        /// </summary>
+        /// <remarks>
+        /// The counts come from the whole library rather than the filtered view, or selecting
+        /// "Offline" would leave the server's own control reading zero and there would
+        /// be nothing to say how to get back.
+        /// </remarks>
+        private void BuildSources()
+        {
+            var available = LibraryFilter.Available(_allMovies);
+
+            SourceChips.Clear();
+            foreach (var source in available)
+            {
+                SourceChips.Add(new SourceChip
+                {
+                    Source = source,
+                    Count = LibraryFilter.Count(_allMovies, source),
+                    IsSelected = source == _source
+                });
+            }
+
+            var show = SourceChips.Count > 0;
+            if (SourceChipsList is not null) SourceChipsList.IsVisible = show;
+            if (SourceDivider is not null) SourceDivider.IsVisible = show;
+
+            // A source that has just stopped existing — the last local film removed, or a server
+            // switched off — must not leave the window filtered to nothing with no way back.
+            if (!show && _source != LibrarySource.Everywhere) _source = LibrarySource.Everywhere;
+        }
+
+        /// <summary>
+        /// Narrows the library to one place, or widens it again. Genre stays as it was: the two
+        /// are different questions and answering one should not silently discard the other.
+        /// </summary>
+        private void SourceChip_Click(object? sender, RoutedEventArgs e)
+        {
+            if (sender is not ToggleButton tb || tb.DataContext is not SourceChip chip) return;
+
+            _source = chip.Source;
+
+            // A search and a source are two filters over one library, not two views of it, so
+            // narrowing to one place has to narrow the results already in front of you. This used
+            // to fall through to the shelves below and discard whatever had been typed.
+            if (_view.IsSearch)
+            {
+                ShowSearchResults();
+                return;
+            }
+
+            // A genre that only the other source had would otherwise stay selected and show an
+            // empty page.
+            var stillThere = LibraryGrouping.BuildGenreChips(VisibleMovies)
+                                            .Any(c => string.Equals(c.Name, SelectedGenre, StringComparison.OrdinalIgnoreCase));
+            if (!stillThere) SelectedGenre = LibraryGrouping.AllGenres;
+
+            BuildGenres();
+            RebuildGroups();
+
+            if (string.Equals(SelectedGenre, LibraryGrouping.AllGenres, StringComparison.OrdinalIgnoreCase))
+            {
+                ShowAllGenres();
+            }
+            else
+            {
+                SingleGenreItems.Clear();
+                foreach (var m in LibraryGrouping.ItemsForGenre(VisibleMovies, SelectedGenre))
+                    SingleGenreItems.Add(m);
+
+                SingleGenreCountText.Text = LibraryGrouping.CountLabel(SingleGenreItems.Count);
+                WarmPosters(SingleGenreItems);
+                ShowSingleGenre();
+            }
         }
 
         private void WarmPosters(IEnumerable<UiMovie> movies)
         {
-            if (_posterLoader is null) return;
+            var loader = _posterLoader;
+            if (loader is null) return;
+
             foreach (var m in movies)
             {
-                // A server film is already described by the server, artwork included. Sending it
-                // to TMDB would ask for an answer the app already has, and would make a Jellyfin
-                // library depend on a TMDB key it has no reason to need.
+                // A film that is only on the server is already described by the server, artwork
+                // included. Sending it to TMDB would ask for an answer the app already has, and
+                // would make a Jellyfin library depend on a TMDB key it has no reason to need.
+                //
+                // A film that is in both places is not skipped: it is showing the server's poster
+                // only until the catalogue on this machine has one of its own, and that copy is
+                // the one that still has a poster with the server switched off.
                 if (m.IsRemote) continue;
                 if (!string.IsNullOrWhiteSpace(m.PosterPath)) continue;
 
-                _ = _posterLoader.EnsurePosterAsync(
-                        movieId: m.Id,
-                        title: m.Title,
-                        year: m.Year,
-                        onFetched: path => Dispatcher.UIThread.Post(() => m.PosterPath = path),
-                        ct: _cts.Token);
+                // Queued rather than discarded. The task used to be dropped on the floor here,
+                // which is what let a closing window walk away from work it had started: nothing
+                // held it, so nothing could wait for it or notice it had gone.
+                loader.Queue(
+                    movieId: m.Id,
+                    title: m.Title,
+                    year: m.Year,
+                    onFetched: path => ShowOnUiThread(() => m.PosterPath = path),
+                    ct: _cts.Token);
             }
+        }
+
+        /// <summary>
+        /// Runs <paramref name="update"/> on the UI thread, and only while there is still a
+        /// window to update. Checked on both sides of the hop: once here, to save posting work
+        /// that has already been abandoned, and again when it runs, because the window can close
+        /// in between.
+        /// </summary>
+        private void ShowOnUiThread(Action update)
+        {
+            if (_cts.IsCancellationRequested) return;
+
+            Dispatcher.UIThread.Post(() =>
+            {
+                if (_cts.IsCancellationRequested) return;
+                update();
+            });
+        }
+
+        /// <summary>
+        /// A poster the loader gave up on. Reported once per configured library rather than once
+        /// per film: whatever stops one poster — no key, no network, a catalogue somebody else has
+        /// open — stops all of them, and a status line rewritten several hundred times says less
+        /// than a single sentence. The rest are in <c>posters.log</c>.
+        ///
+        /// Called from whichever background worker failed, so it hops to the UI thread to say so.
+        /// </summary>
+        private void ReportPosterFailure(string message)
+        {
+            if (Interlocked.Increment(ref _posterFailuresReported) > 1) return;
+
+            Dispatcher.UIThread.Post(() => SetStatus(message));
         }
 
         private void RebuildGroups()
@@ -245,18 +584,20 @@ ORDER BY rank";
 
             IEnumerable<string> buckets;
             if (string.Equals(SelectedGenre, LibraryGrouping.AllGenres, StringComparison.OrdinalIgnoreCase) || string.IsNullOrWhiteSpace(SelectedGenre))
-                buckets = Genres.Where(x => !string.Equals(x, LibraryGrouping.AllGenres, StringComparison.OrdinalIgnoreCase));
+                buckets = GenreChips.Select(c => c.Name)
+                                    .Where(x => !string.Equals(x, LibraryGrouping.AllGenres, StringComparison.OrdinalIgnoreCase));
             else
                 buckets = new[] { SelectedGenre! };
 
             foreach (var genre in buckets)
             {
-                var items = LibraryGrouping.ItemsForGenre(_allMovies, genre);
+                var items = LibraryGrouping.ItemsForGenre(VisibleMovies, genre);
                 if (items.Count == 0) continue;
 
                 VisibleGroups.Add(new GenreGroup
                 {
-                    Name = $"{genre} ({items.Count} items)",
+                    Name = genre,
+                    Count = items.Count,
                     Items = new ObservableCollection<UiMovie>(items)
                 });
             }
@@ -288,17 +629,23 @@ ORDER BY rank";
 
             _scanning = true;
             if (ScanButton is not null) ScanButton.IsEnabled = false;
+            SetBusy(true);
 
             try
             {
                 SetStatus("Scanning…");
-                var updated = await RunScanAsync(_cts.Token);
+                var result = await RunScanAsync(_cts.Token);
 
-                LoadMovies();
-                BuildGenres();
-                RebuildGroups();
-                ShowAllGenres();
-                SetStatus($"Scan complete. {updated} file entries updated, {_allMovies.Count} movies in the library.");
+                await _searchLoop.RefreshAsync();
+
+                // The scan's own sentence, not a rewrite of it. It is the one thing that knows
+                // whether it finished, what it added and what it could no longer find; a status
+                // line that reduced all of that back to a single "updated" number is the reason
+                // nobody could tell a scan that did nothing from one that did everything.
+                //
+                // Said after the reload rather than before it, because the reload now carries a
+                // status line of its own and would otherwise overwrite this one.
+                SetStatus($"{result.Summary} {_allMovies.Count} movies in the library.");
             }
             catch (OperationCanceledException)
             {
@@ -314,6 +661,7 @@ ORDER BY rank";
             {
                 _scanning = false;
                 if (ScanButton is not null) ScanButton.IsEnabled = true;
+                SetBusy(false);
             }
         }
 
@@ -322,7 +670,7 @@ ORDER BY rank";
         /// Enumerating a film folder and writing thousands of rows is synchronous work underneath;
         /// left on the dispatcher it froze the window and no progress message ever painted.
         /// </summary>
-        private Task<int> RunScanAsync(CancellationToken ct)
+        private Task<ScanResult> RunScanAsync(CancellationToken ct)
         {
             var folders = _config.WatchFolders ?? Array.Empty<string>();
             var progress = new Progress<string>(msg => Dispatcher.UIThread.Post(() => SetStatus(msg)));
@@ -347,6 +695,7 @@ ORDER BY rank";
 
             _syncing = true;
             if (JellyfinButton is not null) JellyfinButton.IsEnabled = false;
+            SetBusy(true);
 
             try
             {
@@ -361,10 +710,7 @@ ORDER BY rank";
                 }, _cts.Token);
 
                 LoadRemoteCache();
-                LoadMovies();
-                BuildGenres();
-                RebuildGroups();
-                ShowAllGenres();
+                await _searchLoop.RefreshAsync();
 
                 SetStatus($"Jellyfin: {count} {(count == 1 ? "film" : "films")} from the server.");
             }
@@ -401,6 +747,7 @@ ORDER BY rank";
             {
                 _syncing = false;
                 if (JellyfinButton is not null) JellyfinButton.IsEnabled = true;
+                SetBusy(false);
             }
         }
 
@@ -439,48 +786,34 @@ ORDER BY rank";
             }
         }
 
+        /// <summary>
+        /// Every keystroke, and nothing more than a keystroke. Deliberately not <c>async void</c>:
+        /// the work is handed to <see cref="_searchLoop"/>, which debounces it, cancels whatever
+        /// it supersedes and routes any failure to <see cref="ReportLibraryFailure"/>. An
+        /// exception escaping an <c>async void</c> handler ends the process rather than the
+        /// search, and this handler used to run the whole library query inline.
+        /// </summary>
         private void SearchBox_TextChanged(object? sender, TextChangedEventArgs e)
         {
-            var q = (sender as TextBox)?.Text?.Trim();
+            var query = (sender as TextBox)?.Text?.Trim();
 
-            if (string.IsNullOrWhiteSpace(q))
-            {
-                // not searching → grouped view
-                LoadMovies(null);
-                BuildGenres();
-                RebuildGroups();
-                ShowAllGenres();
-                return;
-            }
-
-            // searching → flat view
-            LoadMovies(q);
-            FlatResults.Clear();
-
-            // Grouped on Key rather than Id: every server film carries id 0, so grouping on the
-            // local id would collapse the whole remote half of the results into one card.
-            foreach (var m in _allMovies
-                    .GroupBy(x => x.Key)
-                    .Select(g => g.First())
-                    .OrderByDescending(x => x.Year ?? 0)
-                    .ThenBy(x => x.Title))
-            {
-                FlatResults.Add(m);
-            }
-
-            WarmPosters(FlatResults);
-            ShowSearch();
+            // Discarded on purpose: the returned task never faults, and nothing here waits for a
+            // search that the next keystroke may well throw away.
+            _ = _searchLoop.PostAsync(string.IsNullOrWhiteSpace(query) ? null : query);
         }
 
         private void GenreChip_Click(object? sender, RoutedEventArgs e)
         {
-            if (sender is ToggleButton tb && tb.Content is string genreLabel)
+            // The genre comes off the chip's data context. It used to be read back out of the
+            // button's own Content as a string, which quietly stops working the moment a chip
+            // holds anything but text — and it now holds a name and a count in two faces.
+            if (sender is ToggleButton tb && tb.DataContext is GenreChip chip)
             {
-                SelectedGenre = genreLabel;
+                SelectedGenre = chip.Name;
 
-                // Only the clicked chip stays checked.
-                foreach (var btn in GenreChips.GetVisualDescendants().OfType<ToggleButton>())
-                    btn.IsChecked = string.Equals(btn.Content as string, SelectedGenre, StringComparison.Ordinal);
+                // Rebuilt rather than ticked in place: the chips carry their own selected state,
+                // so this is also what makes the right one appear selected on the first render.
+                BuildGenres();
 
                 if (string.Equals(SelectedGenre, LibraryGrouping.AllGenres, StringComparison.OrdinalIgnoreCase))
                 {
@@ -490,8 +823,10 @@ ORDER BY rank";
                 else
                 {
                     SingleGenreItems.Clear();
-                    foreach (var m in LibraryGrouping.ItemsForGenre(_allMovies, SelectedGenre))
+                    foreach (var m in LibraryGrouping.ItemsForGenre(VisibleMovies, SelectedGenre))
                         SingleGenreItems.Add(m);
+
+                    SingleGenreCountText.Text = LibraryGrouping.CountLabel(SingleGenreItems.Count);
 
                     WarmPosters(SingleGenreItems);
                     ShowSingleGenre();
@@ -514,13 +849,38 @@ ORDER BY rank";
             // A server that has just been switched off leaves a cached library behind in SQLite.
             // Reloading with no client drops it from view, which is what turning it off meant.
             LoadRemoteCache();
-            LoadMovies();
-            BuildGenres();
-            RebuildGroups();
-            ShowAllGenres();
+            await _searchLoop.RefreshAsync();
 
             if (_jellyfin is not null)
                 await SyncJellyfinAsync(announceFailure: true);
+        }
+
+        /// <summary>
+        /// Opens the details screen over the library, and puts the library back when it closes.
+        /// </summary>
+        /// <remarks>
+        /// The library is hidden rather than merely covered. Every layer of the details screen
+        /// above its own background is semi-transparent, so a visible library composited straight
+        /// through the backdrop — shelves, genre row and counts were all legible through the dark
+        /// half of the screen. Hiding it also takes its buttons out of the tab order, which were
+        /// otherwise still reachable, and still clickable, behind a screen covering them.
+        /// </remarks>
+        private async Task ShowDetailsAsync(MovieDetailsVm vm)
+        {
+            LibraryRoot.IsVisible = false;
+
+            try
+            {
+                await DetailsView.ShowAsync(vm, _dbPath, _config, LoadImdbRatingAsync, _jellyfin);
+
+                // A downloaded film is a row the library behind this screen does not have yet: it
+                // would still be shown as living only on the server until something reloaded it.
+                if (DetailsView.DownloadedSomething) await _searchLoop.RefreshAsync();
+            }
+            finally
+            {
+                LibraryRoot.IsVisible = true;
+            }
         }
 
         private void ShowSearch()
@@ -528,13 +888,22 @@ ORDER BY rank";
             SearchPanel.IsVisible = true;
             GroupPanel.IsVisible = false;
             SingleGenrePanel.IsVisible = false;
+            EmptyPanel.IsVisible = false;
         }
 
+        /// <summary>
+        /// The grouped view, or the invitation to fill the library when there is nothing to
+        /// group. A fresh install used to land on a blank page here, which is indistinguishable
+        /// from a scan that silently failed.
+        /// </summary>
         private void ShowAllGenres()
         {
+            var empty = VisibleMovies.Count == 0;
+
             SearchPanel.IsVisible = false;
-            GroupPanel.IsVisible = true;
+            GroupPanel.IsVisible = !empty;
             SingleGenrePanel.IsVisible = false;
+            EmptyPanel.IsVisible = empty;
         }
 
         private void ShowSingleGenre()
@@ -542,6 +911,7 @@ ORDER BY rank";
             SearchPanel.IsVisible = false;
             GroupPanel.IsVisible = false;
             SingleGenrePanel.IsVisible = true;
+            EmptyPanel.IsVisible = false;
         }
 
         private async void MovieCard_Click(object? sender, PointerPressedEventArgs e)
@@ -566,7 +936,14 @@ ORDER BY rank";
                 using var cts = CancellationTokenSource.CreateLinkedTokenSource(_cts.Token);
                 cts.CancelAfter(TimeSpan.FromSeconds(12));
 
-                var details = await tmdb.GetDetailsByTitleAsync(m.Title, m.Year, cts.Token);
+                // Asked by id when the catalogue knows which film this is, and only searched by
+                // title when it does not. Searching every time is what made a corrected match
+                // temporary: the answer was thrown away and the same wrong guess re-derived on the
+                // next open.
+                var storedTmdbId = ReadStoredTmdbId(m.Id);
+                var details = storedTmdbId is int knownId
+                    ? await tmdb.GetDetailsByIdAsync(knownId, cts.Token)
+                    : await tmdb.GetDetailsByTitleAsync(m.Title, m.Year, cts.Token);
 
                 List<string> cast = new();
                 List<string> crew = new();
@@ -574,18 +951,8 @@ ORDER BY rank";
                 if (details?.Id is int tmdbId)
                 {
                     var credits = await tmdb.GetCreditsByIdAsync(tmdbId, cts.Token);
-                    if (credits != null)
-                    {
-                        foreach (var c in credits.Cast.Take(10))
-                        {
-                            if (!string.IsNullOrWhiteSpace(c.Name))
-                                cast.Add(string.IsNullOrWhiteSpace(c.Character) ? c.Name : $"{c.Name} ({c.Character})");
-                        }
-                        foreach (var d in credits.Crew.Where(x => string.Equals(x.Job, "Director", StringComparison.OrdinalIgnoreCase)).Take(3))
-                            crew.Add($"Director: {d.Name}");
-                        foreach (var w in credits.Crew.Where(x => x.Job != null && x.Job.Contains("Writer", StringComparison.OrdinalIgnoreCase)).Take(3))
-                            crew.Add($"Writer: {w.Name}");
-                    }
+                    cast = CreditLine.Cast(credits);
+                    crew = CreditLine.Crew(credits);
                 }
 
                 var vm = new MovieDetailsVm
@@ -593,26 +960,69 @@ ORDER BY rank";
                     LocalId = m.Id,
                     Title = m.Title,
                     Year = m.Year,
-                    PosterPath = m.PosterPath,
+                    TmdbId = details?.Id ?? storedTmdbId,
+
+                    // The server's artwork when the catalogue has none of its own, which is what
+                    // the card is already showing.
+                    PosterPath = m.DisplayPosterPath,
                     Overview = details?.Overview ?? "",
                     Runtime = details?.Runtime,
                     ImdbId = details?.ImdbId,
-                    Genres = details is null ? m.Genres ?? "" : string.Join(", ", details.Genres?.Select(g => g.Name) ?? Array.Empty<string>()),
+                    Genres = details is null ? m.Genres ?? "" : CreditLine.Genres(details),
                     BackdropUrl = string.IsNullOrWhiteSpace(details?.BackdropPath) ? null
-                                  : tmdb.BuildImageUrl(details!.BackdropPath!)
+                                  : tmdb.BuildImageUrl(details!.BackdropPath!),
+                    TmdbConfigured = !string.IsNullOrWhiteSpace(_config.TmdbApiKey),
+
+                    // Opened from disk, and the server has a copy too. Said on the facts row, in
+                    // place of the badge the card carries.
+                    IsOnServer = m.IsOnServer
                 };
                 vm.TopCast = cast;
                 vm.KeyCrew = crew;
-                vm.ImdbRating = await LoadImdbRatingAsync(vm.ImdbId, m.Id, cts.Token);
-                vm.FilePath = FindLocalFileForMovie(m);
 
-                var dlg = new MovieDetailsWindow(vm);
-                await dlg.ShowDialog(this);
+                // Anything TMDB did not answer, and the server can. Before the IMDb lookup below,
+                // because the id it is keyed on may be one of the gaps the server just filled.
+                if (m.IsOnServer) FillFromServer(vm, m.RemoteId);
+
+                vm.ImdbRating = await LoadImdbRatingAsync(vm.ImdbId, m.Id, cts.Token);
+
+                // Both halves of the merge matter here: main's play-target resolution decides
+                // which file Play opens and how sure the app is of it, and the details screen it
+                // was handed to is now a view inside this window rather than a dialog over it.
+                var target = FindPlayTargetForMovie(m);
+                vm.FilePath = target.FilePath;
+                vm.FileMatch = target.Kind;
+
+                await ShowDetailsAsync(vm);
+
+                // The film may have been re-identified while the details screen was up, and the
+                // card behind it is still showing the poster that was wrong. Only when the screen
+                // actually changed it: the poster handed to it may have been the server's, and
+                // writing that into the local column would leave the card claiming artwork this
+                // machine does not have and stop the loader ever fetching any.
+                if (!string.Equals(vm.PosterPath, m.DisplayPosterPath, StringComparison.Ordinal))
+                    m.PosterPath = vm.PosterPath;
             }
             catch (Exception ex)
             {
                 await MessageBoxWindow.ShowAsync(this, "UrDatabase", $"Could not load details:{Environment.NewLine}{ex.Message}");
             }
+        }
+
+        /// <summary>
+        /// Lets the server describe a film this machine also has, wherever nothing else could.
+        /// </summary>
+        /// <remarks>
+        /// A film in both places is one card, opened as a local film. Without this the fold would
+        /// have cost the user the server's description of it — the only description there is on an
+        /// install with no TMDB key, which is a supported install.
+        /// </remarks>
+        private void FillFromServer(MovieDetailsVm vm, string? remoteId)
+        {
+            if (string.IsNullOrWhiteSpace(remoteId)) return;
+            if (!_remoteById.TryGetValue(remoteId, out var film)) return;
+
+            ServerDetails.FillGaps(vm, film, id => _jellyfin?.BuildBackdropUrl(id));
         }
 
         /// <summary>
@@ -642,7 +1052,13 @@ ORDER BY rank";
                     IsRemote = true,
                     RemoteId = film.ItemId,
                     DownloadFolder = _config.DownloadFolder,
-                    DatabasePath = _config.DatabasePath
+                    DatabasePath = _config.DatabasePath,
+
+                    // The server has described its own cast and crew since the sync that cached
+                    // it. Nothing used to ask for them, so every film from a server showed an
+                    // empty list as though it genuinely had none.
+                    TopCast = film.Cast.ToList(),
+                    KeyCrew = film.Crew.ToList()
                 };
 
                 using var cts = CancellationTokenSource.CreateLinkedTokenSource(_cts.Token);
@@ -663,19 +1079,7 @@ ORDER BY rank";
                 // not the community number beside it. No local movie row owns it.
                 vm.ImdbRating = await LoadImdbRatingAsync(vm.ImdbId, null, cts.Token);
 
-                var dlg = new MovieDetailsWindow(vm, _jellyfin);
-                await dlg.ShowDialog(this);
-
-                // A downloaded film is a new row in the local catalogue, so the library behind this
-                // window is now out of date: it would still show the film as living only on the
-                // server until something else happened to reload it.
-                if (dlg.DownloadedSomething)
-                {
-                    LoadMovies();
-                    BuildGenres();
-                    RebuildGroups();
-                    ShowAllGenres();
-                }
+                await ShowDetailsAsync(vm);
             }
             catch (OperationCanceledException)
             {
@@ -708,15 +1112,49 @@ ORDER BY rank";
             }
         }
 
-        private string? FindLocalFileForMovie(UiMovie m)
+        /// <summary>
+        /// Which TMDB film the catalogue says this is, or null when nothing has said yet. A
+        /// failure to read is the same answer as "nothing recorded": the film still opens, it is
+        /// just identified by title again as it always used to be.
+        /// </summary>
+        private int? ReadStoredTmdbId(long movieId)
+        {
+            if (movieId <= 0) return null;
+
+            try
+            {
+                using var conn = Database.Open(_dbPath);
+                return MovieMatch.ReadTmdbId(conn, movieId);
+            }
+            catch (Exception ex)
+            {
+                AppLog.Write("app.log", $"could not read the tmdb match for movie {movieId}: {ex.Message}");
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// What Play will open for a local film, and on what evidence. The catalogue's own
+        /// <c>files.movie_id</c> link decides it; a filename is only ever a suggestion the user
+        /// gets to confirm. This used to load every path in the table and return the first name
+        /// containing the title, which is how a film called <em>It</em> played
+        /// <c>Spirited Away.mkv</c>.
+        ///
+        /// A failure to read the database is not worth a dialog: the details window says the film
+        /// has no file linked, which is the same thing from where the user is standing.
+        /// </summary>
+        private PlayTarget FindPlayTargetForMovie(UiMovie m)
         {
             try
             {
                 using var conn = Database.Open(_dbPath);
-                var files = conn.Query<string>("SELECT file_path FROM files").ToList();
-                return MovieFileMatcher.FindBestMatch(files, m.Title);
+                return PlayTargetResolver.Resolve(conn, m.Id, m.Title, m.Year);
             }
-            catch { return null; }
+            catch (Exception ex)
+            {
+                AppLog.Write("app.log", $"could not resolve a file for movie {m.Id}: {ex.Message}");
+                return PlayTarget.None;
+            }
         }
     }
 }

@@ -230,6 +230,18 @@ Three more things the rule does, in rough order of how often they catch people:
   that the owner for every path. Pushing after an approval dismisses it.
 - **Every conversation on the pull request has to be resolved.**
 
+`Version` reads `main` as it is at the moment it runs, not as the pull request
+event recorded it when the branch opened, because the tag has to clear whatever
+`main` has reached by then. That narrows a race rather than removing it. A
+check reports the state it ran in, and nothing re-runs an open pull request's
+checks when somebody else merges, so two branches that both took `0.4.1` can
+still both be green and land seconds apart — and the second one ships nothing,
+because the tag already exists. Being up to date with `main` does not save you
+either: merging `main` into a branch that already holds the identical version
+resolves cleanly, with no conflict to notice. Only a merge queue would close
+that, and there is not one. So on a branch that has been open a while, look at
+what `main` says before pressing merge.
+
 Administrators can bypass all of it. That is a deliberate escape hatch for the
 day a required check is wedged, not an invitation — the rule against committing
 to `main` is a rule for the owner too, and the only thing enforcing it there is

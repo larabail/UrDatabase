@@ -4,6 +4,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Avalonia.Controls;
 using Avalonia.Interactivity;
+using Avalonia.Media;
 using Avalonia.Platform.Storage;
 using UrDatabase.Models;
 using UrDatabase.Services;
@@ -77,6 +78,12 @@ namespace UrDatabase.Views
 
             var resolved = AppConfig.Load();
 
+            // Read from _stored rather than from resolved: this is about the file in front of
+            // the user, and resolved may have come from a different one entirely.
+            var unrecognised = ConfigDiagnostics.Summarize(_stored.UnknownSettings, _stored.SourcePath);
+            ConfigWarningText.Text = unrecognised ?? "";
+            ConfigWarningPanel.IsVisible = unrecognised is not null;
+
             KeyNoteText.Text = DescribeKeys(resolved);
             PlayerNoteText.Text = DescribePlayer();
             SavePathText.Text =
@@ -141,6 +148,7 @@ namespace UrDatabase.Views
             };
 
             ProblemText.Text = _choices.Problem ?? "";
+            ProblemText.IsVisible = !string.IsNullOrWhiteSpace(_choices.Problem);
             FinishButton.IsEnabled = _choices.CanFinish;
         }
 
@@ -228,13 +236,13 @@ namespace UrDatabase.Views
             var settings = _choices.ToJellyfinSettings();
             if (!settings.IsConfigured)
             {
-                TestResultText.Text = _choices.Problem ?? "Enter an address and a username first.";
+                SetTestResult(TestOutcome.Bad, _choices.Problem ?? "Enter an address and a username first.");
                 return;
             }
 
             _testing = true;
             TestButton.IsEnabled = false;
-            TestResultText.Text = "Contacting the server…";
+            SetTestResult(TestOutcome.Pending, "Contacting the server…");
 
             try
             {
@@ -243,7 +251,7 @@ namespace UrDatabase.Views
                     JellyfinDeviceId.Resolve(),
                     version: typeof(SetupWindow).Assembly.GetName().Version?.ToString());
 
-                TestResultText.Text = await client.DescribeLibraryAsync(_cts.Token);
+                SetTestResult(TestOutcome.Good, await client.DescribeLibraryAsync(_cts.Token));
             }
             catch (OperationCanceledException)
             {
@@ -251,17 +259,58 @@ namespace UrDatabase.Views
             }
             catch (JellyfinException ex)
             {
-                TestResultText.Text = ex.Message;
+                SetTestResult(TestOutcome.Bad, ex.Message);
             }
             catch (Exception ex)
             {
                 AppLog.Write("jellyfin.log", JellyfinClient.Redact($"setup test failed: {ex}"));
-                TestResultText.Text = $"That did not work: {ex.Message}";
+                SetTestResult(TestOutcome.Bad, $"That did not work: {ex.Message}");
             }
             finally
             {
                 _testing = false;
                 TestButton.IsEnabled = true;
+            }
+        }
+
+        /// <summary>
+        /// How the last connection test went.
+        /// </summary>
+        private enum TestOutcome
+        {
+            Pending,
+            Good,
+            Bad
+        }
+
+        /// <summary>
+        /// Reports the result of a connection test.
+        /// </summary>
+        /// <remarks>
+        /// Every outcome carries a glyph as well as a colour. About one man in twelve cannot tell
+        /// the green from the red, and before this the two were not even different colours —
+        /// success and failure were both printed in the same muted grey, which meant the only way
+        /// to tell whether the server had answered was to read the sentence and know what a
+        /// working answer looked like.
+        /// </remarks>
+        private void SetTestResult(TestOutcome outcome, string message)
+        {
+            TestResultText.Text = message;
+
+            var (glyph, brushKey) = outcome switch
+            {
+                TestOutcome.Good => ("\u2713", "OkBrush"),
+                TestOutcome.Bad => ("\u2717", "NoBrush"),
+                _ => ("\u00B7", "DimBrush")
+            };
+
+            TestResultGlyph.Text = glyph;
+            TestResultGlyph.IsVisible = true;
+
+            if (this.TryFindResource(brushKey, out var brush) && brush is IBrush found)
+            {
+                TestResultGlyph.Foreground = found;
+                TestResultText.Foreground = found;
             }
         }
 

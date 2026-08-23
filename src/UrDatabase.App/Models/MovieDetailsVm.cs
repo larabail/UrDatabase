@@ -14,7 +14,34 @@ namespace UrDatabase.Models
         public string? ImdbId { get; set; }          // tt....
         public string? PosterPath { get; set; }      // local or URL (you already have this)
         public string? BackdropUrl { get; set; }     // URL for big backdrop
-        public string? FilePath { get; set; }        // first playable file we can 
+
+        /// <summary>
+        /// Which TMDB film this is, when the catalogue has been told. Null for a film nothing has
+        /// identified yet, and for anything from a Jellyfin server, which describes its own films.
+        ///
+        /// Stored so a corrected match survives being reopened. The identification used to be
+        /// re-derived from the title every time, which is what made a correction impossible to
+        /// keep.
+        /// </summary>
+        public int? TmdbId { get; set; }
+
+        /// <summary>
+        /// The file Play would open, when there is one. Read
+        /// <see cref="FileMatch"/> before acting on it: this is not always a file the catalogue
+        /// vouches for.
+        /// </summary>
+        public string? FilePath { get; set; }
+
+        /// <summary>
+        /// On what evidence <see cref="FilePath"/> was chosen. A
+        /// <see cref="PlayTargetKind.Suggested"/> path was guessed from a filename and has to be
+        /// confirmed before it is opened — the app used to make no distinction, and played the
+        /// guess.
+        /// </summary>
+        public PlayTargetKind FileMatch { get; set; } = PlayTargetKind.None;
+
+        public bool HasFile => !string.IsNullOrWhiteSpace(FilePath);
+
         public List<string> TopCast { get; set; } = new();     // “Actor (Role)”
         public List<string> KeyCrew { get; set; } = new();     // “Director: Name”
 
@@ -22,7 +49,15 @@ namespace UrDatabase.Models
         public bool IsRemote { get; set; }
 
         /// <summary>
-        /// The Jellyfin item id, for a film that came from the server. What a download asks for.
+        /// True when a server holds this film as well as this machine. Set for a film that is in
+        /// both places, which <see cref="IsRemote"/> is deliberately not: that one is streamed and
+        /// this one is opened from disk, and only the facts row mentions the server copy at all.
+        /// </summary>
+        public bool IsOnServer { get; set; }
+
+        /// <summary>
+        /// The Jellyfin item id, for a film the server holds. What a download asks for, and set
+        /// for a film in both places too — a local copy does not stop the server copy having an id.
         /// </summary>
         public string? RemoteId { get; set; }
 
@@ -30,21 +65,22 @@ namespace UrDatabase.Models
         public string? DownloadFolder { get; set; }
 
         /// <summary>
-        /// The catalogue this window may write a finished download into, so the copy is playable
-        /// and searchable without waiting for a scan.
+        /// The catalogue a finished download is written into, so the copy is playable and
+        /// searchable without waiting for a scan.
         /// </summary>
         public string? DatabasePath { get; set; }
 
         /// <summary>
-        /// A copy of this film already on this disk, found when the window opened or written by a
-        /// download since. Set means the film plays with the server switched off, which is the
-        /// entire point of downloading it.
+        /// A copy of this film already on this disk, found when the details were opened or written
+        /// by a download since. Set means the film plays with the server switched off, which is
+        /// the entire point of downloading it.
         /// </summary>
         public string? DownloadedPath { get; set; }
 
         /// <summary>
-        /// True when there is something to download and somewhere to put it. False for a local
-        /// film, and false for a server film whose id never made it into the cache.
+        /// True when there is something to download and nothing downloaded yet. A film already on
+        /// this disk needs no copy, and a server film whose id never reached the cache cannot be
+        /// asked for.
         /// </summary>
         public bool CanDownload =>
             IsRemote &&
@@ -65,5 +101,15 @@ namespace UrDatabase.Models
         /// repository has already shipped one bug from labelling one service's number as another's.
         /// </summary>
         public double? CommunityRating { get; set; }
+
+        /// <summary>
+        /// Whether a TMDB key was available when this film was opened.
+        /// </summary>
+        /// <remarks>
+        /// Carried so the screen can tell the truth about an empty plot or an empty cast. Both
+        /// keys are optional and an install with neither is entirely supported, so "none found"
+        /// is the wrong sentence for by far the commonest case: nothing was ever asked.
+        /// </remarks>
+        public bool TmdbConfigured { get; set; }
     }
 }

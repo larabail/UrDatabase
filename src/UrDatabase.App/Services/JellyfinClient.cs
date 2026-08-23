@@ -47,7 +47,7 @@ namespace UrDatabase.Services
         /// Everything the list needs in one pass. Without <c>Fields</c> Jellyfin returns a stub
         /// with no genres, overview or provider ids, and the app would be back to guessing.
         /// </summary>
-        public const string ItemFields = "Genres,Overview,ProviderIds,ProductionYear,RunTimeTicks,CommunityRating";
+        public const string ItemFields = "Genres,Overview,ProviderIds,ProductionYear,RunTimeTicks,CommunityRating,People";
 
         private readonly HttpClient _http;
         private readonly HttpClient _downloadHttp;

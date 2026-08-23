@@ -31,14 +31,18 @@ Avalonia replaces WPF. The differences that mattered during the port:
   caches bitmaps and the views assign `Image.Source` themselves.
 - Avalonia has no `MessageBox`, so `Views/MessageBoxWindow` stands in for it.
 - `Program.cs` is an explicit entry point; WPF generated one from `App.xaml`.
+- Every colour, face and metric lives in `Styles/Tokens.axaml`, merged into the application's
+  resources, with the shared control styles in `Styles/Theme.axaml`. Windows do not declare
+  their own brushes: three of them each used to carry a private copy of `#EAEAEA`, and the
+  copies had already drifted apart.
 
 | View | Role |
 | --- | --- |
 | `Views/SetupWindow` | First-run setup, and the Settings screen thereafter: watch folders, a Jellyfin server, API keys. |
-| `Views/MainWindow` | Search, genre chips, and the grouped/flat/single-genre poster panels. |
-| `Views/MovieDetailsWindow` | Backdrop, poster, metadata, cast and crew, play and link actions. |
+| `Views/MainWindow` | Search, the genre row, the grouped/flat/single-genre poster panels, and the empty library. Hosts the details screen. |
+| `Views/MovieDetailsView` | Backdrop, poster, facts, cast and crew, play and link actions. A control, not a window: it fills `MainWindow` so a 16:9 backdrop gets the whole window instead of a third of a dialog. `ShowAsync` is awaited and completes when it is dismissed. |
 | `Views/MessageBoxWindow` | Simple modal dialog. |
-| `Controls/PosterCard` | Rounded poster tile that loads its own bitmap. |
+| `Controls/PosterCard` | A 2:3 poster plate that loads its own bitmap, tints itself from the title, and shows what the scanner parsed while it waits for artwork. |
 
 ## Services
 
@@ -46,10 +50,11 @@ Avalonia replaces WPF. The differences that mattered during the port:
 | --- | --- |
 | `AppConfig` | Loads settings from the per-user data directory, resolves API keys, applies platform defaults. Never throws. |
 | `ConfigStore` | Where `appsettings.json` is read from and written to. Never writes inside an app bundle, and refuses to save a resolved config. |
+| `ConfigDiagnostics` | Names keys in the settings file that are not settings, and what each was probably meant to be. Reports them; never rejects the file. |
 | `FirstRun` | Whether this launch has never been configured, and so whether to offer setup. |
 | `JellyfinDiagnostics` | Names which of five connection failures happened, and what to try about it. |
 | `PlatformPaths` | Every filesystem location, resolved per platform. Expands `%APPDATA%` and `~`. |
-| `Database` | Opens the SQLite database and applies `Data/schema.sql` idempotently. |
+| `Database` | Opens the SQLite database, applies `Data/schema.sql` idempotently, and migrates an existing library. The schema script is all `CREATE ... IF NOT EXISTS`, so it cannot add a column to a table somebody already has — `Migrate` does that. |
 | `ScanService` | Walks watch folders and upserts the `files` table, skipping unreadable directories. |
 | `TmdbService` | TMDB search, details and credits; builds image URLs. |
 | `OmdbService` | Fetches an IMDb rating for one IMDb id. |
@@ -90,6 +95,36 @@ existing library.
 - `movies_fts` — FTS5 index over `movies`, kept in sync by triggers.
 - `imdb_ratings` — cached IMDb ratings. A row with a `NULL` rating records "asked already, there
   is none", which is what stops the app re-requesting it.
+
+### Opening it
+
+`Database.Connect` is the only place a connection to the catalogue is constructed, and a test
+enforces that rather than trusting it. It sets `foreign_keys`, a `busy_timeout` and WAL, and
+bounds the provider's own lock wait to match the busy timeout; `Database.Open` is `Connect` plus
+the schema, for callers that could be the first thing to touch a fresh install. The window's read
+path uses `Connect`, because re-running the schema on every keystroke in the search box is work
+nobody asked for.
+
+The split exists because the alternative failed quietly. The read path used to build its own
+connection, which left the most frequent query in the app as the one connection in it with no busy
+timeout — a difference invisible at the call site and in review.
+
+### Writing to it
+
+SQLite allows one writer at a time, and this app has several: a scan committing in batches, a
+Jellyfin sync replacing the cached server library in one transaction, and the poster loader
+writing from up to four tasks at once. `DatabaseWriteLane` gives them a turn each, keyed by the
+file SQLite reports it opened, so writers in this process never contend for the write lock at all.
+
+What the lane cannot see is a second copy of the app on the same file. The busy timeout handles
+that, and a bounded retry on `SQLITE_BUSY` and `SQLITE_LOCKED` handles what the timeout does not.
+The retry is finite on purpose and rethrows what survives it: a write that cannot be made is the
+caller's to report, and the bug that produced all of this was about failures nobody was told
+about.
+
+The scan takes its turn per batch rather than per scan. Holding the lane for a whole library would
+shut the poster loader out for the length of it, which is the starvation `FilesPerTransaction`
+already exists to prevent.
 
 ## Configuration
 

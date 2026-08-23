@@ -24,23 +24,88 @@ It runs on Windows and macOS from one codebase, built with
   applied to the running window rather than at the next launch
   (`Views/SetupWindow`, `Models/SetupChoices`, `Services/ConfigStore`).
 - **Browse by genre.** The library opens as rows of poster cards, one row per
-  genre, newest first within each row. Genre chips across the top narrow the
-  view to a single genre (`Views/MainWindow`).
+  genre, newest first within each row, each shelf headed by the genre and the
+  number of films on it. The genre row across the top carries those counts too,
+  and picking one narrows the whole view to that genre. `Cmd+F` — `Ctrl+F` on
+  Windows — puts the cursor in the search field, and the field says so
+  (`Views/MainWindow`).
+- **Filter by where a film is.** When the library draws on both this computer
+  and a server, a row above the genres offers **Everywhere**, **Offline** and
+  **On the server**, each with a count. Genre and location are different
+  questions: a scanned film has no genre until something enriches it, so without
+  this every local film sat in the Uncategorised bucket, which sorts behind every
+  genre a server library brings with it. A film in both places answers to both
+  controls, so the counts deliberately do not add up to the total. The row is
+  hidden entirely when everything comes from one place, or when every film is in
+  both (`Services/LibraryFilter`).
+- **It looks like a screening room.** Warm near-black rather than blue-black,
+  because a blue surround makes every poster look faintly green; one brass
+  accent, spent only on the focus ring, the primary action and progress that is
+  genuinely running; posters at a true 2:3; and chrome dimmed to hairlines and
+  text so that forty pieces of artwork are the brightest thing on screen. Every
+  colour, face and metric is a token in `Styles/Tokens.axaml`. That accent is
+  the whole theme's, not just this app's markup: Avalonia's Fluent theme derives
+  every selected, checked and focused state from an accent it takes from the
+  operating system, so the seven shades it reads are computed from the brass
+  token at startup (`Services/AccentPalette`). Without that, a window built
+  entirely out of the palette above still turned macOS blue the moment anything
+  was selected.
+- **A film with no poster yet still says what it is.** Artwork is fetched in the
+  background, so most of a freshly scanned library has none for the first
+  minute. Rather than a wall of identical holes, each card shows the title and
+  year the scanner parsed, on a plate tinted from the title, inside a dashed
+  edge that means "not final" without putting forty spinners on one screen
+  (`Controls/PosterCard`, `Services/PlateTint`).
 - **Search.** Typing in the search box queries the `movies_fts` full-text index
-  and replaces the grouped view with a flat, ranked list of hits. Films from a
-  Jellyfin server are matched alongside them, on title and genre.
-- **Details on click.** Opening a card fetches the film from TMDB and shows the
-  overview, runtime, genres, backdrop, the top ten billed cast with their
-  characters, and up to three directors and three writers. The star rating
-  beside it is the **IMDb** rating, looked up from OMDb using the IMDb id TMDB
-  returns; if no OMDb key is available the star is simply absent and the rest
-  of the page is unaffected (`Services/TmdbService`,
-  `Views/MovieDetailsWindow`).
+  and replaces the grouped view with a flat, ranked list of hits. What you type
+  is escaped into FTS5's own query language first, so a title with punctuation
+  in it — `Face/Off`, `Mission: Impossible`, an apostrophe — is searched for
+  literally instead of being read as search operators, and the word you are
+  still typing matches by prefix (`Services/FtsQuery`). Films from a Jellyfin
+  server are matched alongside them, on title and genre.
+
+  The query runs off the interface thread, and only once the box has been quiet
+  for 200ms, so typing stays smooth on a library of any size. A search you have
+  moved on from is cancelled, and its results are refused even if it finishes
+  after the one that replaced it — what you end up looking at is always the last
+  thing you typed, never the last query to come back
+  (`Services/SearchCoordinator`, `Services/LibraryLoader`,
+  `Services/MovieRepository`).
+- **It says why something is missing.** A local film's plot, cast and crew come
+  from TMDB, so an install with no TMDB key has none — and the screen says that,
+  and says which setting fixes it, rather than reporting "none found" for a
+  question nobody asked. A server film says when the server itself supplied
+  nothing (`Services/MissingMetadata`).
+- **Details in place.** Opening a card fetches the film from TMDB and fills the
+  whole window — not a dialog inside it — with the backdrop, overview, runtime,
+  genres, the top ten billed cast set as name over character, and up to three
+  directors and three writers. Escape or **Library** goes back.
+
+  The facts under the title are each printed under the name of the service they
+  came from, which is the one thing this screen has to get right: the **IMDb**
+  rating comes from OMDb via the IMDb id TMDB returns, and Jellyfin's community
+  rating is a different measurement of a different population. They are never
+  inked alike or labelled merely "rating". Absent either key, that fact is
+  simply absent and nothing else changes (`Services/TmdbService`,
+  `Services/DetailFacts`, `Views/MovieDetailsView`).
 - **Posters fill themselves in.** Any film in the catalogue with no poster is
-  looked up in the background, four at a time, and the result is written back
-  to the database so the next launch is instant. Posters are either referenced
-  at their TMDB URL or downloaded into a local cache directory, depending on
-  `DownloadPosters` (`Services/PosterAutoLoader`).
+  looked up in the background, four at a time, through one shared connection to
+  TMDB, and the result is written back to the database so the next launch is
+  instant. A result is only accepted when its title agrees with the catalogued
+  one and its year corroborates rather than contradicts it; TMDB's search always
+  answers with something, and its answer for a short title is often a longer film
+  that contains it, so an unverified first hit would put another film's artwork on
+  the card and leave it there. Posters are either referenced at their TMDB URL or
+  downloaded into a local cache directory, depending on `DownloadPosters`
+  (`Services/PosterAutoLoader`, `Services/TmdbMatch`).
+- **Say which film it actually is.** Two films share a title, a translation
+  renames one, and a filename spells one wrongly, so some films are matched to
+  the wrong TMDB record however careful the rules are. **Wrong film?** on the
+  details screen searches TMDB and lists what it finds — poster, title, original
+  title, year and plot — and choosing one replaces the artwork, plot, runtime,
+  genres, cast and crew, and records the choice in `movies.tmdb_id` so nothing
+  overwrites it and reopening the film does not undo it
+  (`Views/TmdbMatchWindow`, `Services/MovieMatch`).
 - **Scan your watch folders.** The scan button walks the configured folders for
   video files — `.mkv`, `.mp4`, `.avi`, `.mov`, `.wmv`, `.m4v`, `.mpg`, `.mpeg`
   — parses a title and year out of each filename, creates or reuses a canonical
@@ -48,17 +113,45 @@ It runs on Windows and macOS from one codebase, built with
   gives you a library; re-scanning is idempotent, so two spellings of one title
   collapse onto a single film rather than multiplying
   (`Services/ScanService`, `Services/FilenameParser`, `Services/MovieIndex`).
-- **Play.** The details window hands the linked file to whatever the operating
-  system uses to open it. A file can also be linked by hand from a file picker.
+- **A re-scan notices what changed, including what is gone.** Every scan is
+  recorded, and every file it walks past is stamped with the scan that saw it.
+  A film you deleted is therefore *marked* missing rather than sitting in the
+  catalogue forever — and marked rather than deleted, because from the app's
+  side an unplugged drive and a deleted film are the same absence and only one
+  of them should cost you a library. A folder that is not there when the scan
+  runs is skipped, and nothing under it is touched. A film you dragged into
+  another folder updates the row it already had instead of becoming a second
+  copy. A scan you cancel keeps what it catalogued and concludes nothing about
+  the rest. The result is reported as what it is — added, updated, unchanged,
+  moved, failed and now missing, counted separately — rather than one number
+  that meant all of them (`Services/ScanService`, `Services/ScanFileIndex`,
+  `Services/ScanSessions`).
+- **Play.** The details window opens the file the catalogue links to this film —
+  the link the scan wrote, not a guess at the filename — and hands it to whatever
+  the operating system uses. A film with no link, or whose only linked copy has
+  been moved or deleted, does not silently fall back to whichever file looks
+  closest: if something unclaimed on disk resembles the title it is offered by
+  name and Play asks first, and otherwise the window says plainly that nothing is
+  linked. Linking a file by hand from the file picker settles it, and is
+  remembered. Only the video types the scanner recognises can be linked or
+  opened, checked both when the link is made and again before anything is
+  launched — the app asks the operating system to open a path, and an OS will run
+  a script as readily as it plays a film
+  (`Services/PlayTargetResolver`, `Services/MovieFileMatcher`).
 - **Browse a Jellyfin server.** Optional, off until you configure it. Point the
   app at a server and its movie library appears alongside your local one, with
   every server film badged **Server** so you can tell at a glance what is not on
-  this machine. The library is cached in SQLite, so the window opens instantly
+  this machine. A film the server has and this computer has too is one card, not
+  two, badged **Server** and **Offline**: it is the same film, and the pair of
+  badges says both things about it — where it came from, and that it still plays
+  with the network down. The server describes its own films, cast and crew
+  included, so a
+  Jellyfin library is complete without a TMDB key. The library is cached in SQLite, so the window opens instantly
   and stays browsable with the server switched off or the laptop away from home
   — the films simply cannot play until it is reachable again. Playing one
   streams it, without transcoding, through VLC or IINA
   (`Services/JellyfinClient`, `Services/JellyfinCache`,
-  `Services/MediaPlayerLauncher`).
+  `Services/JellyfinLibrary`, `Services/MediaPlayerLauncher`).
 - **Download a server film to watch offline.** A film on the server has a
   **Download** button that keeps a copy on this disk, named the way the scanner
   reads it and catalogued the moment it finishes — so it is playable and
@@ -186,6 +279,23 @@ Paths may contain environment variables and are expanded on load, so
 directory .NET reports is `%APPDATA%` on Windows and
 `~/Library/Application Support` on macOS, so a configuration file written on one
 is not portable to the other.
+
+Spell one of those keys wrong and the app says so. `"Url"` where the Jellyfin
+setting is `ServerUrl` used to deserialise to nothing and start a perfectly
+normal-looking app with an empty library and no explanation; now the status line
+under the library names the key and what it was probably meant to be, the setup
+screen repeats it — that being where somebody is likely to be fixing it — and
+the same lines go to `startup.log`:
+
+```
+appsettings.json: unknown setting "Jellyfin.Url" — did you mean "ServerUrl"?
+```
+
+Saying so is all it does. The key is still ignored and the app still starts, so
+a file written by a newer version cannot stop an older one from launching. A
+file with no keys in it, or none at all, is not a problem and produces nothing:
+a fresh install starts silently. Malformed JSON is a separate matter and is
+still silent — see [issue #25](https://github.com/larabail/UrDatabase/issues/25).
 
 ### Where the file lives
 
@@ -341,6 +451,27 @@ community rating, and `IMDb` only for the IMDb rating from OMDb. They are
 different numbers from different populations and are never shown under each
 other's name.
 
+#### A film that is in both places
+
+A film the server holds and this computer holds too is shown once, as one card
+badged **Server** and **Offline**, and the details screen says the same thing on
+its facts row. The two are matched by title and year, using the rules a re-scan
+already uses to avoid cataloguing the same film twice: case, accents and
+punctuation are not differences, and a filename that carried no year is treated
+as agreeing with the server's. Not by TMDB or IMDb id, because the local half of
+a library mostly has neither.
+
+The local row is the one kept, so such a film plays from disk, links to a file
+and can have its TMDB match corrected like any other. It borrows the server's
+genres when the scan gave it none, and the server's artwork until the catalogue
+has its own — neither is written to the database, so nothing about it goes stale
+when the server changes. Opening it fills anything TMDB could not answer from
+the server's own description — plot, runtime, cast, crew, the IMDb id, and
+Jellyfin's community rating — so folding the two cards together costs you
+nothing, including on an install with no TMDB key. What is already answered is
+left alone, or correcting a match would appear not to have taken
+(`Services/ServerDetails`).
+
 #### Playing a server film
 
 Films are streamed by default, and Jellyfin direct-plays most of them as
@@ -383,16 +514,40 @@ A finished download is written into the catalogue immediately, through the same
 upserts a scan uses, so it is playable and searchable without anyone having to
 work out that a scan is what makes a film appear. Because it lands inside a
 folder a scan already walks, the later scan agrees with it instead of inserting a
-duplicate. Afterwards **Play** opens the local copy rather than the stream, and
-the film keeps working with the server switched off.
+duplicate.
+
+The film then becomes exactly the case above: one card, badged **Server** and
+**Offline**, matched to the server's copy by title and year. **Play** opens the
+local file rather than the stream, and the film keeps working with the server
+switched off — which is the whole point of having fetched it.
 
 ### The catalogue
 
 Point `DatabasePath` anywhere and the app creates what it needs on first
 launch. `src/UrDatabase.App/Data/schema.sql` is the full schema — the `movies`
-and `files` tables, the `jellyfin_movies` cache, the `movies_fts` FTS5 index and
-the triggers that keep it current — and every statement is `IF NOT EXISTS`, so
-it runs against a library you already have without touching your data.
+and `files` tables, the `scans` table each scan records itself in, the
+`jellyfin_movies` cache, the `movies_fts` FTS5 index and the triggers that keep
+it current — and every statement is `IF NOT EXISTS`, so it runs against a
+library you already have without touching your data.
+
+`IF NOT EXISTS` covers a whole new table and does nothing at all for a new
+column on a table that already exists, so `Database.Migrate` runs straight after
+the script and adds those with `ALTER TABLE`. A column added to the schema file
+alone would reach new installs only, and every existing library would fail on
+"no such column" — which is to say it would work perfectly on a fresh clone and
+break for everybody with films in it. Anything added to a table in the script
+has to be added there too.
+
+`IF NOT EXISTS` creates a missing table but says nothing about one that is
+present and out of date, so a column added to an existing table needs more than
+the script: `Database.Migrate` inspects each table and issues the
+`ALTER TABLE ... ADD COLUMN` itself. That is how a catalogue built by an older
+version gained `jellyfin_movies.cast_list` and `crew_list`, and `movies.tmdb_id`,
+which records which TMDB film each row is. Adding a column is the only migration
+shape supported, and each one is nullable with no default, so nothing is
+rewritten and no row can be lost. Losing the race to add one is tolerated rather
+than reported: several connections open the catalogue at once, and only the
+column existing afterwards matters.
 
 From there, filling the catalogue is a scan. Set `WatchFolders`, press the scan
 button, and the films appear.
@@ -405,6 +560,43 @@ of a name, keeps the hyphen inside a real title like `Spider-Man`, and prefers a
 bracketed year over a bare one so `Blade Runner 2049 (2017)` resolves to the
 right film and year. One casualty of splitting dotted names: genuine full stops
 go with them, so `S.W.A.T.` arrives as `S W A T`.
+
+Each file the scan records gets `files.movie_id` pointing at the film it belongs
+to, and that column is the only thing Play consults. It matters that it is not
+the filename: names are ambiguous in ways that bite hardest on the shortest
+titles — "it" is inside "spirited", so a film called *It* used to open
+`Spirited Away.mkv` — and they say nothing at all about a file somebody renamed.
+
+A film with no usable link falls back to a suggestion rather than to a guess.
+The name has to match on whole words, must not name a year other than the film's
+own, and must be the only candidate of its strength; a title of five characters
+or less needs the year before a partial match counts at all. Whatever survives
+that is offered by name and opened only once you say so, and confirming it
+records the link. If two files are equally good, nothing is offered — a coin
+flip is not a match.
+
+A scan, a Jellyfin sync and the poster fetches all write to that one file, and
+they run at the same time — so the app makes them take turns rather than
+collide, and browsing stays readable throughout. If a write genuinely cannot be
+made, the status line says so; it does not fail silently and leave you to
+wonder why a poster never arrived. Two copies of the app open on the same
+catalogue is the one case that is only handled rather than prevented: they wait
+for each other, and either may eventually give up and tell you.
+
+Closing the window does not simply abandon whatever posters were mid-flight.
+Each is a TMDB request that has already been made, so the app waits up to two
+seconds for the answers to arrive and be written down, and only then cancels
+what is left — the window disappears immediately either way, and the fetches
+that did finish are not asked for again on the next launch.
+
+A poster being cached is a promise that it is readable, because nothing ever
+re-checks one: the file existing is the whole of the lookup from then on, and
+both the cards and the details page decode straight from it. So a download is
+written to a staging file beside its destination, checked for being an image at
+all rather than an error page some proxy answered with, and only then moved into
+place. Anything interrupted leaves nothing behind and is simply fetched again;
+anything left by a process that was killed outright is cleared out an hour
+later, once it is old enough to be certainly nobody's.
 
 ## Downloads
 
@@ -467,8 +659,9 @@ is; [SECURITY.md](SECURITY.md) sets out why that is an acceptable trade for
 these two keys in particular and when it would not be.
 
 Because a merge releases, a pull request that changes anything under `src/` has
-to bump the version, or the release will collide with a tag that already
-exists. How far to bump is in
+to bump the version above whatever `main` carries at the moment the check runs
+— not above whatever it carried when the branch opened — or the release will
+collide with a tag that already exists. How far to bump is in
 [AGENTS.md](AGENTS.md#versioning).
 
 Hosting is the only Firebase product involved, and only CI touches it: the
@@ -481,12 +674,18 @@ is `urdatabase-downloads`.
 
 ```
 src/UrDatabase.App/          the application: one cross-platform project
-  Views/                     windows and their code-behind
+  Views/                     windows, screens and their code-behind
   Controls/                  reusable pieces, e.g. the poster card
+  Styles/                    Tokens.axaml: every colour, face and metric, plus
+                             the Fluent resources the theme would otherwise
+                             paint in the system accent.
+                             Theme.axaml: the shared control styles
   Models/                    what the views bind to
-  Services/                  config, SQLite, scanning, TMDB, OMDb, Jellyfin, posters
+  Services/                  config, SQLite, scanning, search, TMDB, OMDb,
+                             Jellyfin, posters
   Assets/UrDatabase.icns     the macOS application icon
-  Data/schema.sql            the full schema, applied on first launch
+  Data/schema.sql            the shape a database is created with; Database.Migrate
+                             brings an older one up to it
   appsettings.example.json   configuration template, copied to the user's data
                              directory on first run; the real file is ignored
   UrDatabase.App.entitlements  hardened runtime exceptions the .NET JIT needs
@@ -514,41 +713,81 @@ request.
 
 Stated plainly, so nobody has to find out by using it:
 
+- **A film TMDB cannot confirm has no poster until you pick one.** The automatic
+  match refuses a result whose title or year does not corroborate the film, so a
+  title TMDB spells differently, or one the filename parser mangled, now comes
+  back with nothing rather than with the wrong film's artwork. The card stays
+  blank until you open it and use **Wrong film?**. That is the trade: an empty
+  frame invites the fix, and a confidently wrong one does not.
+- **Correcting a match does not correct the catalogue's own title.** Choosing
+  the right TMDB film replaces the poster, plot, runtime, genres and credits, but
+  the title and year on the card still come from the filename, so a film
+  catalogued as `S W A T` keeps that name in the library and in search. Renaming
+  a film by hand is not possible yet.
 - **A scanned library has no genres.** Nothing writes the `genres` column for a
   scanned film yet, so every film from a scan lands in a single
-  **Uncategorised** bucket. Since the grouped view is the main way to browse, a
-  freshly scanned library looks bare until TMDB enrichment fills genres in — and
-  no code does that yet. Films from a Jellyfin server are unaffected: the server
-  supplies their genres.
+  **Uncategorised** bucket, and a freshly scanned library looks bare until
+  something fills genres in — which no code does. The **Offline**
+  filter means those films are still one click away rather than buried behind a
+  server library's genres, but they remain ungrouped. Films from a Jellyfin
+  server are unaffected: the server supplies their genres, and a scanned film
+  the server also has borrows them for as long as the two are shown as one card
+  — the catalogue itself is not written to.
+- **A film in both places is matched by its name.** The server's copy and this
+  computer's are shown as one card when their titles agree once case, accents
+  and punctuation are set aside and their years do not contradict each other.
+  Two spellings that differ by a word — a translated title, or one the filename
+  parser mangled — stay two cards, and there is no way to say by hand that they
+  are the same film. Nor does such a card offer the stream as a fallback: it
+  plays the file on this disk, and says the server has it rather than doing
+  anything with that.
 - **Films only.** The filename parser has no concept of television, so
   `Show.S01E02` becomes an oddly titled film rather than an episode. A mixed
   library will look wrong rather than broken. A Jellyfin server's series
   libraries are skipped outright for the same reason.
-- **A server film has no cast or crew.** The details window fills those from
-  TMDB, and a Jellyfin film deliberately makes no TMDB call, so both lists are
-  empty for one. Jellyfin can report them; nothing asks yet.
 - **Playback position is not shared with the server.** A film played from
   Jellyfin does not resume where you left off and is not marked watched, because
   the app hands the stream to an external player and never hears from it again.
 - **One Jellyfin server.** There is no way to add a second. The setup screen
   configures the first one and tests it, but a household with two servers has to
   pick one.
-- **Files are matched to films by heuristic.** An exact filename stem wins,
-  otherwise the first name containing the title. Two films whose titles are
-  substrings of each other can still be confused.
-- **Linking a file by hand does not persist.** The file picker updates the open
-  window and nothing else; reopening the film forgets it.
+- **Files are matched to films by heuristic when nothing is linked.** The scan
+  records which film each file belongs to and Play uses only that, so the
+  heuristic no longer decides what opens. It still decides what gets *offered*
+  for a film with no link — a catalogue built before the scanner recorded one —
+  and there it can still be wrong; it asks before opening anything, and declines
+  to answer rather than guess between two equally good candidates.
+- **A film that was missing stays in the catalogue until you say otherwise.**
+  A scan marks a file it could not find and never removes it, because nothing
+  in the app can tell a film you deleted from one on a drive you unplugged.
+  Nothing yet prunes a row that has been missing across many scans, and there is
+  no screen that lists the missing ones or lets you clear them, so for now the
+  mark is a fact recorded in the database rather than anything you can see or
+  act on.
+- **A moved film is followed by name and size, and only those.** A file that
+  turns up somewhere new is treated as one that moved when exactly one missing
+  row has the same filename and the same byte count, and the old path is really
+  gone. Rename a film as well as moving it and the scan sees a deletion and an
+  addition instead. Two files that share a name and a size are not guessed
+  between at all: both are left as they are, which loses a link rather than
+  attaching one to the wrong film.
+- **Two prints of one film, and the app picks.** When several linked files
+  survive, Play opens the largest, then the most recently written, then the first
+  by path. That is a guess at which is the better copy, not a preference you can
+  set.
+- **A linked path is trusted to be where you said it was.** A file is only
+  accepted, and only opened, when its extension is one the scanner recognises,
+  and that is checked again immediately before launching. What is *not* checked
+  is where the path points: nothing confines it to your watch folders or resolves
+  it through symlinks first, so a catalogue you did not write yourself is worth
+  the same suspicion as any other file it hands you.
 - **Settings covers where your films are, and nothing else.** The screen asks
   about watch folders, a Jellyfin server and the two API keys. `DatabasePath`,
   `PosterCacheDir`, `DownloadFolder`, `DownloadPosters` and `TmdbImageSize` are
   still file-only; they survive a save untouched, but nothing in the app edits
   them.
-- **A downloaded film appears twice.** The copy on this disk and the film on the
-  server are both shown, one badged **Server**, because the merge deduplicates
-  by identity rather than by title and hiding either would mean hiding the only
-  one that works in some situation. It is correct, and it does look odd.
-- **Downloads are one at a time, from the details window.** There is no queue,
-  no way to fetch a whole genre, and closing the window stops the transfer —
+- **Downloads are one at a time, from the details screen.** There is no queue,
+  no way to fetch a whole genre, and leaving the film stops the transfer —
   though what it got is kept and starting again resumes from there. Nothing in
   the app deletes a download either: that is Finder's job.
 - **Nothing is uploaded.** Films go from the server to this machine and never
@@ -558,6 +797,14 @@ Stated plainly, so nobody has to find out by using it:
 - **Windows builds are not signed.** SmartScreen warns on first run and there
   is no way around it short of a Windows code signing certificate. The macOS
   side of this closed in 0.2.1; the Windows side has not.
+- **Nothing on the library page is virtualised, so a very large library is slow
+  to draw.** Every film on screen gets a real poster card, built up front,
+  whether or not it has been scrolled to. Querying is no longer the expensive
+  part — typing stays smooth on any size of library — but drawing is: around two
+  thousand films the shelves take about half a second to lay out, and at ten
+  thousand and up the window becomes unusable and the process grows to several
+  gigabytes. A search narrow enough to be useful is unaffected. Fixing it means
+  virtualising the shelves and the result list, which is a change to the view.
 
 ## Licence
 

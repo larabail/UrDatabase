@@ -1,0 +1,330 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:models="clr-namespace:UrDatabase.Models"
+             x:Class="UrDatabase.Views.MovieDetailsView">
+
+    <!--
+        Details, in place, across the whole window.
+
+        This used to be a 1000x640 dialog over the library. A backdrop is a
+        16:9 photograph and that window gave it about a third of the screen,
+        which is the one thing this screen has that the library does not. It is
+        now a sibling of the library inside MainWindow, so the backdrop gets
+        the full 1400x900 and there is no second window to position, own or
+        lose behind the first.
+    -->
+
+    <UserControl.Styles>
+        <!-- The plot scroller's last line, cut in half, reads as a rendering
+             fault rather than as "there is more below". A hairline directly
+             under it turns the cut into an edge. -->
+        <Style Selector="TextBlock.castName">
+            <Setter Property="Foreground" Value="{DynamicResource BoneBrush}"/>
+            <Setter Property="FontSize" Value="12.5"/>
+            <Setter Property="LineHeight" Value="17"/>
+        </Style>
+        <Style Selector="TextBlock.castRole">
+            <Setter Property="Foreground" Value="{DynamicResource DimBrush}"/>
+            <Setter Property="FontSize" Value="11.5"/>
+            <Setter Property="LineHeight" Value="16"/>
+        </Style>
+    </UserControl.Styles>
+
+    <!-- Opaque, and deliberately so. Every layer above this one is
+         semi-transparent, so without a solid base the library composites
+         straight through the backdrop: its shelves, its genre row and its
+         counts were all legible through the dark half of this screen. -->
+    <Grid Background="{StaticResource RoomBrush}">
+        <!-- The backdrop. No blur anywhere: Avalonia has no per-element filter
+             and does not need one here. If a soft backdrop is ever wanted, it
+             gets blurred once when it is cached to disk, not on every frame.
+
+             Full opacity: the two gradients below do all the darkening, and
+             they were designed against an undimmed photograph. Dimming the
+             image as well was a third veil that only made the picture side of
+             the screen muddy. -->
+        <Image x:Name="BackdropImage"
+               Stretch="UniformToFill"/>
+
+        <!-- Darkens towards the foot, so the action bar has something to sit
+             on whatever the photograph happens to be doing down there. -->
+        <Rectangle IsHitTestVisible="False">
+            <Rectangle.Fill>
+                <LinearGradientBrush StartPoint="0%,0%" EndPoint="0%,100%">
+                    <GradientStop Color="#4D0B0A09" Offset="0"/>
+                    <GradientStop Color="#B80B0A09" Offset="0.58"/>
+                    <GradientStop Color="#F70B0A09" Offset="1"/>
+                </LinearGradientBrush>
+            </Rectangle.Fill>
+        </Rectangle>
+
+        <!-- The important one, and the reason the right half of this screen is
+             not "empty". A backdrop is 16:9 and the text sits on the left third
+             of it, so the readable side is darkened hard and the picture side
+             is left alone. Darkening evenly instead gives you either unreadable
+             prose or a grey rectangle that was visibly once a photograph. -->
+        <Rectangle IsHitTestVisible="False">
+            <Rectangle.Fill>
+                <LinearGradientBrush StartPoint="0%,0%" EndPoint="100%,0%">
+                    <GradientStop Color="#FF0B0A09" Offset="0"/>
+                    <GradientStop Color="#E60B0A09" Offset="0.30"/>
+                    <GradientStop Color="#4D0B0A09" Offset="0.66"/>
+                    <GradientStop Color="#1F0B0A09" Offset="1"/>
+                </LinearGradientBrush>
+            </Rectangle.Fill>
+        </Rectangle>
+
+        <DockPanel>
+
+            <!-- Back, top left, where the eye already is. Escape does the same
+                 thing and the button says so. -->
+            <Border DockPanel.Dock="Top" Height="48" Padding="24,0">
+                <Button x:Name="BackButton"
+                        Classes="ghost"
+                        HorizontalAlignment="Left"
+                        VerticalAlignment="Center"
+                        Click="Back_Click"
+                        ToolTip.Tip="Esc">
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <TextBlock Text="←" FontSize="13"/>
+                        <TextBlock Text="Library"/>
+                    </StackPanel>
+                </Button>
+            </Border>
+
+            <!-- The action bar is docked, so Play is in the same place on every
+                 film regardless of how long the plot ran. -->
+            <Border DockPanel.Dock="Bottom"
+                    Padding="24,12,48,12"
+                    Background="#B80B0A09"
+                    BorderBrush="{StaticResource EdgeBrush}"
+                    BorderThickness="0,1,0,0">
+                <Grid ColumnDefinitions="Auto,16,*">
+                    <StackPanel Grid.Column="0"
+                                Orientation="Horizontal"
+                                Spacing="12"
+                                VerticalAlignment="Center">
+                        <Button x:Name="PlayBtn"
+                                Classes="primary"
+                                Content="▶  Play"
+                                Click="PlayBtn_Click"/>
+                        <Button x:Name="LinkFileButton"
+                                Classes="ghost"
+                                Height="34"
+                                Content="Link File…"
+                                Click="LinkFile_Click"/>
+                        <!-- The way out of a wrong TMDB match. Hidden for a server
+                             film, which the server describes and the catalogue does
+                             not own, so there is nothing here to correct. -->
+                        <Button x:Name="CorrectMatchButton"
+                                Classes="ghost"
+                                Height="34"
+                                Content="Wrong film?"
+                                Click="CorrectMatch_Click"/>
+                        <!-- Keeps a copy on this disk so the film survives being away
+                             from the server. Shown only for a server film that is not
+                             already here. -->
+                        <Button x:Name="DownloadButton"
+                                Classes="ghost"
+                                Height="34"
+                                Content="Download"
+                                IsVisible="False"
+                                Click="Download_Click"/>
+                        <ProgressBar x:Name="DownloadProgress"
+                                     Width="120"
+                                     Height="4"
+                                     Minimum="0"
+                                     Maximum="1"
+                                     VerticalAlignment="Center"
+                                     IsVisible="False"/>
+                    </StackPanel>
+
+                    <StackPanel Grid.Column="2" HorizontalAlignment="Right">
+                        <TextBlock x:Name="FileNote"
+                                   Classes="mono"
+                                   FontSize="10.5"
+                                   TextAlignment="Right"
+                                   TextWrapping="Wrap"
+                                   MaxWidth="660"/>
+                        <!-- Attribution required by the TMDB API terms, with OMDb
+                             credited as the rating source. A film from a server was
+                             described by the server, so TMDB is not credited for
+                             work it did not do. -->
+                        <TextBlock x:Name="AttributionText"
+                                   Classes="attribution"
+                                   TextAlignment="Right"
+                                   MaxWidth="660"
+                                   Margin="0,3,0,0"/>
+                    </StackPanel>
+                </Grid>
+            </Border>
+
+            <!-- Poster and text. -->
+            <Grid Margin="24,8,48,0" ColumnDefinitions="250,48,*">
+
+                <Border Grid.Column="0"
+                        x:Name="PosterPlate"
+                        Width="250"
+                        Height="375"
+                        VerticalAlignment="Top"
+                        CornerRadius="{StaticResource RadiusLarge}"
+                        ClipToBounds="True"
+                        BoxShadow="0 18 42 0 #800B0A09">
+                    <Grid>
+                        <Image x:Name="PosterImage" Stretch="UniformToFill"/>
+                        <Border CornerRadius="{StaticResource RadiusLarge}"
+                                BorderBrush="{StaticResource EdgeBrush}"
+                                BorderThickness="1"/>
+                    </Grid>
+                </Border>
+
+                <!-- The plot takes the space that is left and scrolls inside
+                     it; the credits are pinned to the foot of the column. A
+                     fixed-height plot instead slices the last line in half on a
+                     long one and leaves a quarter of the window dead under the
+                     credits on a short one, which is the worst of both. -->
+                <Grid Grid.Column="2"
+                      RowDefinitions="Auto,Auto,Auto,*,Auto">
+
+                    <TextBlock Grid.Row="0"
+                               x:Name="TitleText"
+                               Classes="display"
+                               FontSize="46"
+                               LineHeight="48"
+                               TextWrapping="Wrap"
+                               MaxLines="2"
+                               TextTrimming="CharacterEllipsis"
+                               Margin="0,0,0,12"/>
+
+                    <!-- Each number under its own source's name. See DetailFacts
+                         for why this is built rather than laid out by hand. -->
+                    <ItemsControl Grid.Row="1"
+                                  x:Name="FactsList"
+                                  Margin="0,0,0,16">
+                        <ItemsControl.ItemsPanel>
+                            <ItemsPanelTemplate>
+                                <StackPanel Orientation="Horizontal"/>
+                            </ItemsPanelTemplate>
+                        </ItemsControl.ItemsPanel>
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate DataType="models:DetailFact">
+                                <StackPanel Orientation="Horizontal">
+                                    <StackPanel Margin="0,0,16,0">
+                                        <TextBlock Classes="label"
+                                                   Text="{Binding Label}"
+                                                   Margin="0,0,0,3"/>
+                                        <TextBlock Classes="factValue"
+                                                   Classes.imdb="{Binding IsImdb}"
+                                                   Classes.server="{Binding IsServer}"
+                                                   Text="{Binding Value}"/>
+                                    </StackPanel>
+                                    <Rectangle Width="1"
+                                               Fill="{StaticResource EdgeBrush}"
+                                               Margin="0,0,16,0"
+                                               IsVisible="{Binding ShowSeparator}"/>
+                                </StackPanel>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+
+                    <TextBlock Grid.Row="2"
+                               x:Name="GenresText"
+                               Classes="mono"
+                               FontSize="11"
+                               LetterSpacing="1.1"
+                               Foreground="{StaticResource ProseBrush}"
+                               TextWrapping="Wrap"
+                               Margin="0,0,0,12"/>
+
+                    <Border Grid.Row="3"
+                            BorderBrush="{StaticResource EdgeBrush}"
+                            BorderThickness="0,0,0,1"
+                            Padding="0,0,0,12">
+                        <!-- Transparent so the wheel has something to land on:
+                             a long plot could not otherwise be scrolled except
+                             with the cursor exactly over its text. -->
+                        <ScrollViewer VerticalScrollBarVisibility="Auto"
+                                      Background="Transparent"
+                                      Padding="0,0,16,0">
+                            <TextBlock x:Name="OverviewText"
+                                       Classes="body"
+                                       MaxWidth="680"
+                                       HorizontalAlignment="Left"/>
+                        </ScrollViewer>
+                    </Border>
+
+                    <Grid Grid.Row="4"
+                          ColumnDefinitions="*,48,260"
+                          Margin="0,24,0,24">
+
+                        <StackPanel Grid.Column="0">
+                            <TextBlock Classes="label"
+                                       Text="CAST"
+                                       LetterSpacing="1.6"
+                                       Margin="0,0,0,5"/>
+                            <Rectangle Height="1"
+                                       Fill="{StaticResource EdgeBrush}"
+                                       Margin="0,0,0,8"/>
+                            <!-- A two-column list of name over character, not a
+                                 row of chips. A chip reading "Keir Dullea as
+                                 Dave Bowman" is a chip nobody can scan, and ten
+                                 of them in a horizontal scroller is a list you
+                                 have to drag to read. -->
+                            <ItemsControl x:Name="CastList">
+                                <ItemsControl.ItemsPanel>
+                                    <ItemsPanelTemplate>
+                                        <WrapPanel Orientation="Vertical" MaxHeight="120"/>
+                                    </ItemsPanelTemplate>
+                                </ItemsControl.ItemsPanel>
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate DataType="models:CreditEntry">
+                                        <StackPanel Width="230" Margin="0,0,24,4">
+                                            <TextBlock Classes="castName"
+                                                       Text="{Binding Primary}"
+                                                       TextTrimming="CharacterEllipsis"/>
+                                            <TextBlock Classes="castRole"
+                                                       Text="{Binding Secondary}"
+                                                       TextTrimming="CharacterEllipsis"
+                                                       IsVisible="{Binding HasSecondary}"/>
+                                        </StackPanel>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                            <TextBlock x:Name="NoCastText"
+                                       Classes="dim"
+                                       IsVisible="False"/>
+                        </StackPanel>
+
+                        <StackPanel Grid.Column="2">
+                            <TextBlock Classes="label"
+                                       Text="CREW"
+                                       LetterSpacing="1.6"
+                                       Margin="0,0,0,5"/>
+                            <Rectangle Height="1"
+                                       Fill="{StaticResource EdgeBrush}"
+                                       Margin="0,0,0,8"/>
+                            <ItemsControl x:Name="CrewList">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate DataType="models:CreditEntry">
+                                        <StackPanel Orientation="Horizontal" Margin="0,0,0,3">
+                                            <TextBlock Classes="label"
+                                                       Text="{Binding Secondary}"
+                                                       Width="62"
+                                                       IsVisible="{Binding HasSecondary}"/>
+                                            <TextBlock Classes="castName"
+                                                       Text="{Binding Primary}"
+                                                       TextWrapping="Wrap"/>
+                                        </StackPanel>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                            <TextBlock x:Name="NoCrewText"
+                                       Classes="dim"
+                                       IsVisible="False"/>
+                        </StackPanel>
+                    </Grid>
+                </Grid>
+            </Grid>
+        </DockPanel>
+    </Grid>
+</UserControl>

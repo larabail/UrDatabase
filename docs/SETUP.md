@@ -82,6 +82,10 @@ been configured. Editing it at all restores it to the top.
 use `%APPDATA%`, `%USERPROFILE%` or a leading `~`; a config file written on Windows still
 resolves on macOS.
 
+A key that is not one of these is reported rather than obeyed: the status line under the library
+names it and suggests what it was meant to be, and `startup.log` keeps the same line. It is still
+ignored, so an unrecognised key never stops the app starting.
+
 ## 4) API keys
 
 Metadata and ratings are optional. Without keys the app still runs, scans your folders, and

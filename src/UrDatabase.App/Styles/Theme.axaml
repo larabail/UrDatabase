@@ -1,0 +1,373 @@
+<!--
+    The Screening Room — shared control styles.
+
+    Chrome in this design is either a hairline or a piece of text. There are no
+    filled buttons except the one primary action per screen, no pills, and no
+    control that draws a box around itself just to prove it is a control.
+
+    Setters reach for tokens with DynamicResource rather than StaticResource:
+    these styles are parsed as part of the application, before any window has
+    built its own resource scope, and a StaticResource lookup at that moment is
+    a parse error rather than a fallback.
+-->
+<Styles xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <!-- ============================================================== -->
+    <!--  text                                                          -->
+    <!-- ============================================================== -->
+
+    <!-- The serif. Wordmark, genre headings, film titles, the empty state.
+         Weight stays at 400 everywhere and tracking does the work, because the
+         system serifs this resolves to have no usable semibold. -->
+    <Style Selector="TextBlock.display">
+        <Setter Property="FontFamily" Value="{DynamicResource DisplayFont}"/>
+        <Setter Property="FontWeight" Value="Normal"/>
+        <Setter Property="Foreground" Value="{DynamicResource BoneBrush}"/>
+    </Style>
+
+    <!-- Anything the machine produced rather than a person. -->
+    <Style Selector="TextBlock.mono">
+        <Setter Property="FontFamily" Value="{DynamicResource MonoFont}"/>
+        <Setter Property="Foreground" Value="{DynamicResource DimBrush}"/>
+    </Style>
+
+    <!-- A small mono label over a value: the source of a rating, the name of a
+         field. Tracked out and upper-cased so it reads as a label at 10px. -->
+    <Style Selector="TextBlock.label">
+        <Setter Property="FontFamily" Value="{DynamicResource MonoFont}"/>
+        <Setter Property="FontSize" Value="10"/>
+        <Setter Property="LetterSpacing" Value="1.4"/>
+        <Setter Property="Foreground" Value="{DynamicResource DimBrush}"/>
+    </Style>
+
+    <Style Selector="TextBlock.body">
+        <Setter Property="Foreground" Value="{DynamicResource ProseBrush}"/>
+        <Setter Property="FontSize" Value="13.5"/>
+        <Setter Property="LineHeight" Value="22"/>
+        <Setter Property="TextWrapping" Value="Wrap"/>
+    </Style>
+
+    <Style Selector="TextBlock.dim">
+        <Setter Property="Foreground" Value="{DynamicResource DimBrush}"/>
+        <Setter Property="FontSize" Value="12"/>
+        <Setter Property="TextWrapping" Value="Wrap"/>
+    </Style>
+
+    <!-- The attribution the TMDB and OMDb terms require. Small and quiet, but
+         permanently on screen and above the contrast floor at 6.0 — moving it
+         into an About box would be a licence breach, so it is styled to be
+         livable with rather than hidden. -->
+    <Style Selector="TextBlock.attribution">
+        <Setter Property="Foreground" Value="{DynamicResource DimBrush}"/>
+        <Setter Property="FontSize" Value="10.5"/>
+        <Setter Property="LineHeight" Value="15"/>
+        <Setter Property="TextWrapping" Value="Wrap"/>
+    </Style>
+
+    <!-- ============================================================== -->
+    <!--  buttons                                                       -->
+    <!-- ============================================================== -->
+
+    <!--
+        The hairline button. Transparent until pointed at, which is what keeps
+        three controls in the top bar from competing with forty posters.
+
+        Fluent paints Background and BorderBrush inside the template, so the
+        hover and pressed states have to be set on PART_ContentPresenter to win.
+        Setting them on the Button itself looks correct until the pointer
+        actually enters it.
+    -->
+    <Style Selector="Button.ghost">
+        <Setter Property="Foreground" Value="{DynamicResource ProseBrush}"/>
+        <Setter Property="FontFamily" Value="{DynamicResource UiFont}"/>
+        <Setter Property="FontSize" Value="12.5"/>
+        <Setter Property="Height" Value="30"/>
+        <Setter Property="Padding" Value="12,0"/>
+        <Setter Property="VerticalContentAlignment" Value="Center"/>
+        <Setter Property="HorizontalContentAlignment" Value="Center"/>
+        <Setter Property="Cursor" Value="Hand"/>
+        <!-- Buttons never wrap. In a narrower window "Link File…" breaks after
+             "Link" and the whole action bar grows a second line — the sort of
+             fault that only appears on the one machine nobody tested. -->
+        <Setter Property="TextBlock.TextWrapping" Value="NoWrap"/>
+    </Style>
+
+    <Style Selector="Button.ghost /template/ ContentPresenter#PART_ContentPresenter">
+        <Setter Property="Background" Value="Transparent"/>
+        <Setter Property="BorderBrush" Value="{DynamicResource EdgeBrush}"/>
+        <Setter Property="BorderThickness" Value="1"/>
+        <Setter Property="CornerRadius" Value="{DynamicResource RadiusMedium}"/>
+        <Setter Property="Transitions">
+            <Transitions>
+                <BrushTransition Property="Background" Duration="0:0:0.12"/>
+                <BrushTransition Property="BorderBrush" Duration="0:0:0.12"/>
+            </Transitions>
+        </Setter>
+    </Style>
+
+    <Style Selector="Button.ghost:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+        <Setter Property="Background" Value="{DynamicResource FeltBrush}"/>
+        <Setter Property="BorderBrush" Value="{DynamicResource DimBrush}"/>
+    </Style>
+    <Style Selector="Button.ghost:pointerover">
+        <Setter Property="Foreground" Value="{DynamicResource BoneBrush}"/>
+    </Style>
+
+    <Style Selector="Button.ghost:pressed /template/ ContentPresenter#PART_ContentPresenter">
+        <Setter Property="Background" Value="{DynamicResource WallBrush}"/>
+        <Setter Property="BorderBrush" Value="{DynamicResource DimBrush}"/>
+    </Style>
+
+    <!-- Keyboard focus is brass and is never merely a border change, because a
+         border change is invisible on a control that already has a border. -->
+    <Style Selector="Button.ghost:focus-visible /template/ ContentPresenter#PART_ContentPresenter">
+        <Setter Property="BorderBrush" Value="{DynamicResource BrassBrush}"/>
+        <Setter Property="BorderThickness" Value="2"/>
+    </Style>
+
+    <!-- The one filled button on a screen. Brass takes dark ink at 7.5:1;
+         bone on brass would be 2.2 and is never used. -->
+    <Style Selector="Button.primary">
+        <Setter Property="Foreground" Value="{DynamicResource RoomBrush}"/>
+        <Setter Property="FontFamily" Value="{DynamicResource UiFont}"/>
+        <Setter Property="FontSize" Value="13"/>
+        <Setter Property="FontWeight" Value="SemiBold"/>
+        <Setter Property="Height" Value="34"/>
+        <Setter Property="Padding" Value="24,0"/>
+        <Setter Property="VerticalContentAlignment" Value="Center"/>
+        <Setter Property="HorizontalContentAlignment" Value="Center"/>
+        <Setter Property="Cursor" Value="Hand"/>
+        <Setter Property="TextBlock.TextWrapping" Value="NoWrap"/>
+    </Style>
+
+    <Style Selector="Button.primary /template/ ContentPresenter#PART_ContentPresenter">
+        <Setter Property="Background" Value="{DynamicResource BrassBrush}"/>
+        <Setter Property="BorderBrush" Value="{DynamicResource BrassBrush}"/>
+        <Setter Property="BorderThickness" Value="1"/>
+        <Setter Property="CornerRadius" Value="{DynamicResource RadiusMedium}"/>
+        <Setter Property="Transitions">
+            <Transitions>
+                <BrushTransition Property="Background" Duration="0:0:0.12"/>
+            </Transitions>
+        </Setter>
+    </Style>
+
+    <Style Selector="Button.primary:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+        <Setter Property="Background" Value="{DynamicResource BrassHoverBrush}"/>
+        <Setter Property="BorderBrush" Value="{DynamicResource BrassHoverBrush}"/>
+    </Style>
+    <Style Selector="Button.primary:pointerover">
+        <Setter Property="Foreground" Value="{DynamicResource RoomBrush}"/>
+    </Style>
+
+    <Style Selector="Button.primary:focus-visible /template/ ContentPresenter#PART_ContentPresenter">
+        <Setter Property="BorderBrush" Value="{DynamicResource BoneBrush}"/>
+        <Setter Property="BorderThickness" Value="2"/>
+    </Style>
+
+    <!-- The button that reaches the server carries the server's colour on its
+         left edge, so the control and the films it fetches are marked the same
+         way. -->
+    <Style Selector="Button.away /template/ ContentPresenter#PART_ContentPresenter">
+        <Setter Property="BorderBrush" Value="{DynamicResource AwayBrush}"/>
+        <Setter Property="BorderThickness" Value="3,1,1,1"/>
+    </Style>
+
+    <!-- ============================================================== -->
+    <!--  fields                                                        -->
+    <!-- ============================================================== -->
+
+    <Style Selector="TextBox.field">
+        <Setter Property="Height" Value="30"/>
+        <Setter Property="MinHeight" Value="30"/>
+        <Setter Property="Padding" Value="10,0"/>
+        <Setter Property="VerticalContentAlignment" Value="Center"/>
+        <Setter Property="Foreground" Value="{DynamicResource BoneBrush}"/>
+        <Setter Property="CaretBrush" Value="{DynamicResource BrassBrush}"/>
+        <Setter Property="FontSize" Value="12.5"/>
+    </Style>
+
+    <Style Selector="TextBox.field /template/ Border#PART_BorderElement">
+        <Setter Property="Background" Value="{DynamicResource WallBrush}"/>
+        <Setter Property="BorderBrush" Value="{DynamicResource EdgeBrush}"/>
+        <Setter Property="BorderThickness" Value="1"/>
+        <Setter Property="CornerRadius" Value="{DynamicResource RadiusMedium}"/>
+    </Style>
+
+    <Style Selector="TextBox.field:pointerover /template/ Border#PART_BorderElement">
+        <Setter Property="Background" Value="{DynamicResource WallBrush}"/>
+        <Setter Property="BorderBrush" Value="{DynamicResource DimBrush}"/>
+    </Style>
+
+    <!-- Focus is the brass edge, matching every other focusable thing. -->
+    <Style Selector="TextBox.field:focus /template/ Border#PART_BorderElement">
+        <Setter Property="Background" Value="{DynamicResource FeltBrush}"/>
+        <Setter Property="BorderBrush" Value="{DynamicResource BrassBrush}"/>
+        <Setter Property="BorderThickness" Value="1"/>
+    </Style>
+
+    <Style Selector="TextBox.field /template/ TextBlock#PART_Watermark">
+        <Setter Property="Foreground" Value="{DynamicResource GhostBrush}"/>
+    </Style>
+
+    <!-- Machine-shaped input: paths, keys, server addresses, ports. -->
+    <Style Selector="TextBox.mono">
+        <Setter Property="FontFamily" Value="{DynamicResource MonoFont}"/>
+        <Setter Property="FontSize" Value="12"/>
+    </Style>
+
+    <!--
+        Selected text. The highlight behind it follows the accent, so it is brass
+        wherever a TextBox appears — the search field, and the seven fields on
+        Setup. Selecting on this app is deliberately unclassed: a field that
+        forgets its class should still not select in blue.
+
+        The ink on top of it has to change with it. Fluent leaves selected text in
+        the control's own foreground, which here is bone, and bone on brass is
+        2.2:1 — selecting a word would have hidden it. Dark ink on brass is 7.5:1,
+        the same trade Button.primary makes.
+    -->
+    <Style Selector="TextBox">
+        <Setter Property="SelectionForegroundBrush" Value="{DynamicResource RoomBrush}"/>
+    </Style>
+
+    <!-- ============================================================== -->
+    <!--  the genre row: typed labels, not pills                        -->
+    <!-- ============================================================== -->
+
+    <!--
+        Templated outright rather than restyled. A ToggleButton dressed down to
+        a piece of text with an underline fights its own theme at every state,
+        and the template is shorter than the pile of overrides that avoiding it
+        would need.
+    -->
+    <Style Selector="ToggleButton.genre">
+        <Setter Property="Cursor" Value="Hand"/>
+        <Setter Property="Background" Value="Transparent"/>
+        <Setter Property="Padding" Value="0"/>
+        <Setter Property="Template">
+            <ControlTemplate>
+                <Border Background="Transparent" Padding="0,0,0,3">
+                    <Grid RowDefinitions="Auto,2">
+                        <ContentPresenter Name="PART_ContentPresenter"
+                                          Grid.Row="0"
+                                          Content="{TemplateBinding Content}"
+                                          ContentTemplate="{TemplateBinding ContentTemplate}"/>
+                        <!-- The underline is a row of its own rather than a
+                             bottom border, so the label does not shift by two
+                             pixels when it becomes the selected genre. -->
+                        <Border Name="PART_Rule"
+                                Grid.Row="1"
+                                Background="Transparent"
+                                Margin="0,1,0,0"/>
+                    </Grid>
+                </Border>
+            </ControlTemplate>
+        </Setter>
+    </Style>
+
+    <!--
+        Fluent styles a ToggleButton by painting ContentPresenter#PART_ContentPresenter,
+        and this template contains one — ContentControl finds its presenter by that
+        name, so it cannot be called anything else. The result was that Fluent's
+        accent fill landed inside a template that never asked for a fill at all, and
+        a selected genre wore a solid block behind its label while the underline this
+        template draws for exactly that purpose sat underneath it.
+
+        So the presenter is pinned transparent in every state. The states are listed
+        out rather than left to the bare selector because Fluent's are written with
+        pseudo-classes, and a plain selector losing to a :checked one is the kind of
+        thing that reappears on a theme upgrade.
+    -->
+    <Style Selector="ToggleButton.genre /template/ ContentPresenter#PART_ContentPresenter,
+                     ToggleButton.genre:checked /template/ ContentPresenter#PART_ContentPresenter,
+                     ToggleButton.genre:pointerover /template/ ContentPresenter#PART_ContentPresenter,
+                     ToggleButton.genre:pressed /template/ ContentPresenter#PART_ContentPresenter,
+                     ToggleButton.genre:checked:pointerover /template/ ContentPresenter#PART_ContentPresenter,
+                     ToggleButton.genre:checked:pressed /template/ ContentPresenter#PART_ContentPresenter">
+        <Setter Property="Background" Value="Transparent"/>
+        <Setter Property="BorderBrush" Value="Transparent"/>
+        <Setter Property="BorderThickness" Value="0"/>
+    </Style>
+
+    <Style Selector="ToggleButton.genre:checked /template/ Border#PART_Rule">
+        <Setter Property="Background" Value="{DynamicResource BrassBrush}"/>
+    </Style>
+
+    <Style Selector="ToggleButton.genre:focus-visible /template/ Border#PART_Rule">
+        <Setter Property="Background" Value="{DynamicResource BrassBrush}"/>
+    </Style>
+
+    <!-- The genre's own name: dim until pointed at, bone once it is the genre
+         being shown. The count beside it stays dim in every state, because it
+         is a fact about the shelf rather than part of the control. -->
+    <Style Selector="ToggleButton.genre TextBlock.genreLabel">
+        <Setter Property="Foreground" Value="{DynamicResource DimBrush}"/>
+        <Setter Property="Transitions">
+            <Transitions>
+                <BrushTransition Property="Foreground" Duration="0:0:0.12"/>
+            </Transitions>
+        </Setter>
+    </Style>
+
+    <Style Selector="ToggleButton.genre:pointerover TextBlock.genreLabel">
+        <Setter Property="Foreground" Value="{DynamicResource ProseBrush}"/>
+    </Style>
+
+    <Style Selector="ToggleButton.genre:checked TextBlock.genreLabel">
+        <Setter Property="Foreground" Value="{DynamicResource BoneBrush}"/>
+    </Style>
+
+    <!-- The source row selects where a film is rather than what it is, so its
+         underline is the server colour when it is the server being selected —
+         the same colour as the badge on those films and the button that syncs
+         them. One colour, one question: will this play away from home. -->
+    <Style Selector="ToggleButton.source.server:checked /template/ Border#PART_Rule">
+        <Setter Property="Background" Value="{DynamicResource AwayBrush}"/>
+    </Style>
+
+    <!-- ============================================================== -->
+    <!--  the facts row on the details screen                           -->
+    <!-- ============================================================== -->
+
+    <!--
+        The two ratings are the whole problem of that screen. "IMDb 8.3" and
+        "Jellyfin 8.2" measure different populations, so they are never inked
+        alike: the IMDb number takes the accent, and Jellyfin's takes the same
+        colour as the badge on its films, which is used for nothing else.
+    -->
+    <Style Selector="TextBlock.factValue">
+        <Setter Property="FontFamily" Value="{DynamicResource MonoFont}"/>
+        <Setter Property="FontSize" Value="17"/>
+        <Setter Property="Foreground" Value="{DynamicResource BoneBrush}"/>
+    </Style>
+
+    <Style Selector="TextBlock.factValue.imdb">
+        <Setter Property="Foreground" Value="{DynamicResource BrassBrush}"/>
+    </Style>
+
+    <Style Selector="TextBlock.factValue.server">
+        <Setter Property="Foreground" Value="{DynamicResource AwayBrush}"/>
+        <Setter Property="FontSize" Value="13"/>
+    </Style>
+
+    <!-- ============================================================== -->
+    <!--  scrolling                                                     -->
+    <!-- ============================================================== -->
+
+    <!-- A shelf is dragged or wheeled, not scrolled with a visible bar; a bar
+         under every row would put twenty grey rectangles on the screen. The
+         vertical bar on the hall stays, because that one is the only clue to
+         how much library is left. -->
+    <Style Selector="ScrollViewer.shelf">
+        <Setter Property="HorizontalScrollBarVisibility" Value="Hidden"/>
+        <Setter Property="VerticalScrollBarVisibility" Value="Disabled"/>
+        <!-- A null Background is not hit-testable in Avalonia, so a shelf with
+             no fill takes no pointer events and cannot be wheeled or dragged
+             except where a card happens to be under the cursor. Transparent
+             paints nothing and still takes the pointer. -->
+        <Setter Property="Background" Value="Transparent"/>
+    </Style>
+
+</Styles>
