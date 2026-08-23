@@ -41,6 +41,7 @@ Avalonia replaces WPF. The differences that mattered during the port:
 | `Views/SetupWindow` | First-run setup, and the Settings screen thereafter: watch folders, a Jellyfin server, API keys. |
 | `Views/MainWindow` | Search, the genre row, the grouped/flat/single-genre poster panels, and the empty library. Hosts the details screen. |
 | `Views/MovieDetailsView` | Backdrop, poster, facts, cast and crew, play and link actions. A control, not a window: it fills `MainWindow` so a 16:9 backdrop gets the whole window instead of a third of a dialog. `ShowAsync` is awaited and completes when it is dismissed. |
+| `Views/SeriesDetailsView` | The same place in the window, for a television series: its facts and cast, a row of seasons, and the selected season's episodes. A sibling of the screen above rather than a mode of it — a film screen is a page about one video, and this is an index of them. |
 | `Views/MessageBoxWindow` | Simple modal dialog. |
 | `Controls/PosterCard` | A 2:3 poster plate that loads its own bitmap, tints itself from the title, and shows what the scanner parsed while it waits for artwork. |
 
@@ -53,10 +54,15 @@ Avalonia replaces WPF. The differences that mattered during the port:
 | `ConfigDiagnostics` | Names keys in the settings file that are not settings, and what each was probably meant to be. Reports them; never rejects the file. |
 | `FirstRun` | Whether this launch has never been configured, and so whether to offer setup. |
 | `JellyfinDiagnostics` | Names which of five connection failures happened, and what to try about it. |
+| `JellyfinUploader` / `ISftpTransport` | Copies a film onto the Jellyfin server's disk over SFTP, then asks the server to rescan. Everything above the socket talks to the interface, so the whole of it is tested against a fake filesystem; `SshNetSftpTransport` is the only implementation that opens a connection. |
+| `KnownHosts` | Reads OpenSSH's `known_hosts` and decides whether the key a server offered is the one it offered last time. Pure, so the file's awkward corners — the bracketed `[host]:port` form, hashed entries, `@revoked` — are testable without a server. |
 | `PlatformPaths` | Every filesystem location, resolved per platform. Expands `%APPDATA%` and `~`. |
 | `Database` | Opens the SQLite database, applies `Data/schema.sql` idempotently, and migrates an existing library. The schema script is all `CREATE ... IF NOT EXISTS`, so it cannot add a column to a table somebody already has — `Migrate` does that. |
 | `ScanService` | Walks watch folders and upserts the `files` table, skipping unreadable directories. A completed scan stamps `files.missing_since` on every row it did not find under a folder it actually walked. |
 | `MissingFilms` | What the library does about a film whose every file a scan could not find: leave it alone, keep it as a server film, or take it out of the library. Pure. |
+| `SeriesLoader` | Fetches one series' seasons and episodes when it is opened rather than during a sync, caches them, and falls back to the cache when the server cannot be reached. |
+| `SeriesGrouping` | Turns a server's seasons and episodes into the list the series screen shows: episodes filed under the right season even when the server numbered neither, and specials last. Pure. |
+| `PosterPlate` | What a card shows when it has no artwork — including when it was given a path and the artwork never arrived, which is every card in a library browsed away from its server. Pure. |
 | `TmdbService` | TMDB search, details and credits; builds image URLs. |
 | `OmdbService` | Fetches an IMDb rating for one IMDb id. |
 | `ImdbRatingService` | Caches ratings in SQLite so a rating is never fetched twice. |

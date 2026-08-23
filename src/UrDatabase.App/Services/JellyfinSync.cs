@@ -17,10 +17,20 @@ namespace UrDatabase.Services
     public static class JellyfinSync
     {
         /// <summary>
-        /// Refreshes the cache and returns how many films the server reported.
+        /// Refreshes the cache and returns what the server reported.
         /// </summary>
+        /// <remarks>
+        /// Films and television in one pass, and written in one transaction, so the two halves of
+        /// the cache can never describe two different minutes. Seasons and episodes are not
+        /// fetched here on purpose: a library of two hundred shows is thousands of episodes, and a
+        /// sync that walked them all would take minutes to fill in a screen almost nobody has
+        /// open. They are asked for when a series is opened — see <see cref="SeriesLoader"/>.
+        ///
+        /// The Continue watching row rides along in the same transaction, for the same reason: the
+        /// row and the library it points into must never describe two different minutes either.
+        /// </remarks>
         /// <exception cref="JellyfinException">The server could not be reached or refused.</exception>
-        public static async Task<int> RefreshAsync(
+        public static async Task<JellyfinSyncResult> RefreshAsync(
             JellyfinClient client,
             SqliteConnection conn,
             IProgress<string>? progress = null,
@@ -29,7 +39,7 @@ namespace UrDatabase.Services
             if (client is null) throw new ArgumentNullException(nameof(client));
             if (conn is null) throw new ArgumentNullException(nameof(conn));
 
-            var movies = await client.GetMoviesAsync(progress, ct);
+            var contents = await client.GetLibraryAsync(progress, ct);
 
             ct.ThrowIfCancellationRequested();
 
@@ -45,11 +55,11 @@ namespace UrDatabase.Services
             // the one most likely to collide with a scan — but holding a write lane across a
             // network call would block every other writer for as long as the server takes to
             // answer, which on a bad connection is fifteen seconds of a locked catalogue.
-            return await DatabaseWriteLane.RunAsync(
+            await DatabaseWriteLane.RunAsync(
                 conn,
                 _ =>
                 {
-                    var count = JellyfinCache.Replace(conn, movies);
+                    var count = JellyfinCache.Replace(conn, contents);
 
                     // Null means the row could not be read, which is not the same as it being
                     // empty: the previous one is left exactly where it was. An empty list that the
@@ -59,6 +69,8 @@ namespace UrDatabase.Services
                     return Task.FromResult(count);
                 },
                 ct);
+
+            return new JellyfinSyncResult(contents.Movies.Count, contents.Series.Count);
         }
 
         /// <summary>

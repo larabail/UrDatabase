@@ -20,22 +20,36 @@ namespace UrDatabase.Services
         /// <param name="remoteCount">Films from a Jellyfin server, cached or freshly synced.</param>
         /// <param name="hasLocalDatabase">False when no catalogue file exists at all.</param>
         /// <param name="databasePath">Where one would be, named only when there is none.</param>
+        /// <param name="remoteSeriesCount">
+        /// Television series from the same server. Counted separately because they are not films
+        /// and saying so is the whole job of this line — a server holding four hundred episodes of
+        /// television and no films used to be summarised as "0 films", which is true of films and
+        /// false about the library.
+        /// </param>
         public static string Describe(
             int localCount,
             int localWithPosters,
             int remoteCount,
             bool hasLocalDatabase,
-            string databasePath)
+            string databasePath,
+            int remoteSeriesCount = 0)
         {
-            if (!hasLocalDatabase && remoteCount == 0)
+            if (!hasLocalDatabase && remoteCount == 0 && remoteSeriesCount == 0)
                 return $"No library yet. Expected a database at {databasePath}.";
 
             var posters = $"Posters present: {localWithPosters.ToString(CultureInfo.InvariantCulture)}/{localCount.ToString(CultureInfo.InvariantCulture)}";
 
-            if (remoteCount == 0) return posters;
+            if (remoteCount == 0 && remoteSeriesCount == 0) return posters;
 
-            var films = remoteCount == 1 ? "film" : "films";
-            return $"{posters} · {remoteCount.ToString(CultureInfo.InvariantCulture)} {films} on the Jellyfin server";
+            var parts = new System.Collections.Generic.List<string>();
+
+            if (remoteCount > 0)
+                parts.Add($"{remoteCount.ToString(CultureInfo.InvariantCulture)} {(remoteCount == 1 ? "film" : "films")}");
+
+            if (remoteSeriesCount > 0)
+                parts.Add($"{remoteSeriesCount.ToString(CultureInfo.InvariantCulture)} series");
+
+            return $"{posters} · {string.Join(" and ", parts)} on the Jellyfin server";
         }
     }
 }

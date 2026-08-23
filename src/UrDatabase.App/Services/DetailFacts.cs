@@ -92,5 +92,75 @@ namespace UrDatabase.Services
 
             return facts;
         }
+
+        /// <summary>
+        /// The same row for a television series.
+        /// </summary>
+        /// <remarks>
+        /// An overload rather than a branch inside the one above, because what a series has to say
+        /// about itself genuinely differs: it has no runtime — that number belongs to an episode —
+        /// and it has two counts a film cannot have. It is always on the server, so unlike a film
+        /// it has no "where" to establish; saying so on every programme would be a column of
+        /// identical text.
+        /// </remarks>
+        public static IReadOnlyList<DetailFact> For(SeriesDetailsVm? vm)
+        {
+            var facts = new List<DetailFact>();
+            if (vm is null) return facts;
+
+            if (vm.Year is int year)
+            {
+                facts.Add(new DetailFact
+                {
+                    Label = "FROM",
+                    Value = year.ToString(CultureInfo.InvariantCulture)
+                });
+            }
+
+            // Both counts are printed only when the server supplied them. A programme headed
+            // "0 SEASONS" beside a list of its seasons is the app arguing with itself.
+            if (vm.SeasonCount is int seasons && seasons > 0)
+            {
+                facts.Add(new DetailFact
+                {
+                    Label = "SEASONS",
+                    Value = seasons.ToString(CultureInfo.InvariantCulture)
+                });
+            }
+
+            if (vm.EpisodeCount is int episodes && episodes > 0)
+            {
+                facts.Add(new DetailFact
+                {
+                    Label = "EPISODES",
+                    Value = episodes.ToString(CultureInfo.InvariantCulture)
+                });
+            }
+
+            if (vm.ImdbRating is double imdb)
+            {
+                facts.Add(new DetailFact
+                {
+                    Label = "IMDB",
+                    Value = imdb.ToString("0.0", CultureInfo.InvariantCulture),
+                    Kind = DetailFactKind.Imdb
+                });
+            }
+
+            if (vm.CommunityRating is double community)
+            {
+                facts.Add(new DetailFact
+                {
+                    Label = "JELLYFIN",
+                    Value = community.ToString("0.0", CultureInfo.InvariantCulture),
+                    Kind = DetailFactKind.Server
+                });
+            }
+
+            for (var i = 0; i < facts.Count; i++)
+                facts[i].ShowSeparator = i < facts.Count - 1;
+
+            return facts;
+        }
     }
 }

@@ -38,6 +38,13 @@ namespace UrDatabase.Services
         public JellyfinSettings Jellyfin { get; set; } = new();
 
         /// <summary>
+        /// How to put a film onto that server's disk, which Jellyfin's own API cannot do. Left
+        /// blank there is no upload button anywhere in the app, which is how every install that
+        /// predates this setting behaves.
+        /// </summary>
+        public JellyfinSftpSettings JellyfinSftp { get; set; } = new();
+
+        /// <summary>
         /// Set by the setup screen once the user has answered it, and the only thing that stops
         /// it being offered again. It is written even when the user skips, because a person who
         /// declined to answer a question has answered it.
@@ -328,6 +335,9 @@ namespace UrDatabase.Services
 
             config.Jellyfin ??= new JellyfinSettings();
             config.Jellyfin.Normalize();
+
+            config.JellyfinSftp ??= new JellyfinSftpSettings();
+            config.JellyfinSftp.Normalize();
 
             config.IsResolved = true;
         }

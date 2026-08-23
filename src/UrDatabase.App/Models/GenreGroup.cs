@@ -19,8 +19,16 @@ namespace UrDatabase.Models
 
         public int Count { get; set; }
 
-        /// <summary>The count as it is printed beside the heading: <c>"12 FILMS"</c>.</summary>
-        public string CountLabel => Services.LibraryGrouping.CountLabel(Count);
+        /// <summary>
+        /// The count as it is printed beside the heading: <c>"12 FILMS"</c>, or
+        /// <c>"12 FILMS · 3 SERIES"</c> on a shelf that holds both.
+        /// </summary>
+        /// <remarks>
+        /// Read off the items rather than off <see cref="Count"/>, because the number alone cannot
+        /// say what it counted, and a shelf of eight films and four programmes headed "12 FILMS"
+        /// is exactly the way mixing the two on one shelf becomes dishonest.
+        /// </remarks>
+        public string CountLabel => Services.LibraryGrouping.CountLabel(Items);
 
         public ObservableCollection<UiMovie> Items { get; set; } = new();
     }

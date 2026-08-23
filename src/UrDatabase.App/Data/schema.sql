@@ -119,6 +119,74 @@ CREATE TABLE IF NOT EXISTS jellyfin_movies (
 
 CREATE INDEX IF NOT EXISTS ix_jellyfin_movies_title ON jellyfin_movies(title);
 
+-- The television half of the same server, on exactly the same terms: metadata only, replaced
+-- wholesale by each sync, and nothing here is a file.
+--
+-- A separate table rather than a `kind` column on jellyfin_movies. The two disagree about what
+-- is worth storing — a series has no runtime of its own and has two counts a film cannot have —
+-- and a shared table would have carried a column that is always null for one of them and a
+-- discriminator every single query would then have to remember to filter on.
+CREATE TABLE IF NOT EXISTS jellyfin_series (
+    item_id          TEXT PRIMARY KEY,
+    title            TEXT NOT NULL,
+    -- The year the show started. Jellyfin reports one year, not a range.
+    year             INTEGER,
+    genres           TEXT,
+    overview         TEXT,
+    community_rating REAL,
+    imdb_id          TEXT,
+    tmdb_id          TEXT,
+    cast_list        TEXT,
+    crew_list        TEXT,
+    image_tag        TEXT,
+    -- How many seasons and episodes the server counted, or NULL when it did not say. Never
+    -- defaulted to zero: "no seasons" and "nobody counted" are different facts, and only one of
+    -- them belongs on a card.
+    season_count     INTEGER,
+    episode_count    INTEGER,
+    synced_at        TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS ix_jellyfin_series_title ON jellyfin_series(title);
+
+-- Seasons and episodes, written when a series is opened rather than by a sync. A library of two
+-- hundred shows is thousands of episodes, and pulling them all during a sync would make the sync
+-- unusable to fill in a screen almost nobody has open.
+--
+-- Cached anyway, once fetched, for the same reason the films are: a laptop away from the house
+-- can still read what it has already seen. Each series' rows are replaced wholesale when it is
+-- reopened, so an episode deleted upstairs stops being offered.
+CREATE TABLE IF NOT EXISTS jellyfin_seasons (
+    item_id       TEXT PRIMARY KEY,
+    series_id     TEXT NOT NULL,
+    name          TEXT NOT NULL,
+    -- NULL is ordinary here: some servers number specials 0, and some send no number at all.
+    season_number INTEGER,
+    image_tag     TEXT,
+    episode_count INTEGER,
+    synced_at     TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS ix_jellyfin_seasons_series ON jellyfin_seasons(series_id);
+
+CREATE TABLE IF NOT EXISTS jellyfin_episodes (
+    item_id          TEXT PRIMARY KEY,
+    series_id        TEXT NOT NULL,
+    -- Which season folder it is in. Empty when the server did not say, which is why episodes are
+    -- grouped by season_number rather than by this.
+    season_id        TEXT,
+    name             TEXT NOT NULL,
+    season_number    INTEGER,
+    episode_number   INTEGER,
+    overview         TEXT,
+    runtime_minutes  INTEGER,
+    community_rating REAL,
+    image_tag        TEXT,
+    synced_at        TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS ix_jellyfin_episodes_series ON jellyfin_episodes(series_id);
+
 -- Where the server says the viewer had got to in each part-watched film, as of the last
 -- successful sync. What the Continue watching row is built from.
 --

@@ -7,9 +7,10 @@ plot, runtime, cast and crew from [TMDB](https://www.themoviedb.org/) as you
 look at them, with the IMDb rating fetched from
 [OMDb](https://www.omdbapi.com/). If your films live on a
 [Jellyfin](https://jellyfin.org/) server instead of on this disk, point it at
-that too and browse and play them from the same window. Nothing of yours leaves
-the machine: the only things sent out are the title being looked up, its IMDb id
-for the rating, and whatever your own server is asked for.
+that too and browse and play them from the same window — television included,
+season by season. Nothing of yours leaves the machine: the only things sent out
+are the title being looked up, its IMDb id for the rating, and whatever your own
+server is asked for.
 
 It runs on Windows and macOS from one codebase, built with
 [Avalonia UI 11](https://avaloniaui.net/) on .NET 8.
@@ -40,6 +41,16 @@ It runs on Windows and macOS from one codebase, built with
   controls, so the counts deliberately do not add up to the total. The row is
   hidden entirely when everything comes from one place, or when every film is in
   both (`Services/LibraryFilter`).
+- **Filter by what it is.** When the library holds both films and television, a
+  second row beside that one offers **Everything**, **Films** and **Television**.
+  Series share the genre shelves with films, because Jellyfin gives a programme
+  real genres and it belongs in Drama rather than in a wing of its own — but
+  every series card carries a **Series** badge and its season count where a film
+  shows its year, so the two are mixed but never silently. Nothing is both, so
+  unlike the row above these counts do add up. It is hidden entirely on a library
+  of films only, and on one of television only: a permanent "Television 0" beside
+  "Films 412" is a control whose only possible use is to empty the window
+  (`Services/LibraryFilter`).
 - **It looks like a screening room.** Warm near-black rather than blue-black,
   because a blue surround makes every poster look faintly green; one brass
   accent, spent only on the focus ring, the primary action and progress that is
@@ -90,6 +101,16 @@ It runs on Windows and macOS from one codebase, built with
   inked alike or labelled merely "rating". Absent either key, that fact is
   simply absent and nothing else changes (`Services/TmdbService`,
   `Services/DetailFacts`, `Views/MovieDetailsView`).
+- **Television, season by season.** A Jellyfin server's `tvshows` libraries are
+  synced alongside its films, and opening a series shows its seasons as a row of
+  chips with that season's episodes listed under them — number, title, one line
+  of plot and a runtime. Clicking an episode streams it, through the same player
+  a film uses. Seasons and episodes are fetched when a series is opened rather
+  than during a sync, because two hundred programmes is several thousand
+  episodes and a sync that walked them all would be a sync nobody waits for; once
+  fetched they are cached, so a programme you have already opened still lists its
+  episodes with the server switched off (`Services/SeriesLoader`,
+  `Services/SeriesGrouping`, `Views/SeriesDetailsView`).
 - **Posters fill themselves in.** Any film in the catalogue with no poster is
   looked up in the background, four at a time, through one shared connection to
   TMDB, and the result is written back to the database so the next launch is
@@ -190,6 +211,16 @@ It runs on Windows and macOS from one codebase, built with
   A transfer can be stopped and resumes where it left off, and a half-finished
   film is never mistaken for a whole one
   (`Services/JellyfinDownloader`, `Services/JellyfinDownload`).
+- **Send a film the other way.** A film on this computer has an **Upload to
+  Jellyfin** button that copies it onto the server for everyone else in the
+  house, into the `Title (Year)/Title (Year).ext` layout Jellyfin's own libraries
+  use, and then asks the server to rescan so it actually appears. Optional and
+  off until configured, because Jellyfin's API has no endpoint that accepts a
+  video file at all — the transfer is SFTP, and needs an account on the machine
+  running the server. Bytes arrive under a name no scan reads as a film and take
+  the film's real name only once the last one is there, so a cancelled or dropped
+  upload leaves the server exactly as it was
+  (`Services/JellyfinUploader`, `Services/JellyfinUpload`).
 
 [Known gaps](#known-gaps) is worth reading before you judge any of the above;
 several are thinner than they sound.
@@ -205,12 +236,14 @@ several are thinner than they sound.
 | CommunityToolkit.Mvvm | Observable models behind the views |
 | TMDB API v3 | Search, posters, plot, runtime, genres, cast and crew |
 | OMDb API | The IMDb rating, and nothing else |
-| Jellyfin API | Optional: a remote movie library, its artwork, its stream, and the Continue watching row in both directions |
+| Jellyfin API | Optional: a remote library, its artwork, its stream, and the Continue watching row in both directions |
+| SSH.NET | Optional: the SFTP transfer that puts a film on the server's disk, which Jellyfin's API cannot do |
 
 There is no server of ours, no account and no telemetry, and the app touches no
 Firebase: the only outbound traffic is to `api.themoviedb.org`,
 `image.tmdb.org`, `www.omdbapi.com` and, if you configure one, your own Jellyfin
-server. It works fully offline, with metadata and ratings simply absent.
+server — over HTTP for the library, and over SSH to its machine if you configure
+uploading. It works fully offline, with metadata and ratings simply absent.
 
 ## Getting started
 
@@ -303,6 +336,7 @@ cp src/UrDatabase.App/appsettings.example.json src/UrDatabase.App/appsettings.js
 | `TmdbImageSize` | TMDB's poster width — `w185`, `w342`, `w500`, `original` |
 | `SetupCompleted` | Set by the setup screen once it has been answered, and the only thing that stops it being offered again |
 | `Jellyfin` | An optional server to browse. Empty, as it ships, means the feature is off entirely — see [A Jellyfin server](#a-jellyfin-server) |
+| `JellyfinSftp` | An optional SFTP account on the machine running that server, which is what makes **Upload to Jellyfin** appear. Empty, as it ships, means no upload button anywhere — see [Sending a film the other way](#sending-a-film-the-other-way) |
 
 Paths may contain environment variables and are expanded on load, so
 `%APPDATA%\UrDatabase\movies.db` works on Windows. The application data
@@ -397,10 +431,10 @@ it ships — and the app makes no request, opens no extra panel and behaves
 exactly as it did before this existed.
 
 The easiest way to fill it in is the setup screen, which has a **Test
-connection** button: it signs in, finds the movie library and reports how many
-films are in it, so a wrong address, a wrong password and a server with no movie
-library are told apart before anything is saved. The same four fields can be
-written by hand instead:
+connection** button: it signs in, finds the film and television libraries and
+reports how much is in each, so a wrong address, a wrong password and a server
+this app can read nothing from are told apart before anything is saved. The same
+four fields can be written by hand instead:
 
 ```jsonc
 "Jellyfin": {
@@ -417,7 +451,7 @@ written by hand instead:
 | `ServerUrl` | Where the server is. A host with no scheme is assumed to be `http://`, since a server on a home network usually has no certificate |
 | `Username`, `Password` | The preferred sign-in. Exchanged for a session token at startup |
 | `ApiKey` | A Jellyfin API key, used when no username and password are given |
-| `LibraryName` | Which movie library to read, when a server has more than one |
+| `LibraryName` | Which **movie** library to read, when a server has more than one. It does not narrow television: a server routinely files that under several libraries — "TV Shows" and "Anime" is the usual pair — and all of them are read |
 
 Any of the four can come from the environment instead, which is the way to keep
 a password out of a file:
@@ -476,10 +510,58 @@ TMDB key at all**, and no title is ever run through the filename parser. Because
 Jellyfin supplies real genres, its films group properly instead of piling into
 the **Uncategorised** bucket a scanned library falls into.
 
+A server with only films and a server with only television both work. Neither is
+an error: only a server this app can read nothing from at all is, and it says
+that rather than complaining about whichever half is missing.
+
 The rating badge on a server film says `Jellyfin` when it is Jellyfin's own
 community rating, and `IMDb` only for the IMDb rating from OMDb. They are
 different numbers from different populations and are never shown under each
 other's name.
+
+#### Television
+
+Series from the server's `tvshows` libraries are synced beside its films and
+appear on the same genre shelves, each carrying a **Series** badge and the number
+of seasons behind it where a film shows its year. The **Television** control in
+the row above the genres takes them out of the library in one click, and that
+row appears only when there is actually both kinds to choose between.
+
+Opening a series is not opening a film. It shows the programme — its plot, its
+cast, its ratings, how many seasons and episodes the server counted — and under
+that a row of seasons, with the selected season's episodes listed below:
+`S01E02`, the title, one line of plot and the runtime. Specials are listed last
+rather than first, which is where the number alone would put them, because
+somebody opening a programme wants episode one.
+
+Clicking an episode plays it, through the same VLC or IINA that plays a film and
+by the same `static=true` stream URL. That URL carries a token, so it is built at
+the moment Play is pressed rather than being held on every row in the list.
+
+Seasons and episodes are **not** fetched by a sync. A library of two hundred
+programmes is several thousand episodes, and pulling them all would turn a sync
+that takes seconds into one that takes minutes, to fill in a screen almost nobody
+has open. They are fetched when a series is opened, written to
+`jellyfin_seasons` and `jellyfin_episodes`, and read from there first the next
+time — so a programme opens instantly on the second visit and still lists its
+episodes on a laptop nowhere near the server. The screen says which of the two it
+is showing you.
+
+A sync leaves those cached episodes alone, because it never asked the server
+about them: clearing them would empty a programme's episode list on the strength
+of a request that was not made. Reopening the series is what replaces them, and
+an episode deleted upstairs stops being offered then.
+
+Nothing folds a programme onto a film. *Fargo*, *Hannibal*, *Westworld* and
+*Shōgun* are each a film and a programme, and the title matching that folds a
+server film onto its local copy would make them one card — keeping the film and
+losing the programme from the library entirely. Nor does a series carry a TMDB
+id: Jellyfin reports a TMDB *television* id for one, which is a different
+catalogue with its own numbering, and matching a film to it by number would be
+wrong in a way nobody would spot.
+
+There is no download for an episode, and no local television. See
+[Known gaps](#known-gaps).
 
 #### A film that is in both places
 
@@ -678,15 +760,152 @@ The film then becomes exactly the case above: one card, badged **Server** and
 local file rather than the stream, and the film keeps working with the server
 switched off — which is the whole point of having fetched it.
 
+#### Sending a film the other way
+
+**Upload to Jellyfin**, on a film that lives on this computer, copies it onto the
+server so everything else in the house can watch it.
+
+It is a separate setting from the rest of Jellyfin, and off until you fill it in,
+because it needs something Jellyfin cannot provide. **Jellyfin's API has no
+endpoint that accepts a video file** — the only uploads it takes are images and
+subtitles. A film becomes a film by already being on the server's filesystem when
+the library is scanned. So this copies the file there over SFTP and then asks
+Jellyfin to look again:
+
+```jsonc
+"JellyfinSftp": {
+  "Host": "media-box",              // or "uploader@media-box:2222"
+  "Port": 2222,                     // 0 or absent means 22
+  "Username": "uploader",
+  "PrivateKeyPath": "~/.ssh/id_ed25519",
+  "PrivateKeyPassphrase": "",       // only if the key has one
+  "MoviesPath": ""                  // blank means "movies"
+}
+```
+
+| Key | What it does |
+| --- | --- |
+| `Host` | The machine running Jellyfin, not Jellyfin itself. A port or an account written into it — `uploader@media-box:2222` — is read out rather than discarded, because that is how the address gets copied out of an `ssh` command |
+| `Port` | The SSH port. An account set up only for uploads is routinely put somewhere other than 22 |
+| `Username` | The SSH account, which is rarely the same name as the Jellyfin user |
+| `PrivateKeyPath` | The **private** half of an SSH key pair — the file without the `.pub`. Expanded like every other configured path |
+| `PrivateKeyPassphrase` | Optional, for a key that has one |
+| `MoviesPath` | Where films go, **as that account sees it** |
+
+All six can come from the environment instead, which is the way to keep any of it
+out of a file:
+
+```bash
+export URDATABASE_JELLYFIN_SFTP_HOST=media-box
+export URDATABASE_JELLYFIN_SFTP_PORT=2222
+export URDATABASE_JELLYFIN_SFTP_USERNAME=uploader
+export URDATABASE_JELLYFIN_SFTP_KEY=~/.ssh/id_ed25519
+export URDATABASE_JELLYFIN_SFTP_PASSPHRASE=...
+export URDATABASE_JELLYFIN_SFTP_MOVIES_PATH=movies
+```
+
+`URDATABASE_JELLYFIN_SFTP_KEY` holds a **path**, never key material. A private
+key belongs in a file with permissions of its own, not in an environment that
+every child process inherits.
+
+**`MoviesPath` is the setting most likely to be wrong, and the reason is worth
+knowing.** An upload account is usually chrooted, so it lands in a directory that
+*is* its whole filesystem: the server's own `/tank/movies` is reached as
+`movies`, and writing `/tank/movies` would create a `tank` directory inside the
+chroot and put the film somewhere Jellyfin will never look. Blank means `movies`,
+which is the usual answer. A path starting with `/` is kept absolute, for an
+account that is not chrooted.
+
+A password is not an option. The account worth pointing this at is one that can
+do nothing but write films — no shell, chrooted, its own key — and such accounts
+are set up key-only. Offering a password field would invite a server password
+into a configuration file for no gain.
+
+**The server's host key is checked against `~/.ssh/known_hosts`, and an upload is
+refused if it does not match.** SSH.NET trusts whatever key it is handed unless
+told otherwise, which would be quietly weaker than the `sftp` command this
+replaces — that one checks the same file and hard-fails on a mismatch. The
+private key is never at risk either way, since public key authentication does not
+disclose it; what would be at risk is the film, handed to whatever answered on
+that address.
+
+Three outcomes, and they read differently because they mean different things:
+
+| What the file says | What happens |
+| --- | --- |
+| The host is listed and this is one of its keys | The upload proceeds |
+| The host is listed with a **different** key | Refused, naming both explanations — a rebuilt server, or something else answering — with the `ssh-keygen -R` line for the harmless one |
+| The host is **not listed at all** | Refused, with the two ways to add it |
+
+**An unknown host is refused rather than trusted on first use.** There is no
+prompt and nothing is remembered: a key nothing has vouched for does not get a
+film. If you have ever reached the server with `sftp` or `ssh` the entry is
+already there and nothing needs doing. If you have not:
+
+```bash
+ssh-keyscan -p 2222 media-box >> ~/.ssh/known_hosts
+# or simply connect once and accept the key
+sftp -P 2222 uploader@media-box
+```
+
+The refusal names the file, the fingerprint the server offered — in the same
+`SHA256:…` form `ssh-keygen -l` prints, so it can be compared against the server
+directly — and the command that fixes it. Both fingerprints go to `jellyfin.log`
+too, since a mismatch cannot be diagnosed without them and neither is a secret.
+
+What arrives is `movies/Title (Year)/Title (Year).ext`: one directory per film,
+named from the catalogue rather than from the local filename, which is the layout
+Jellyfin's own libraries use and what lets it identify what it finds. A film
+linked to `arrival.2016.1080p.WEB-DL.x265-GROUP.mkv` therefore arrives as
+`movies/Arrival (2016)/Arrival (2016).mkv`. Only the extension comes from the
+local file. Remote paths are built with forward slashes on every platform — using
+`Path.Combine` would produce a single file on the server literally named
+`Arrival (2016)\Arrival (2016).mkv`, which no scan would ever match.
+
+The safety properties mirror the download's. Bytes arrive under a name ending in
+`.uploading`, which is not a video extension and which a library scan running
+mid-transfer walks straight past; the file takes the film's real name only once
+the last byte is there and its size matches. A transfer that is cancelled, drops,
+or arrives short takes its partial file with it, so the server is left as it was
+rather than holding a forty-minute copy of a two-hour film. A film the server
+already has costs no transfer at all, matched without regard to its extension so
+that a library holding `Arrival (2016).mp4` is not sent an `.mkv` to sit beside
+it.
+
+Afterwards the app asks Jellyfin to rescan (`POST /Library/Refresh`), because a
+file that has appeared on the disk is not yet a film the server knows about.
+**That scan is asynchronous**, so the film appears shortly rather than instantly,
+and the app says so rather than implying otherwise. Scanning is also an
+administrative action: an ordinary Jellyfin account cannot start one, and a
+server that refuses is not a failed upload — the film is on its disk and appears
+at the next scheduled scan. The wording covers all three outcomes.
+
+SSH is spoken by [SSH.NET](https://github.com/sshnet/SSH.NET), bundled rather
+than shelled out to. The system `sftp` binary would mean parsing another
+program's output for progress, no way to cancel mid-file short of a signal, and a
+dependency Windows has only shipped since 2018. Everything above the socket talks
+to `ISftpTransport`, so the whole of it is tested against a fake filesystem and
+no test in this repository opens a connection (`Services/JellyfinUpload`,
+`Services/JellyfinUploader`, `Services/SshNetSftpTransport`,
+`Services/SftpFailure`, `Services/KnownHosts`).
+
 ### The catalogue
 
 Point `DatabasePath` anywhere and the app creates what it needs on first
 launch. `src/UrDatabase.App/Data/schema.sql` is the full schema — the `movies`
 and `files` tables, the `scans` table each scan records itself in, the
-`jellyfin_movies` cache, the `jellyfin_resume` positions behind the Continue
-watching row, the `movies_fts` FTS5 index and the triggers that keep
-it current — and every statement is `IF NOT EXISTS`, so it runs against a
-library you already have without touching your data.
+`jellyfin_movies` cache and its television counterparts `jellyfin_series`,
+`jellyfin_seasons` and `jellyfin_episodes`, the `jellyfin_resume` positions
+behind the Continue watching row, the `movies_fts` FTS5 index and the
+triggers that keep it current — and every statement is `IF NOT EXISTS`, so it
+runs against a library you already have without touching your data.
+
+Television is cached in three tables of its own rather than as a `kind` column on
+`jellyfin_movies`. A series has no runtime and has two counts a film cannot have,
+so a shared table would carry a column that is always null for one of them and a
+discriminator every query would have to remember to filter on. The seasons and
+episodes tables are the only ones in the app written outside a sync: they are
+filled when a programme is opened, one series at a time.
 
 `IF NOT EXISTS` covers a whole new table and does nothing at all for a new
 column on a table that already exists, so `Database.Migrate` runs straight after
@@ -893,7 +1112,10 @@ Stated plainly, so nobody has to find out by using it:
   server library's genres, but they remain ungrouped. Films from a Jellyfin
   server are unaffected: the server supplies their genres, and a scanned film
   the server also has borrows them for as long as the two are shown as one card
-  — the catalogue itself is not written to.
+  — the catalogue itself is not written to. A **programme** the server never
+  identified has no genres either and shares that bucket, deliberately: both mean
+  "nobody has said what this is", and the **Television** filter separates them
+  again in a click.
 - **A film in both places is matched by identity, then by name.** The server's
   copy and this computer's are shown as one card when they agree on a TMDB id,
   and otherwise when their titles agree once case, accents and punctuation are
@@ -904,24 +1126,40 @@ Stated plainly, so nobody has to find out by using it:
   is what fixes that by hand. Nor does such a card offer the stream as a
   fallback: it plays the file on this disk, and says the server has it rather
   than doing anything with that.
-- **Films only.** The filename parser has no concept of television, so
-  `Show.S01E02` becomes an oddly titled film rather than an episode. A mixed
-  library will look wrong rather than broken. A Jellyfin server's series
-  libraries are skipped outright for the same reason.
+- **Television is a Jellyfin feature only.** A server's series, seasons and
+  episodes are browsable and playable, but nothing on this disk is. The filename
+  parser has no concept of television, so `Show.S01E02.mkv` in a watch folder is
+  still catalogued as an oddly titled film, and a local mixed library will look
+  wrong rather than broken. Teaching the parser to recognise an episode is not
+  enough on its own — a scanned episode needs a series to belong to, and the
+  catalogue has no table for one — so it was left out rather than half done.
+- **An episode cannot be downloaded.** **Download** keeps a copy of a server
+  *film* so it plays with the server switched off; there is no equivalent for an
+  episode, or for a season. Episodes stream or they do not play.
+- **A programme is described only by the server.** There is no TMDB enrichment
+  for television and no **Wrong film?** for a series, so a programme the server
+  has not identified stays undescribed. TMDB's television catalogue is a separate
+  one from its films, and using the film endpoints for it would be worse than
+  using nothing.
 - **Playback position is shared with the server through VLC, and only VLC.** A
   film streamed through VLC now reports where it got to, so it resumes and is
-  marked watched on every device — but three cases still do not. **IINA reports
+  marked watched on every device — but four cases still do not. **IINA reports
   nothing**: it is mpv underneath and exposes a JSON IPC socket rather than an
-  HTTP interface, which is a different protocol over a different transport, so
-  an IINA user plays films exactly as before and contributes nothing to Continue
+  HTTP interface, which is a different protocol over a different transport, so an
+  IINA user plays films exactly as before and contributes nothing to Continue
   watching. **A downloaded film reports nothing**, because it is opened with the
-  system's default opener, which is not necessarily VLC and may well be away
-  from the server anyway — the position is simply not recorded, rather than
-  queued for later. And **the last few seconds are lost**: the position is read
-  every two seconds and a player that goes away is noticed after six, so the
+  system's default opener, which is not necessarily VLC and may well be away from
+  the server anyway — the position is simply not recorded, rather than queued for
+  later delivery. **Television is neither reported nor shown in the row**: the
+  resume list is asked for films only, so an episode you are part way through
+  appears in Continue watching everywhere except here, and playing one here
+  records nothing. Putting episodes in the row would mean a card for something
+  that is neither a programme nor a film but one episode of one, which is a card
+  this app does not have. And **the last few seconds are lost**: the position is
+  read every two seconds and a player that goes away is noticed after six, so the
   stop is recorded up to about six seconds behind where the film actually
-  reached. That is deliberate — a stop at nearly the right place beats no stop
-  at all — but it means a film you quit at the very end may not tip over into
+  reached. That is deliberate — a stop at nearly the right place beats no stop at
+  all — but it means a film you quit at the very end may not tip over into
   "watched".
 - **One Jellyfin server.** There is no way to add a second. The setup screen
   configures the first one and tests it, but a household with two servers has to
@@ -975,17 +1213,38 @@ Stated plainly, so nobody has to find out by using it:
   the same suspicion as any other file it hands you.
 - **Settings covers where your films are, and nothing else.** The screen asks
   about watch folders, a Jellyfin server and the two API keys. `DatabasePath`,
-  `PosterCacheDir`, `DownloadFolder`, `DownloadPosters` and `TmdbImageSize` are
-  still file-only; they survive a save untouched, but nothing in the app edits
-  them.
+  `PosterCacheDir`, `DownloadFolder`, `JellyfinSftp`, `DownloadPosters` and
+  `TmdbImageSize` are still file-only; they survive a save untouched, but nothing
+  in the app edits them.
 - **Downloads are one at a time, from the details screen.** There is no queue,
   no way to fetch a whole genre, and leaving the film stops the transfer —
   though what it got is kept and starting again resumes from there. Nothing in
   the app deletes a download either: that is Finder's job.
-- **Nothing is uploaded.** Films go from the server to this machine and never
-  the other way. Jellyfin's API has no endpoint that accepts a video, so putting
-  a film on a server means copying it to the server's own disk by some other
-  means and rescanning the library there.
+- **Uploads are one at a time, do not resume, and need an SFTP account.** The  same shape as downloads — one film, from the details screen, stopped by leaving
+  it — with two differences. There is no resume: a stopped or dropped upload
+  removes what it had transferred and starting again sends the film from the
+  beginning, because verifying which of the bytes already on the server are the
+  right ones would mean reading them all back, and a guess there produces a
+  corrupt film rather than a slow one. And it needs something most Jellyfin
+  installs do not come with: an SSH account on the machine running the server,
+  key-only, with write access to the library. Jellyfin's own API takes images and
+  subtitles and no other kind of file, so there is no route that needs only a
+  Jellyfin login. Series are not supported either, here or anywhere else in the
+  app.
+- **An uploaded film does not appear in the app until the next Jellyfin sync.**
+  The server is asked to rescan and does so on its own schedule; this app then
+  has to be told, by **Sync Jellyfin**, before the film shows as being in both
+  places. Pressing it immediately is usually too early. Nothing polls, and
+  nothing deletes a film from the server either — that is the server's job.
+- **Host key checking reads `~/.ssh/known_hosts` and understands most of it, not
+  all of it.** Plain and hashed entries, the bracketed `[host]:port` form,
+  comma-separated patterns with wildcards and negations, several keys per host
+  and `@revoked` are all handled. `@cert-authority` is not: validating one means
+  validating a certificate, so a host vouched for only by a CA is refused with a
+  message saying exactly that rather than being reported as unknown. There is no
+  setting for the file's location and no way to trust a key from inside the app —
+  a host with no entry is refused, and adding one is a step you take with
+  `ssh-keyscan` or by connecting once with `sftp`.
 - **Windows builds are not signed.** SmartScreen warns on first run and there
   is no way around it short of a Windows code signing certificate. The macOS
   side of this closed in 0.2.1; the Windows side has not.

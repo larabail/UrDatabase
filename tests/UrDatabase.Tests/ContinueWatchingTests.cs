@@ -679,7 +679,7 @@ namespace UrDatabase.Tests
             using var client = new JellyfinClient(Settings(), handler: handler);
             using var conn = Database.Open(_dbPath);
 
-            Assert.Equal(1, await JellyfinSync.RefreshAsync(client, conn));
+            Assert.Equal(1, (await JellyfinSync.RefreshAsync(client, conn)).Films);
 
             Assert.Single(JellyfinCache.Load(conn));
             Assert.Equal(new[] { "item1" }, JellyfinResumeCache.Load(conn).Select(i => i.ItemId).ToArray());
@@ -736,7 +736,7 @@ namespace UrDatabase.Tests
             using var client = new JellyfinClient(Settings(), handler: handler);
             using var conn = Database.Open(_dbPath);
 
-            Assert.Equal(1, await JellyfinSync.RefreshAsync(client, conn));
+            Assert.Equal(1, (await JellyfinSync.RefreshAsync(client, conn)).Films);
 
             Assert.Single(JellyfinCache.Load(conn));
             Assert.Equal(new[] { "old-item" }, JellyfinResumeCache.Load(conn).Select(i => i.ItemId).ToArray());

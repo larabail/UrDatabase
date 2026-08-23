@@ -34,7 +34,15 @@ namespace UrDatabase.Views
         /// </summary>
         public ObservableCollection<SourceChip> SourceChips { get; } = new();
 
+        /// <summary>
+        /// What is being looked at: everything, the films, or the television. Empty unless the
+        /// library actually holds both, on exactly the same terms as the row above — an install
+        /// with no television, which is every install this app had until now, grows nothing.
+        /// </summary>
+        public ObservableCollection<KindChip> KindChips { get; } = new();
+
         private LibrarySource _source = LibrarySource.Everywhere;
+        private LibraryKind _kind = LibraryKind.Everything;
         public string? SelectedGenre { get; set; } = LibraryGrouping.AllGenres;
         public ObservableCollection<GenreGroup> VisibleGroups { get; } = new();
         public ObservableCollection<UiMovie> FlatResults { get; } = new();
@@ -43,11 +51,13 @@ namespace UrDatabase.Views
 
         /// <summary>
         /// The library as the window is currently showing it: everything, or only what is on this
-        /// machine, or only what is on the server. Genre counts, the shelves and the search
-        /// results are all built from this rather than from <c>_allMovies</c>, so a filtered view
-        /// is filtered consistently rather than in the one place somebody remembered.
+        /// machine, or only what is on the server — and, crossed with that, only the films or only
+        /// the television. Genre counts, the shelves and the search results are all built from
+        /// this rather than from <c>_allMovies</c>, so a filtered view is filtered consistently
+        /// rather than in the one place somebody remembered.
         /// </summary>
-        private IReadOnlyList<UiMovie> VisibleMovies => LibraryFilter.Apply(_allMovies, _source);
+        private IReadOnlyList<UiMovie> VisibleMovies =>
+            LibraryFilter.Apply(LibraryFilter.Apply(_allMovies, _source), _kind);
 
         /// <summary>The server's whole library as cards, unfiltered. Empty when Jellyfin is off.</summary>
         private List<UiMovie> _remoteMovies = new();
@@ -58,6 +68,15 @@ namespace UrDatabase.Views
         /// needs no request at all — which is what makes it work with no TMDB key configured.
         /// </summary>
         private Dictionary<string, JellyfinMovie> _remoteById = new(StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>The server's television, keyed the same way and for the same reason.</summary>
+        private Dictionary<string, JellyfinSeries> _remoteSeriesById = new(StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>
+        /// Where a series' seasons and episodes come from. Rebuilt with the configuration, because
+        /// both the catalogue and the server can move. Null until <see cref="ApplyConfig"/> runs.
+        /// </summary>
+        private SeriesLoader? _series;
 
         /// <summary>
         /// What the last sync said the viewer is part way through. Read from the cache with the
@@ -233,6 +252,11 @@ namespace UrDatabase.Views
                 new MovieRepository(_dbPath),
                 onQueryFailed: ex => AppLog.Write("startup.log", $"LoadMovies failed: {ex}"));
 
+            _series = new SeriesLoader(
+                _dbPath,
+                _jellyfin,
+                onFailure: message => Dispatcher.UIThread.Post(() => SetStatus(message)));
+
             if (JellyfinButton is not null) JellyfinButton.IsVisible = _jellyfin is not null;
         }
 
@@ -245,6 +269,7 @@ namespace UrDatabase.Views
         {
             _remoteMovies = new List<UiMovie>();
             _remoteById = new Dictionary<string, JellyfinMovie>(StringComparer.OrdinalIgnoreCase);
+            _remoteSeriesById = new Dictionary<string, JellyfinSeries>(StringComparer.OrdinalIgnoreCase);
             _resume = Array.Empty<JellyfinResumeItem>();
 
             if (_jellyfin is null) return;
@@ -253,11 +278,16 @@ namespace UrDatabase.Views
             {
                 using var conn = Database.Open(_dbPath);
                 var cached = JellyfinCache.Load(conn);
+                var series = JellyfinCache.LoadSeries(conn);
 
                 foreach (var movie in cached) _remoteById[movie.ItemId] = movie;
+                foreach (var show in series) _remoteSeriesById[show.ItemId] = show;
 
+                // One list, films and television together, because the library below is one wall.
+                // What keeps them distinguishable is the card, not the collection.
                 _remoteMovies = JellyfinLibrary
                     .ToUiMovies(cached, m => _jellyfin.BuildPrimaryImageUrl(m.ItemId, m.ImageTag))
+                    .Concat(JellyfinLibrary.ToUiSeriesList(series, s => _jellyfin.BuildPrimaryImageUrl(s.ItemId, s.ImageTag)))
                     .ToList();
 
                 _resume = JellyfinResumeCache.Load(conn);
@@ -335,7 +365,7 @@ namespace UrDatabase.Views
                 FlatResults.Add(m);
             }
 
-            SearchCountText.Text = LibraryGrouping.CountLabel(FlatResults.Count);
+            SearchCountText.Text = LibraryGrouping.CountLabel(FlatResults);
 
             // A search that found nothing has to say so. Silence reads as a broken search box.
             NoResultsText.IsVisible = FlatResults.Count == 0;
@@ -420,9 +450,10 @@ namespace UrDatabase.Views
 
             public event EventHandler? CanExecuteChanged { add { } remove { } }
 
-            // Never while a film is open: the search box is behind the details screen, and
-            // focusing something the user cannot see is worse than doing nothing.
-            public bool CanExecute(object? parameter) => !_window.DetailsView.IsShowing;
+            // Never while a film or a programme is open: the search box is behind the details
+            // screen, and focusing something the user cannot see is worse than doing nothing.
+            public bool CanExecute(object? parameter) =>
+                !_window.DetailsView.IsShowing && !_window.SeriesView.IsShowing;
 
             public void Execute(object? parameter)
             {
@@ -446,9 +477,8 @@ namespace UrDatabase.Views
 
             // The search field says how much it is about to search, which is the cheapest
             // possible answer to "did the scan actually find anything".
-            var total = GenreChips.Count > 0 ? GenreChips[0].Count : 0;
             if (SearchBox is not null)
-                SearchBox.Watermark = total == 1 ? "Search 1 film" : $"Search {total:N0} films";
+                SearchBox.Watermark = LibraryGrouping.SearchWatermark(VisibleMovies);
         }
 
         /// <summary>
@@ -461,7 +491,13 @@ namespace UrDatabase.Views
         /// </remarks>
         private void BuildSources()
         {
-            var available = LibraryFilter.Available(_allMovies);
+            BuildKinds();
+
+            // Narrowed by kind, and deliberately: with television selected, the source row has to
+            // count the television. It said "412 Offline" beside an empty page otherwise, because
+            // every offline film is a film and none of them is a programme.
+            var scope = LibraryFilter.Apply(_allMovies, _kind);
+            var available = LibraryFilter.Available(scope);
 
             SourceChips.Clear();
             foreach (var source in available)
@@ -469,7 +505,7 @@ namespace UrDatabase.Views
                 SourceChips.Add(new SourceChip
                 {
                     Source = source,
-                    Count = LibraryFilter.Count(_allMovies, source),
+                    Count = LibraryFilter.Count(scope, source),
                     IsSelected = source == _source
                 });
             }
@@ -478,31 +514,80 @@ namespace UrDatabase.Views
             if (SourceChipsList is not null) SourceChipsList.IsVisible = show;
             if (SourceDivider is not null) SourceDivider.IsVisible = show;
 
+            // Whichever of the two rows comes first carries the window's left margin, and either
+            // of them can be absent. Left in XAML it would be a fixed indent that is wrong in one
+            // of the three arrangements.
+            if (KindChipsList is not null)
+                KindChipsList.Margin = new Avalonia.Thickness(show ? 0 : 24, 0, 0, 0);
+
             // A source that has just stopped existing — the last local film removed, or a server
             // switched off — must not leave the window filtered to nothing with no way back.
             if (!show && _source != LibrarySource.Everywhere) _source = LibrarySource.Everywhere;
         }
 
         /// <summary>
-        /// Narrows the library to one place, or widens it again. Genre stays as it was: the two
-        /// are different questions and answering one should not silently discard the other.
+        /// Rebuilds the kind row, and hides it unless the library actually holds both films and
+        /// television.
         /// </summary>
-        private void SourceChip_Click(object? sender, RoutedEventArgs e)
+        /// <remarks>
+        /// Counted across the whole library rather than the filtered view, for the same reason the
+        /// source row is: selecting "Television" must not leave "Films" reading zero, or the way
+        /// back out would be a control that looks like it does nothing.
+        /// </remarks>
+        private void BuildKinds()
         {
-            if (sender is not ToggleButton tb || tb.DataContext is not SourceChip chip) return;
+            var available = LibraryFilter.AvailableKinds(_allMovies);
 
-            _source = chip.Source;
+            KindChips.Clear();
+            foreach (var kind in available)
+            {
+                KindChips.Add(new KindChip
+                {
+                    Kind = kind,
+                    Count = LibraryFilter.Count(_allMovies, kind),
+                    IsSelected = kind == _kind
+                });
+            }
 
-            // A search and a source are two filters over one library, not two views of it, so
-            // narrowing to one place has to narrow the results already in front of you. This used
-            // to fall through to the shelves below and discard whatever had been typed.
+            var show = KindChips.Count > 0;
+            if (KindChipsList is not null) KindChipsList.IsVisible = show;
+            if (KindDivider is not null) KindDivider.IsVisible = show;
+
+            // The last programme leaving the library — a server switched off, or one that has
+            // stopped reporting television — must not leave the window filtered to nothing.
+            if (!show && _kind != LibraryKind.Everything) _kind = LibraryKind.Everything;
+        }
+
+        /// <summary>
+        /// Narrows the library to films or to television, or widens it again. Genre and source
+        /// stay as they were: three different questions, and answering one should not silently
+        /// discard the others.
+        /// </summary>
+        private void KindChip_Click(object? sender, RoutedEventArgs e)
+        {
+            if (sender is not ToggleButton tb || tb.DataContext is not KindChip chip) return;
+
+            _kind = chip.Kind;
+
+            ReapplyFilters();
+        }
+
+        /// <summary>
+        /// Redraws the library for a filter that has just changed, without asking the database
+        /// again: narrowing what you are looking at does not change what the query matched.
+        /// </summary>
+        private void ReapplyFilters()
+        {
+            // A search and a filter are two narrowings of one library, not two views of it, so
+            // narrowing has to narrow the results already in front of you rather than throwing
+            // away whatever has been typed.
             if (_view.IsSearch)
             {
                 ShowSearchResults();
                 return;
             }
 
-            // A genre that only the other source had would otherwise stay selected and show an
+            // A genre that only the other half had would otherwise stay selected and show an
             // empty page.
             var stillThere = LibraryGrouping.BuildGenreChips(VisibleMovies)
                                             .Any(c => string.Equals(c.Name, SelectedGenre, StringComparison.OrdinalIgnoreCase));
@@ -517,14 +602,36 @@ namespace UrDatabase.Views
             }
             else
             {
-                SingleGenreItems.Clear();
-                foreach (var m in LibraryGrouping.ItemsForGenre(VisibleMovies, SelectedGenre))
-                    SingleGenreItems.Add(m);
-
-                SingleGenreCountText.Text = LibraryGrouping.CountLabel(SingleGenreItems.Count);
-                WarmPosters(SingleGenreItems);
-                ShowSingleGenre();
+                ShowGenre(SelectedGenre);
             }
+        }
+
+        /// <summary>
+        /// Narrows the library to one place, or widens it again. Genre stays as it was: the two
+        /// are different questions and answering one should not silently discard the other.
+        /// </summary>
+        private void SourceChip_Click(object? sender, RoutedEventArgs e)
+        {
+            if (sender is not ToggleButton tb || tb.DataContext is not SourceChip chip) return;
+
+            _source = chip.Source;
+
+            ReapplyFilters();
+        }
+
+        /// <summary>
+        /// The vertical flow for a single genre. One method rather than the same six lines in each
+        /// of the three places that used to select a genre.
+        /// </summary>
+        private void ShowGenre(string? genre)
+        {
+            SingleGenreItems.Clear();
+            foreach (var m in LibraryGrouping.ItemsForGenre(VisibleMovies, genre))
+                SingleGenreItems.Add(m);
+
+            SingleGenreCountText.Text = LibraryGrouping.CountLabel(SingleGenreItems);
+            WarmPosters(SingleGenreItems);
+            ShowSingleGenre();
         }
 
         private void WarmPosters(IEnumerable<UiMovie> movies)
@@ -733,7 +840,7 @@ namespace UrDatabase.Views
                 LoadRemoteCache();
                 await _searchLoop.RefreshAsync();
 
-                SetStatus($"Jellyfin: {count} {(count == 1 ? "film" : "films")} from the server.");
+                SetStatus(count.Describe());
             }
             catch (OperationCanceledException)
             {
@@ -750,7 +857,7 @@ namespace UrDatabase.Views
 
                 var cached = _remoteMovies.Count;
                 SetStatus(cached > 0
-                    ? $"{ex.Message} Showing the {cached} films from the last sync."
+                    ? $"{ex.Message} Showing the {cached} {(cached == 1 ? "item" : "items")} from the last sync."
                     : ex.Message);
 
                 if (announceFailure)
@@ -843,14 +950,7 @@ namespace UrDatabase.Views
                 }
                 else
                 {
-                    SingleGenreItems.Clear();
-                    foreach (var m in LibraryGrouping.ItemsForGenre(VisibleMovies, SelectedGenre))
-                        SingleGenreItems.Add(m);
-
-                    SingleGenreCountText.Text = LibraryGrouping.CountLabel(SingleGenreItems.Count);
-
-                    WarmPosters(SingleGenreItems);
-                    ShowSingleGenre();
+                    ShowGenre(SelectedGenre);
                 }
             }
         }
@@ -941,6 +1041,14 @@ namespace UrDatabase.Views
         {
             if (!e.GetCurrentPoint(sender as Control).Properties.IsLeftButtonPressed) return;
             if ((sender as Control)?.DataContext is not UiMovie m) return;
+
+            // A series is not a film with episodes attached: it opens a different screen, and it
+            // is never sent to TMDB, which would answer about a film of the same name.
+            if (m.IsSeries)
+            {
+                await ShowSeriesDetailsAsync(m);
+                return;
+            }
 
             if (m.IsRemote)
             {
@@ -1121,6 +1229,63 @@ namespace UrDatabase.Views
                 vm.ImdbRating = await LoadImdbRatingAsync(vm.ImdbId, vm.LocalId > 0 ? vm.LocalId : null, cts.Token);
 
                 await ShowDetailsAsync(vm);
+            }
+            catch (OperationCanceledException)
+            {
+                // The window is closing.
+            }
+            catch (Exception ex)
+            {
+                await MessageBoxWindow.ShowAsync(this, "UrDatabase", $"Could not load details:{Environment.NewLine}{ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Opens a television series. Everything on the page comes from the cache, so it opens
+        /// instantly and opens at all with the server down; the episodes are asked for afterwards
+        /// and the screen says which of the two it is showing.
+        /// </summary>
+        private async Task ShowSeriesDetailsAsync(UiMovie m)
+        {
+            if (string.IsNullOrWhiteSpace(m.RemoteId)) return;
+            if (!_remoteSeriesById.TryGetValue(m.RemoteId, out var show)) return;
+
+            try
+            {
+                var vm = new SeriesDetailsVm
+                {
+                    RemoteId = show.ItemId,
+                    Title = show.Title,
+                    Year = show.Year,
+                    Genres = show.Genres,
+                    Overview = show.Overview,
+                    CommunityRating = show.CommunityRating,
+                    ImdbId = show.ImdbId,
+                    PosterPath = m.DisplayPosterPath,
+                    BackdropUrl = _jellyfin?.BuildBackdropUrl(show.ItemId),
+                    SeasonCount = show.SeasonCount,
+                    EpisodeCount = show.EpisodeCount,
+                    TopCast = show.Cast.ToList(),
+                    KeyCrew = show.Crew.ToList()
+                };
+
+                using var cts = CancellationTokenSource.CreateLinkedTokenSource(_cts.Token);
+                cts.CancelAfter(TimeSpan.FromSeconds(12));
+
+                // The IMDb id came from Jellyfin's own metadata, so this is a real IMDb rating and
+                // not the community number beside it. No local movie row owns it.
+                vm.ImdbRating = await LoadImdbRatingAsync(vm.ImdbId, null, cts.Token);
+
+                LibraryRoot.IsVisible = false;
+
+                try
+                {
+                    await SeriesView.ShowAsync(vm, _series, _jellyfin);
+                }
+                finally
+                {
+                    LibraryRoot.IsVisible = true;
+                }
             }
             catch (OperationCanceledException)
             {

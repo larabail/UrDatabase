@@ -142,12 +142,17 @@ namespace UrDatabase.Services
         /// means a property added to <see cref="AppConfig"/> for internal use cannot silently
         /// start appearing in the user's configuration.
         ///
+        /// The cost of that shape is that a setting left out of it is not merely absent from a new
+        /// file — it is deleted from an existing one the next time anybody presses Save. Every
+        /// setting a user can put in <c>appsettings.json</c> has to appear here.
+        ///
         /// A path that merely matches this platform's default is written as blank, so the file
         /// stays as portable as it was and a moved application data directory still resolves.
         /// </summary>
         internal static string Serialize(AppConfig config)
         {
             var jellyfin = config.Jellyfin ?? new JellyfinSettings();
+            var sftp = config.JellyfinSftp ?? new JellyfinSftpSettings();
 
             var document = new
             {
@@ -156,6 +161,7 @@ namespace UrDatabase.Services
                 TmdbApiKey = config.TmdbApiKey ?? "",
                 OmdbApiKey = config.OmdbApiKey ?? "",
                 PosterCacheDir = BlankWhenDefault(config.PosterCacheDir, PlatformPaths.DefaultPosterCacheDir),
+                DownloadFolder = BlankWhenDefault(config.DownloadFolder, PlatformPaths.DefaultDownloadFolder),
                 config.DownloadPosters,
                 TmdbImageSize = config.TmdbImageSize ?? "",
                 config.SetupCompleted,
@@ -166,6 +172,15 @@ namespace UrDatabase.Services
                     jellyfin.Password,
                     jellyfin.ApiKey,
                     jellyfin.LibraryName
+                },
+                JellyfinSftp = new
+                {
+                    sftp.Host,
+                    sftp.Port,
+                    sftp.Username,
+                    sftp.PrivateKeyPath,
+                    sftp.PrivateKeyPassphrase,
+                    sftp.MoviesPath
                 }
             };
 

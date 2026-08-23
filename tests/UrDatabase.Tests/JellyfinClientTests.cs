@@ -282,7 +282,7 @@ namespace UrDatabase.Tests
             Assert.Equal(1, handler.CallCount);
         }
 
-        // ---------- finding the library ----------
+        // ---------- finding the libraries ----------
 
         [Fact]
         public async Task The_movie_library_is_found_by_collection_type_not_by_id()
@@ -294,14 +294,33 @@ namespace UrDatabase.Tests
             using var client = new JellyfinClient(KeySettings(), deviceId: "device-1", handler: handler);
             await client.ConnectAsync();
 
-            var libraryId = await client.ResolveMovieLibraryIdAsync("22222222222222222222222222222222");
+            var library = await client.FindMovieLibraryAsync("22222222222222222222222222222222");
 
-            Assert.Equal("aaaa0000aaaa0000aaaa0000aaaa0000", libraryId);
+            Assert.Equal("aaaa0000aaaa0000aaaa0000aaaa0000", library?.Id);
         }
 
         [Fact]
-        public async Task A_server_with_no_movie_library_says_so()
+        public async Task The_television_libraries_are_found_the_same_way()
         {
+            var handler = FakeHttpMessageHandler.Routed(
+                ("/Views", HttpStatusCode.OK, ViewsJson),
+                ("/Users", HttpStatusCode.OK, UsersJson));
+
+            using var client = new JellyfinClient(KeySettings(), deviceId: "device-1", handler: handler);
+            await client.ConnectAsync();
+
+            var libraries = await client.FindSeriesLibrariesAsync("22222222222222222222222222222222");
+
+            var library = Assert.Single(libraries);
+            Assert.Equal("bbbb0000bbbb0000bbbb0000bbbb0000", library.Id);
+        }
+
+        [Fact]
+        public async Task A_server_with_no_movie_library_is_not_an_error()
+        {
+            // It used to be, and that was the whole bug: the throw happened before anything else
+            // ran, so a server full of television reported that it had no films and showed
+            // nothing at all.
             const string onlySeries = """
                 { "Items": [ { "Id": "b", "Name": "Series", "CollectionType": "tvshows" } ] }
                 """;
@@ -313,10 +332,66 @@ namespace UrDatabase.Tests
             using var client = new JellyfinClient(KeySettings(), deviceId: "device-1", handler: handler);
             await client.ConnectAsync();
 
-            var error = await Assert.ThrowsAsync<JellyfinException>(
-                () => client.ResolveMovieLibraryIdAsync("22222222222222222222222222222222"));
+            Assert.Null(await client.FindMovieLibraryAsync("22222222222222222222222222222222"));
+            Assert.Single(await client.FindSeriesLibrariesAsync("22222222222222222222222222222222"));
+        }
 
-            Assert.Contains("no movie library", error.Message);
+        [Fact]
+        public async Task A_server_with_no_television_library_is_not_an_error_either()
+        {
+            const string onlyFilms = """
+                { "Items": [ { "Id": "a", "Name": "Films", "CollectionType": "movies" } ] }
+                """;
+
+            var handler = FakeHttpMessageHandler.Routed(
+                ("/Views", HttpStatusCode.OK, onlyFilms),
+                ("/Users", HttpStatusCode.OK, UsersJson));
+
+            using var client = new JellyfinClient(KeySettings(), deviceId: "device-1", handler: handler);
+            await client.ConnectAsync();
+
+            Assert.Empty(await client.FindSeriesLibrariesAsync("22222222222222222222222222222222"));
+            Assert.NotNull(await client.FindMovieLibraryAsync("22222222222222222222222222222222"));
+        }
+
+        [Fact]
+        public async Task A_server_with_neither_kind_of_library_says_so()
+        {
+            const string musicOnly = """
+                { "Items": [ { "Id": "m", "Name": "Music", "CollectionType": "music" } ] }
+                """;
+
+            var handler = FakeHttpMessageHandler.Routed(
+                ("/Views", HttpStatusCode.OK, musicOnly),
+                ("/Users", HttpStatusCode.OK, UsersJson));
+
+            using var client = new JellyfinClient(KeySettings(), deviceId: "device-1", handler: handler);
+
+            var error = await Assert.ThrowsAsync<JellyfinException>(() => client.GetLibraryAsync());
+
+            Assert.Contains("no film or television library", error.Message);
+        }
+
+        [Fact]
+        public async Task A_named_library_that_is_not_there_is_still_an_error()
+        {
+            // Unlike a missing movie library, a missing *named* one is a mistake somebody can
+            // correct, and reading a different library instead would be the wrong films with no
+            // explanation.
+            var settings = KeySettings();
+            settings.LibraryName = "Documentaries";
+
+            var handler = FakeHttpMessageHandler.Routed(
+                ("/Views", HttpStatusCode.OK, ViewsJson),
+                ("/Users", HttpStatusCode.OK, UsersJson));
+
+            using var client = new JellyfinClient(settings, deviceId: "device-1", handler: handler);
+            await client.ConnectAsync();
+
+            var error = await Assert.ThrowsAsync<JellyfinException>(
+                () => client.FindMovieLibraryAsync("22222222222222222222222222222222"));
+
+            Assert.Contains("Documentaries", error.Message);
         }
 
         [Fact]
@@ -341,17 +416,27 @@ namespace UrDatabase.Tests
             using var client = new JellyfinClient(settings, deviceId: "device-1", handler: handler);
             await client.ConnectAsync();
 
-            Assert.Equal("second", await client.ResolveMovieLibraryIdAsync("22222222222222222222222222222222"));
+            var library = await client.FindMovieLibraryAsync("22222222222222222222222222222222");
+
+            Assert.Equal("second", library?.Id);
         }
 
         // ---------- the setup screen's test button ----------
+
+        private const string FilmsOnlyViewsJson = """
+            { "Items": [ { "Id": "aaaa0000aaaa0000aaaa0000aaaa0000", "Name": "Films", "CollectionType": "movies" } ] }
+            """;
+
+        private const string SeriesOnlyViewsJson = """
+            { "Items": [ { "Id": "bbbb0000bbbb0000bbbb0000bbbb0000", "Name": "Shows", "CollectionType": "tvshows" } ] }
+            """;
 
         [Fact]
         public async Task Testing_a_connection_reports_the_library_it_found_and_how_big_it_is()
         {
             var handler = FakeHttpMessageHandler.Routed(
                 ("/Items", HttpStatusCode.OK, """{ "Items": [], "TotalRecordCount": 42 }"""),
-                ("/Views", HttpStatusCode.OK, ViewsJson),
+                ("/Views", HttpStatusCode.OK, FilmsOnlyViewsJson),
                 ("/Users", HttpStatusCode.OK, UsersJson));
 
             using var client = new JellyfinClient(KeySettings(), deviceId: "device-1", handler: handler);
@@ -369,12 +454,40 @@ namespace UrDatabase.Tests
         {
             var handler = FakeHttpMessageHandler.Routed(
                 ("/Items", HttpStatusCode.OK, """{ "Items": [], "TotalRecordCount": 1 }"""),
-                ("/Views", HttpStatusCode.OK, ViewsJson),
+                ("/Views", HttpStatusCode.OK, FilmsOnlyViewsJson),
                 ("/Users", HttpStatusCode.OK, UsersJson));
 
             using var client = new JellyfinClient(KeySettings(), deviceId: "device-1", handler: handler);
 
             Assert.Equal("Connected. 1 film in \"Films\".", await client.DescribeLibraryAsync());
+        }
+
+        [Fact]
+        public async Task Testing_a_connection_names_both_libraries_when_a_server_has_both()
+        {
+            var handler = FakeHttpMessageHandler.Routed(
+                ("/Items", HttpStatusCode.OK, """{ "Items": [], "TotalRecordCount": 7 }"""),
+                ("/Views", HttpStatusCode.OK, ViewsJson),
+                ("/Users", HttpStatusCode.OK, UsersJson));
+
+            using var client = new JellyfinClient(KeySettings(), deviceId: "device-1", handler: handler);
+
+            Assert.Equal("Connected. 7 films in \"Films\", 7 series in \"Series\".", await client.DescribeLibraryAsync());
+        }
+
+        [Fact]
+        public async Task Testing_a_connection_to_a_television_only_server_says_what_is_there()
+        {
+            // The case the whole change is for. This used to report that the server had no movie
+            // library, which is true and useless: the server has four hundred programmes on it.
+            var handler = FakeHttpMessageHandler.Routed(
+                ("/Items", HttpStatusCode.OK, """{ "Items": [], "TotalRecordCount": 12 }"""),
+                ("/Views", HttpStatusCode.OK, SeriesOnlyViewsJson),
+                ("/Users", HttpStatusCode.OK, UsersJson));
+
+            using var client = new JellyfinClient(KeySettings(), deviceId: "device-1", handler: handler);
+
+            Assert.Equal("Connected. 12 series in \"Shows\".", await client.DescribeLibraryAsync());
         }
 
         [Fact]
@@ -541,6 +654,50 @@ namespace UrDatabase.Tests
             var error = await Assert.ThrowsAsync<JellyfinException>(() => client.ConnectAsync());
 
             Assert.DoesNotContain("not-a-real-key", error.Message);
+        }
+
+        /// <summary>
+        /// The second half of an upload. A film that has appeared on the server's disk is not a
+        /// film Jellyfin knows about until something has scanned for it, and this is the only way
+        /// to ask.
+        /// </summary>
+        [Fact]
+        public async Task A_library_rescan_is_a_post_carrying_the_token_in_a_header()
+        {
+            var handler = new FakeHttpMessageHandler(request =>
+                request.RequestUri!.ToString().Contains("/Library/Refresh", StringComparison.Ordinal)
+                    ? new HttpResponseMessage(HttpStatusCode.NoContent) { Content = new StringContent("") }
+                    : Json(UsersJson));
+
+            using var client = new JellyfinClient(KeySettings(), deviceId: "device-1", handler: handler);
+
+            await client.RefreshLibraryAsync();
+
+            var refresh = handler.Requests.Single(url => url.Contains("/Library/Refresh", StringComparison.Ordinal));
+            Assert.Equal($"{ServerUrl}/Library/Refresh", refresh);
+            Assert.DoesNotContain("api_key", refresh, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("MediaBrowser", handler.RawAuthorizationHeaders[^1]!, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Scanning a library is an administrative action and a perfectly ordinary Jellyfin
+        /// account cannot do it. That is not a broken upload, so the message says what actually
+        /// happens next rather than treating it as a failure.
+        /// </summary>
+        [Fact]
+        public async Task A_server_that_will_not_rescan_says_when_the_film_will_appear_anyway()
+        {
+            var handler = new FakeHttpMessageHandler(request =>
+                request.RequestUri!.ToString().Contains("/Library/Refresh", StringComparison.Ordinal)
+                    ? new HttpResponseMessage(HttpStatusCode.Forbidden) { Content = new StringContent("") }
+                    : Json(UsersJson));
+
+            using var client = new JellyfinClient(KeySettings(), deviceId: "device-1", handler: handler);
+
+            var error = await Assert.ThrowsAsync<JellyfinException>(() => client.RefreshLibraryAsync());
+
+            Assert.Contains("administrator", error.Message, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("scheduled scan", error.Message, StringComparison.OrdinalIgnoreCase);
         }
 
         private static HttpResponseMessage Json(string body) =>

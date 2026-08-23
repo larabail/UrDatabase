@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Linq;
 using System.Text.Json.Serialization;
 
@@ -59,6 +60,98 @@ namespace UrDatabase.Models
     }
 
     /// <summary>
+    /// One television series as Jellyfin describes it.
+    /// </summary>
+    /// <remarks>
+    /// Almost a <see cref="JellyfinMovie"/>, and almost is why it is a type of its own rather than
+    /// a flag on that one. A series has no runtime — the number that matters is per episode — and
+    /// it has two counts a film cannot have, which are the whole reason a card for one is not
+    /// mistakable for a card for a film.
+    ///
+    /// Its seasons and episodes are deliberately absent. They are fetched when somebody opens the
+    /// series, not during a sync: two hundred shows is thousands of episodes, and pulling them all
+    /// up front would turn a sync that takes seconds into one nobody waits for.
+    /// </remarks>
+    public sealed class JellyfinSeries
+    {
+        public string ItemId { get; set; } = "";
+        public string Title { get; set; } = "";
+
+        /// <summary>The year it started. Jellyfin reports the first year, not a range.</summary>
+        public int? Year { get; set; }
+
+        /// <summary>Comma separated, matching how <see cref="UiMovie.Genres"/> is stored.</summary>
+        public string Genres { get; set; } = "";
+
+        public string Overview { get; set; } = "";
+
+        /// <inheritdoc cref="JellyfinMovie.CommunityRating"/>
+        public double? CommunityRating { get; set; }
+
+        public string? ImdbId { get; set; }
+        public string? TmdbId { get; set; }
+
+        public List<string> Cast { get; set; } = new();
+        public List<string> Crew { get; set; } = new();
+
+        public string? ImageTag { get; set; }
+
+        /// <summary>
+        /// How many seasons, when the server said. Null rather than zero for a server that did not
+        /// answer with the field: "no seasons" and "nobody counted" are different facts, and only
+        /// one of them should be printed on a card.
+        /// </summary>
+        public int? SeasonCount { get; set; }
+
+        /// <summary>How many episodes across every season, on the same terms as <see cref="SeasonCount"/>.</summary>
+        public int? EpisodeCount { get; set; }
+    }
+
+    /// <summary>One season of a series. A folder, not something that plays.</summary>
+    public sealed class JellyfinSeason
+    {
+        public string ItemId { get; set; } = "";
+        public string SeriesId { get; set; } = "";
+
+        /// <summary>The server's own name for it — usually "Season 1", sometimes "Specials".</summary>
+        public string Name { get; set; } = "";
+
+        /// <summary>
+        /// Its number, when it has one. Specials are season 0 on most servers and carry no number
+        /// at all on some, which is why this is nullable and why nothing sorts on it alone.
+        /// </summary>
+        public int? Number { get; set; }
+
+        public string? ImageTag { get; set; }
+
+        /// <summary>How many episodes the server says are in it. Null when it did not say.</summary>
+        public int? EpisodeCount { get; set; }
+    }
+
+    /// <summary>One episode. The only television item in this app that actually plays.</summary>
+    public sealed class JellyfinEpisode
+    {
+        public string ItemId { get; set; } = "";
+        public string SeriesId { get; set; } = "";
+
+        /// <summary>Which season folder it belongs to. Empty when the server did not say.</summary>
+        public string SeasonId { get; set; } = "";
+
+        public string Name { get; set; } = "";
+
+        /// <summary>The season it is in, from Jellyfin's <c>ParentIndexNumber</c>.</summary>
+        public int? SeasonNumber { get; set; }
+
+        /// <summary>Its number within the season, from Jellyfin's <c>IndexNumber</c>.</summary>
+        public int? Number { get; set; }
+
+        public string Overview { get; set; } = "";
+        public int? RuntimeMinutes { get; set; }
+        public double? CommunityRating { get; set; }
+        public string? ImageTag { get; set; }
+    }
+
+    /// <summary>
     /// One person on a Jellyfin item: an actor with a part, or a member of the crew with a job.
     /// </summary>
     public sealed class JellyfinPersonDto
@@ -108,8 +201,23 @@ namespace UrDatabase.Models
         [JsonPropertyName("Id")] public string Id { get; set; } = "";
         [JsonPropertyName("Name")] public string Name { get; set; } = "";
 
-        /// <summary>"movies", "tvshows", "music"… The only thing this app looks at is "movies".</summary>
+        /// <summary>
+        /// "movies", "tvshows", "music"… This app reads the first two and ignores the rest.
+        /// </summary>
         [JsonPropertyName("CollectionType")] public string? CollectionType { get; set; }
+
+        /// <summary>Jellyfin's own name for a library of films.</summary>
+        public const string MovieCollection = "movies";
+
+        /// <summary>Jellyfin's own name for a library of television.</summary>
+        public const string SeriesCollection = "tvshows";
+
+        public bool IsMovieLibrary => Is(MovieCollection);
+
+        public bool IsSeriesLibrary => Is(SeriesCollection);
+
+        private bool Is(string collectionType) =>
+            string.Equals(CollectionType, collectionType, StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>A page of items, with the total so the caller knows when to stop asking.</summary>
@@ -151,6 +259,32 @@ namespace UrDatabase.Models
         /// showed an empty cast list as though it had none.
         /// </summary>
         [JsonPropertyName("People")] public List<JellyfinPersonDto>? People { get; set; }
+
+        /// <summary>
+        /// <c>Movie</c>, <c>Series</c>, <c>Season</c>, <c>Episode</c>… Only read where one request
+        /// can return more than one kind of thing; everywhere else the query already said which it
+        /// wanted and the server does not send anything else.
+        /// </summary>
+        [JsonPropertyName("Type")] public string? Type { get; set; }
+
+        /// <summary>The episode's number within its season, or the season's within its series.</summary>
+        [JsonPropertyName("IndexNumber")] public int? IndexNumber { get; set; }
+
+        /// <summary>An episode's season number. Jellyfin names it after the parent, not the season.</summary>
+        [JsonPropertyName("ParentIndexNumber")] public int? ParentIndexNumber { get; set; }
+
+        [JsonPropertyName("SeriesId")] public string? SeriesId { get; set; }
+        [JsonPropertyName("SeasonId")] public string? SeasonId { get; set; }
+
+        /// <summary>
+        /// Direct children: seasons for a series, episodes for a season. Only sent when
+        /// <c>ChildCount</c> is among the requested fields, and not by every server version, which
+        /// is why nothing here treats its absence as zero.
+        /// </summary>
+        [JsonPropertyName("ChildCount")] public int? ChildCount { get; set; }
+
+        /// <summary>Children all the way down: the episode count of a whole series.</summary>
+        [JsonPropertyName("RecursiveItemCount")] public int? RecursiveItemCount { get; set; }
 
         /// <summary>
         /// What this user has done with the item: how far in they are, and whether they finished
@@ -209,6 +343,96 @@ namespace UrDatabase.Models
                 ImageTag = Lookup(ImageTags, "Primary")
             };
         }
+
+        /// <summary>
+        /// The same, for a television series. Kept apart from <see cref="ToMovie"/> rather than
+        /// folded into it with a flag, because the two disagree about what is worth carrying: a
+        /// series has no runtime of its own and has counts a film cannot have.
+        /// </summary>
+        public JellyfinSeries? ToSeries()
+        {
+            if (string.IsNullOrWhiteSpace(Id) || string.IsNullOrWhiteSpace(Name)) return null;
+
+            return new JellyfinSeries
+            {
+                ItemId = Id.Trim(),
+                Title = Name.Trim(),
+                Year = ProductionYear is > 0 ? ProductionYear : null,
+                Genres = JoinGenres(Genres),
+                Overview = (Overview ?? "").Trim(),
+                CommunityRating = CommunityRating,
+                ImdbId = Lookup(ProviderIds, "Imdb"),
+                TmdbId = Lookup(ProviderIds, "Tmdb"),
+                Cast = BuildCast(People),
+                Crew = BuildCrew(People),
+                ImageTag = Lookup(ImageTags, "Primary"),
+                SeasonCount = Positive(ChildCount),
+                EpisodeCount = Positive(RecursiveItemCount)
+            };
+        }
+
+        /// <summary>
+        /// One season. <paramref name="seriesId"/> is supplied by the caller because
+        /// <c>/Shows/{id}/Seasons</c> is asked about one series and does not always repeat which.
+        /// </summary>
+        public JellyfinSeason? ToSeason(string seriesId)
+        {
+            if (string.IsNullOrWhiteSpace(Id)) return null;
+
+            var owner = string.IsNullOrWhiteSpace(SeriesId) ? seriesId : SeriesId;
+            if (string.IsNullOrWhiteSpace(owner)) return null;
+
+            // A season with no name is ordinary — plenty of servers send an empty one — so it is
+            // given the name its number implies rather than being dropped like a nameless film.
+            var name = string.IsNullOrWhiteSpace(Name)
+                ? (IndexNumber is int number ? $"Season {number.ToString(CultureInfo.InvariantCulture)}" : "Season")
+                : Name.Trim();
+
+            return new JellyfinSeason
+            {
+                ItemId = Id.Trim(),
+                SeriesId = owner.Trim(),
+                Name = name,
+                Number = IndexNumber,
+                ImageTag = Lookup(ImageTags, "Primary"),
+                EpisodeCount = Positive(ChildCount)
+            };
+        }
+
+        /// <summary>
+        /// One episode. Nameless episodes are kept, unlike nameless films: a server that has not
+        /// identified an episode still holds a file that plays, and dropping it would make the
+        /// season list disagree with the season's own count.
+        /// </summary>
+        public JellyfinEpisode? ToEpisode(string seriesId)
+        {
+            if (string.IsNullOrWhiteSpace(Id)) return null;
+
+            var owner = string.IsNullOrWhiteSpace(SeriesId) ? seriesId : SeriesId;
+            if (string.IsNullOrWhiteSpace(owner)) return null;
+
+            return new JellyfinEpisode
+            {
+                ItemId = Id.Trim(),
+                SeriesId = owner.Trim(),
+                SeasonId = (SeasonId ?? "").Trim(),
+                Name = (Name ?? "").Trim(),
+                SeasonNumber = ParentIndexNumber,
+                Number = IndexNumber,
+                Overview = (Overview ?? "").Trim(),
+                RuntimeMinutes = TicksToMinutes(RunTimeTicks),
+                CommunityRating = CommunityRating,
+                ImageTag = Lookup(ImageTags, "Primary")
+            };
+        }
+
+        /// <summary>
+        /// A count worth printing, or null. Zero is dropped for the same reason a zero runtime is:
+        /// a server that answered "0 seasons" about a series it is streaming is not telling the
+        /// truth, it is failing to answer, and the card should say nothing rather than something
+        /// false.
+        /// </summary>
+        internal static int? Positive(int? count) => count is > 0 ? count : null;
 
         /// <summary>
         /// The billed cast, in Jellyfin's own order, capped at ten to match what TMDB supplies for

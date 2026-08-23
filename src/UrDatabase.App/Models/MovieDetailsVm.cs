@@ -88,6 +88,16 @@ namespace UrDatabase.Models
             string.IsNullOrWhiteSpace(DownloadedPath);
 
         /// <summary>
+        /// True when there is something to send to the server: a film on this disk, with a file
+        /// behind it, that the server does not already have.
+        ///
+        /// The mirror image of <see cref="CanDownload"/>, and deliberately silent about whether an
+        /// SFTP account is configured — that is a property of the install rather than of the film,
+        /// and the screen adds it.
+        /// </summary>
+        public bool CanUpload => !IsRemote && !IsOnServer && HasFile;
+
+        /// <summary>
         /// The direct play URL, resolved when the details were opened. Null when the server could
         /// not be reached, which is what lets Play explain itself instead of failing obscurely.
         ///

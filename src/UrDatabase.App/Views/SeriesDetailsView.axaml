@@ -1,0 +1,340 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:models="clr-namespace:UrDatabase.Models"
+             x:Class="UrDatabase.Views.SeriesDetailsView">
+
+    <!--
+        A series, in place, across the whole window.
+
+        Built as a sibling of MovieDetailsView rather than as a mode of it. The
+        two share a backdrop and a poster and nothing else that matters: a film
+        screen is a page about one video with one Play button, and this is an
+        index. The thing a person came here to do is find episode four, so the
+        episode list gets the room and everything else is compressed into the
+        column beside the poster.
+    -->
+
+    <UserControl.Styles>
+        <!-- Repeated from MovieDetailsView rather than shared, because these two
+             are the only screens that print a credit and a style in Theme.axaml
+             would be a global rule with two users. If a third ever appears, this
+             is the moment it should move. -->
+        <Style Selector="TextBlock.castName">
+            <Setter Property="Foreground" Value="{DynamicResource BoneBrush}"/>
+            <Setter Property="FontSize" Value="12.5"/>
+            <Setter Property="LineHeight" Value="17"/>
+        </Style>
+        <Style Selector="TextBlock.castRole">
+            <Setter Property="Foreground" Value="{DynamicResource DimBrush}"/>
+            <Setter Property="FontSize" Value="11.5"/>
+            <Setter Property="LineHeight" Value="16"/>
+        </Style>
+
+        <!-- The episode rows. A hairline between them rather than a card each:
+             twenty-four cards is a wall, and the list is meant to be read down
+             rather than looked at. -->
+        <Style Selector="Border.episode">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource EdgeBrush}"/>
+            <Setter Property="BorderThickness" Value="0,0,0,1"/>
+        </Style>
+        <Style Selector="Border.episode:pointerover">
+            <Setter Property="Background" Value="#14FFFFFF"/>
+        </Style>
+        <Style Selector="Border.episode:pointerover TextBlock.episodeTitle">
+            <Setter Property="Foreground" Value="{DynamicResource BoneBrush}"/>
+        </Style>
+        <Style Selector="TextBlock.episodeTitle">
+            <Setter Property="Foreground" Value="{DynamicResource ProseBrush}"/>
+            <Setter Property="FontSize" Value="13"/>
+        </Style>
+    </UserControl.Styles>
+
+    <Grid Background="{StaticResource RoomBrush}">
+        <Image x:Name="BackdropImage" Stretch="UniformToFill"/>
+
+        <Rectangle IsHitTestVisible="False">
+            <Rectangle.Fill>
+                <LinearGradientBrush StartPoint="0%,0%" EndPoint="0%,100%">
+                    <GradientStop Color="#4D0B0A09" Offset="0"/>
+                    <GradientStop Color="#B80B0A09" Offset="0.58"/>
+                    <GradientStop Color="#F70B0A09" Offset="1"/>
+                </LinearGradientBrush>
+            </Rectangle.Fill>
+        </Rectangle>
+
+        <!-- Darkened harder than the film screen, and further across. This page
+             is mostly text — a season row and a list of episodes — so there is
+             no readable half and no unreadable half to protect. -->
+        <Rectangle IsHitTestVisible="False">
+            <Rectangle.Fill>
+                <LinearGradientBrush StartPoint="0%,0%" EndPoint="100%,0%">
+                    <GradientStop Color="#FF0B0A09" Offset="0"/>
+                    <GradientStop Color="#F20B0A09" Offset="0.45"/>
+                    <GradientStop Color="#CC0B0A09" Offset="0.78"/>
+                    <GradientStop Color="#8A0B0A09" Offset="1"/>
+                </LinearGradientBrush>
+            </Rectangle.Fill>
+        </Rectangle>
+
+        <DockPanel>
+
+            <Border DockPanel.Dock="Top" Height="48" Padding="24,0">
+                <Button x:Name="BackButton"
+                        Classes="ghost"
+                        HorizontalAlignment="Left"
+                        VerticalAlignment="Center"
+                        Click="Back_Click"
+                        ToolTip.Tip="Esc">
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <TextBlock Text="←" FontSize="13"/>
+                        <TextBlock Text="Library"/>
+                    </StackPanel>
+                </Button>
+            </Border>
+
+            <Border DockPanel.Dock="Bottom"
+                    Padding="24,12,48,12"
+                    Background="#B80B0A09"
+                    BorderBrush="{StaticResource EdgeBrush}"
+                    BorderThickness="0,1,0,0">
+                <Grid ColumnDefinitions="Auto,16,*">
+                    <!-- Says what the list is doing: loading, showing what was
+                         cached, or unable to reach the server. There is no Play
+                         button down here on purpose — nothing plays a series,
+                         and one that played "the first episode" would be a
+                         button whose meaning nobody could predict. -->
+                    <TextBlock Grid.Column="0"
+                               x:Name="EpisodeNote"
+                               Classes="mono"
+                               FontSize="10.5"
+                               VerticalAlignment="Center"
+                               TextWrapping="Wrap"
+                               MaxWidth="520"/>
+
+                    <TextBlock Grid.Column="2"
+                               Classes="attribution"
+                               TextAlignment="Right"
+                               MaxWidth="660"
+                               VerticalAlignment="Center"
+                               Text="Metadata and artwork supplied by your Jellyfin server. IMDb rating retrieved from the OMDb API; neither IMDb nor OMDb endorses this application."/>
+                </Grid>
+            </Border>
+
+            <Grid Margin="24,8,48,0" ColumnDefinitions="250,48,*">
+
+                <StackPanel Grid.Column="0">
+                    <Border Width="250"
+                            Height="375"
+                            VerticalAlignment="Top"
+                            CornerRadius="{StaticResource RadiusLarge}"
+                            ClipToBounds="True"
+                            BoxShadow="0 18 42 0 #800B0A09">
+                        <Grid>
+                            <Image x:Name="PosterImage" Stretch="UniformToFill"/>
+                            <Border CornerRadius="{StaticResource RadiusLarge}"
+                                    BorderBrush="{StaticResource EdgeBrush}"
+                                    BorderThickness="1"/>
+                        </Grid>
+                    </Border>
+
+                    <!-- Cast under the poster rather than in a column of its
+                         own. The episodes need the width, and a programme's
+                         cast is a supporting fact here in a way it is not on a
+                         film. -->
+                    <TextBlock Classes="label"
+                               Text="CAST"
+                               LetterSpacing="1.6"
+                               Margin="0,20,0,5"/>
+                    <Rectangle Height="1"
+                               Fill="{StaticResource EdgeBrush}"
+                               Margin="0,0,0,8"/>
+                    <ItemsControl x:Name="CastList">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate DataType="models:CreditEntry">
+                                <StackPanel Margin="0,0,0,4">
+                                    <TextBlock Classes="castName"
+                                               Text="{Binding Primary}"
+                                               TextTrimming="CharacterEllipsis"/>
+                                    <TextBlock Classes="castRole"
+                                               Text="{Binding Secondary}"
+                                               TextTrimming="CharacterEllipsis"
+                                               IsVisible="{Binding HasSecondary}"/>
+                                </StackPanel>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                    <TextBlock x:Name="NoCastText"
+                               Classes="dim"
+                               IsVisible="False"/>
+                </StackPanel>
+
+                <Grid Grid.Column="2" RowDefinitions="Auto,Auto,Auto,Auto,Auto,*">
+
+                    <TextBlock Grid.Row="0"
+                               x:Name="TitleText"
+                               Classes="display"
+                               FontSize="42"
+                               LineHeight="46"
+                               TextWrapping="Wrap"
+                               MaxLines="2"
+                               TextTrimming="CharacterEllipsis"
+                               Margin="0,0,0,10"/>
+
+                    <ItemsControl Grid.Row="1"
+                                  x:Name="FactsList"
+                                  Margin="0,0,0,14">
+                        <ItemsControl.ItemsPanel>
+                            <ItemsPanelTemplate>
+                                <StackPanel Orientation="Horizontal"/>
+                            </ItemsPanelTemplate>
+                        </ItemsControl.ItemsPanel>
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate DataType="models:DetailFact">
+                                <StackPanel Orientation="Horizontal">
+                                    <StackPanel Margin="0,0,16,0">
+                                        <TextBlock Classes="label"
+                                                   Text="{Binding Label}"
+                                                   Margin="0,0,0,3"/>
+                                        <TextBlock Classes="factValue"
+                                                   Classes.imdb="{Binding IsImdb}"
+                                                   Classes.server="{Binding IsServer}"
+                                                   Text="{Binding Value}"/>
+                                    </StackPanel>
+                                    <Rectangle Width="1"
+                                               Fill="{StaticResource EdgeBrush}"
+                                               Margin="0,0,16,0"
+                                               IsVisible="{Binding ShowSeparator}"/>
+                                </StackPanel>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+
+                    <TextBlock Grid.Row="2"
+                               x:Name="GenresText"
+                               Classes="mono"
+                               FontSize="11"
+                               LetterSpacing="1.1"
+                               Foreground="{StaticResource ProseBrush}"
+                               TextWrapping="Wrap"
+                               Margin="0,0,0,10"/>
+
+                    <!-- Capped, and scrolling inside the cap. A programme's
+                         summary can run to a paragraph and the episodes are
+                         what the page is for; letting the plot push them below
+                         the fold would be the wrong thing winning. -->
+                    <ScrollViewer Grid.Row="3"
+                                  MaxHeight="104"
+                                  VerticalScrollBarVisibility="Auto"
+                                  Background="Transparent"
+                                  Padding="0,0,16,0"
+                                  Margin="0,0,0,14">
+                        <TextBlock x:Name="OverviewText"
+                                   Classes="body"
+                                   MaxWidth="760"
+                                   HorizontalAlignment="Left"/>
+                    </ScrollViewer>
+
+                    <!-- The seasons, as the same control the genre row uses.
+                         One season is not offered as a choice: a row of one
+                         chip is a label pretending to be a control. -->
+                    <Border Grid.Row="4"
+                            x:Name="SeasonRow"
+                            BorderBrush="{StaticResource EdgeBrush}"
+                            BorderThickness="0,0,0,1"
+                            Margin="0,0,0,10">
+                        <ScrollViewer Classes="shelf" Height="40">
+                            <ItemsControl x:Name="SeasonChipsList" ItemsSource="{Binding Seasons}">
+                                <ItemsControl.ItemsPanel>
+                                    <ItemsPanelTemplate>
+                                        <StackPanel Orientation="Horizontal"/>
+                                    </ItemsPanelTemplate>
+                                </ItemsControl.ItemsPanel>
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate DataType="models:SeasonGroup">
+                                        <ToggleButton Classes="genre"
+                                                      IsChecked="{Binding IsSelected}"
+                                                      Margin="0,0,24,0"
+                                                      VerticalAlignment="Center"
+                                                      Click="SeasonChip_Click">
+                                            <StackPanel Orientation="Horizontal">
+                                                <TextBlock Classes="genreLabel"
+                                                           Text="{Binding Name}"
+                                                           FontSize="12.5"/>
+                                                <TextBlock Classes="mono"
+                                                           Text="{Binding Episodes.Count}"
+                                                           FontSize="10"
+                                                           Margin="6,0,0,0"
+                                                           VerticalAlignment="Center"/>
+                                            </StackPanel>
+                                        </ToggleButton>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </ScrollViewer>
+                    </Border>
+
+                    <Grid Grid.Row="5" Margin="0,0,0,16">
+                        <ScrollViewer VerticalScrollBarVisibility="Auto"
+                                      Background="Transparent"
+                                      Padding="0,0,16,0">
+                            <ItemsControl ItemsSource="{Binding Episodes}">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate DataType="models:EpisodeRow">
+                                        <Border Classes="episode"
+                                                Padding="0,9"
+                                                Cursor="Hand"
+                                                PointerPressed="Episode_Click"
+                                                ToolTip.Tip="{Binding Tip}">
+                                            <Grid ColumnDefinitions="64,12,*,16,Auto">
+                                                <TextBlock Grid.Column="0"
+                                                           Classes="mono"
+                                                           FontSize="11"
+                                                           Text="{Binding Label}"
+                                                           VerticalAlignment="Center"/>
+
+                                                <StackPanel Grid.Column="2" VerticalAlignment="Center">
+                                                    <TextBlock Classes="episodeTitle"
+                                                               Text="{Binding Title}"
+                                                               TextTrimming="CharacterEllipsis"/>
+                                                    <!-- One line of plot, trimmed. The
+                                                         whole thing is in the tooltip;
+                                                         a list where every row is a
+                                                         paragraph is a list nobody can
+                                                         scan. -->
+                                                    <TextBlock Classes="dim"
+                                                               FontSize="11.5"
+                                                               Margin="0,2,0,0"
+                                                               MaxLines="1"
+                                                               TextTrimming="CharacterEllipsis"
+                                                               Text="{Binding Overview}"
+                                                               IsVisible="{Binding HasOverview}"/>
+                                                </StackPanel>
+
+                                                <TextBlock Grid.Column="4"
+                                                           Classes="mono"
+                                                           FontSize="10.5"
+                                                           VerticalAlignment="Center"
+                                                           Text="{Binding Runtime}"
+                                                           IsVisible="{Binding HasRuntime}"/>
+                                            </Grid>
+                                        </Border>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </ScrollViewer>
+
+                        <!-- An empty list has to account for itself, exactly as
+                             an empty search does. -->
+                        <TextBlock x:Name="NoEpisodesText"
+                                   Classes="body"
+                                   IsVisible="False"
+                                   VerticalAlignment="Top"
+                                   MaxWidth="620"
+                                   HorizontalAlignment="Left"/>
+                    </Grid>
+                </Grid>
+            </Grid>
+        </DockPanel>
+    </Grid>
+</UserControl>
