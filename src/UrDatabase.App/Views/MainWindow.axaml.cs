@@ -91,6 +91,12 @@ namespace UrDatabase.Views
         /// <summary>Rebuilt whenever the configuration changes; never null once the window exists.</summary>
         private ImdbRatingService _ratings = null!;
 
+        /// <summary>
+        /// Academy Award nominations, cached in the catalogue. Rebuilt with the configuration for
+        /// the same reason as the rating service, and idle until a film is opened.
+        /// </summary>
+        private OscarsService _awards = null!;
+
         /// <summary>Rebuilt with the configuration, because the catalogue can move. Never null once the window exists.</summary>
         private LibraryLoader _library = null!;
 
@@ -135,7 +141,7 @@ namespace UrDatabase.Views
 
             // Runs after the poster drain in OnClosing, and has to: cancelling this first would
             // cut short the very fetches the drain is there to let finish.
-            Closed += (_, __) => { _cts.Cancel(); _searchLoop.Dispose(); _posterLoader?.Dispose(); _ratings.Dispose(); _jellyfin?.Dispose(); };
+            Closed += (_, __) => { _cts.Cancel(); _searchLoop.Dispose(); _posterLoader?.Dispose(); _ratings.Dispose(); _awards.Dispose(); _jellyfin?.Dispose(); };
 
             DataContext = this;
 
@@ -234,6 +240,9 @@ namespace UrDatabase.Views
             // at all when no OMDb key is available.
             _ratings?.Dispose();
             _ratings = new ImdbRatingService(new OmdbService(_config.OmdbApiKey), ownsLookup: true);
+
+            _awards?.Dispose();
+            _awards = new OscarsService(new UrActorService(_config.UrActorApiKey), ownsLookup: true);
 
             // Nothing is constructed, and no database is touched, when no server is configured.
             _jellyfin?.Dispose();
@@ -992,7 +1001,8 @@ namespace UrDatabase.Views
 
             try
             {
-                await DetailsView.ShowAsync(vm, _dbPath, _config, LoadImdbRatingAsync, _jellyfin, _cts.Token);
+                await DetailsView.ShowAsync(
+                    vm, _dbPath, _config, LoadImdbRatingAsync, _jellyfin, _cts.Token, LoadAwardsAsync);
 
                 // A downloaded film is a row the library behind this screen does not have yet: it
                 // would still be shown as living only on the server until something reloaded it.
@@ -1124,6 +1134,13 @@ namespace UrDatabase.Views
                 vm.FilePath = target.FilePath;
                 vm.FileMatch = target.Kind;
 
+                // Read from the file Play would open, so the badges describe the copy the user is
+                // about to watch. A filename is a claim rather than a measurement and the screen
+                // says so; it is still the only thing a scanned film has.
+                vm.Media = LocalMedia.Describe(target.FilePath);
+
+                vm.Awards = await LoadAwardsAsync(vm.Title, vm.Year, cts.Token);
+
                 await ShowDetailsAsync(vm);
 
                 // The film may have been re-identified while the details screen was up, and the
@@ -1205,7 +1222,12 @@ namespace UrDatabase.Views
                     // it. Nothing used to ask for them, so every film from a server showed an
                     // empty list as though it genuinely had none.
                     TopCast = film.Cast.ToList(),
-                    KeyCrew = film.Crew.ToList()
+                    KeyCrew = film.Crew.ToList(),
+
+                    // Measured by the server rather than read off a filename — the one path in
+                    // this app where the resolution and the languages are facts about the file
+                    // instead of a claim somebody typed into its name.
+                    Media = film.Media
                 };
 
                 using var cts = CancellationTokenSource.CreateLinkedTokenSource(_cts.Token);
@@ -1227,6 +1249,7 @@ namespace UrDatabase.Views
                 // one — a film whose copy has gone still has a row that owns the rating — and to
                 // nothing at all for a film that only ever came from the server.
                 vm.ImdbRating = await LoadImdbRatingAsync(vm.ImdbId, vm.LocalId > 0 ? vm.LocalId : null, cts.Token);
+                vm.Awards = await LoadAwardsAsync(vm.Title, vm.Year, cts.Token);
 
                 await ShowDetailsAsync(vm);
             }
@@ -1276,6 +1299,10 @@ namespace UrDatabase.Views
                 // not the community number beside it. No local movie row owns it.
                 vm.ImdbRating = await LoadImdbRatingAsync(vm.ImdbId, null, cts.Token);
 
+                // Deliberately no awards lookup. The archive holds Academy Awards, a programme
+                // has never won one, and it is searched by title — so a series called "Fargo"
+                // would be handed the 1996 film's Oscars. Emmys are a different body with a
+                // different API and are not what this key buys.
                 LibraryRoot.IsVisible = false;
 
                 try
@@ -1315,6 +1342,32 @@ namespace UrDatabase.Views
             {
                 AppLog.Write("omdb.log", $"rating lookup failed for {imdbId}: {ex.Message}");
                 return null;
+            }
+        }
+
+        /// <summary>
+        /// Academy Award nominations from the UrActor API, matched on the title and the release
+        /// year and cached in the catalogue. Entirely optional in the same way the IMDb rating is:
+        /// no key, no network or a title the Academy spells differently all mean no awards, never
+        /// another film's.
+        /// </summary>
+        private async Task<OscarHonours> LoadAwardsAsync(string? title, int? year, CancellationToken ct)
+        {
+            if (string.IsNullOrWhiteSpace(title) || !_awards.IsConfigured) return OscarHonours.None;
+
+            try
+            {
+                using var conn = Database.Open(_dbPath);
+                return await _awards.GetAsync(conn, title, year, ct);
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                AppLog.Write("oscars.log", $"awards lookup failed for {title}: {ex.Message}");
+                return OscarHonours.None;
             }
         }
 

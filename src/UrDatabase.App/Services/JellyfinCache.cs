@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text.Json;
+using System.Text.Json.Serialization;
 using Microsoft.Data.Sqlite;
 using UrDatabase.Models;
 
@@ -72,9 +74,9 @@ namespace UrDatabase.Services
                 insert.Transaction = tx;
                 insert.CommandText = @"
 INSERT INTO jellyfin_movies
-    (item_id, title, year, genres, overview, runtime_minutes, community_rating, imdb_id, tmdb_id, cast_list, crew_list, image_tag, synced_at)
+    (item_id, title, year, genres, overview, runtime_minutes, community_rating, imdb_id, tmdb_id, cast_list, crew_list, image_tag, media_info, synced_at)
 VALUES
-    (@item, @title, @year, @genres, @overview, @runtime, @rating, @imdb, @tmdb, @cast, @crew, @tag, @synced)
+    (@item, @title, @year, @genres, @overview, @runtime, @rating, @imdb, @tmdb, @cast, @crew, @tag, @media, @synced)
 ON CONFLICT(item_id) DO UPDATE SET
     title            = excluded.title,
     year             = excluded.year,
@@ -87,6 +89,7 @@ ON CONFLICT(item_id) DO UPDATE SET
     cast_list        = excluded.cast_list,
     crew_list        = excluded.crew_list,
     image_tag        = excluded.image_tag,
+    media_info       = excluded.media_info,
     synced_at        = excluded.synced_at;";
 
                 var item = insert.Parameters.Add("@item", SqliteType.Text);
@@ -101,6 +104,7 @@ ON CONFLICT(item_id) DO UPDATE SET
                 var cast = insert.Parameters.Add("@cast", SqliteType.Text);
                 var crew = insert.Parameters.Add("@crew", SqliteType.Text);
                 var tag = insert.Parameters.Add("@tag", SqliteType.Text);
+                var media = insert.Parameters.Add("@media", SqliteType.Text);
                 var synced = insert.Parameters.Add("@synced", SqliteType.Text);
 
                 var now = DateTime.UtcNow.ToString("o");
@@ -119,6 +123,7 @@ ON CONFLICT(item_id) DO UPDATE SET
                     cast.Value = JoinCredits(movie.Cast);
                     crew.Value = JoinCredits(movie.Crew);
                     tag.Value = (object?)movie.ImageTag ?? DBNull.Value;
+                    media.Value = (object?)SerialiseMedia(movie.Media) ?? DBNull.Value;
                     synced.Value = now;
 
                     insert.ExecuteNonQuery();
@@ -440,7 +445,7 @@ ORDER BY COALESCE(season_number, 9999), COALESCE(episode_number, 9999), name";
 
             using var cmd = conn.CreateCommand();
             cmd.CommandText = @"
-SELECT item_id, title, year, genres, overview, runtime_minutes, community_rating, imdb_id, tmdb_id, cast_list, crew_list, image_tag
+SELECT item_id, title, year, genres, overview, runtime_minutes, community_rating, imdb_id, tmdb_id, cast_list, crew_list, image_tag, media_info
 FROM jellyfin_movies
 ORDER BY COALESCE(year, 0) DESC, title";
 
@@ -460,12 +465,64 @@ ORDER BY COALESCE(year, 0) DESC, title";
                     TmdbId = reader.IsDBNull(8) ? null : reader.GetString(8),
                     Cast = SplitCredits(reader.IsDBNull(9) ? null : reader.GetString(9)),
                     Crew = SplitCredits(reader.IsDBNull(10) ? null : reader.GetString(10)),
-                    ImageTag = reader.IsDBNull(11) ? null : reader.GetString(11)
+                    ImageTag = reader.IsDBNull(11) ? null : reader.GetString(11),
+                    Media = DeserialiseMedia(reader.IsDBNull(12) ? null : reader.GetString(12))
                 });
             }
 
             return movies;
         }
+
+        /// <summary>
+        /// Track details are stored as JSON in one column rather than as a table of streams.
+        /// </summary>
+        /// <remarks>
+        /// The same argument the credits columns make, only stronger. These are read back whole,
+        /// for one film, to be printed as a row of badges — never filtered on, never joined,
+        /// never counted across the library. A streams table would buy nothing and cost a join on
+        /// the path that has to be instant with the server switched off.
+        ///
+        /// It is written through the same serialiser it is read with, so the column's shape is
+        /// whatever <see cref="MediaInfo"/> is, and a field added there needs nothing here.
+        /// </remarks>
+        internal static string? SerialiseMedia(MediaInfo? media)
+        {
+            if (media is null || !media.HasAnything) return null;
+
+            try
+            {
+                return JsonSerializer.Serialize(media, MediaJson);
+            }
+            catch (Exception ex)
+            {
+                // A film losing its badges is not worth failing a whole sync over.
+                AppLog.Write("jellyfin.log", $"media info could not be stored: {ex.Message}");
+                return null;
+            }
+        }
+
+        internal static MediaInfo? DeserialiseMedia(string? stored)
+        {
+            if (string.IsNullOrWhiteSpace(stored)) return null;
+
+            try
+            {
+                var media = JsonSerializer.Deserialize<MediaInfo>(stored, MediaJson);
+                return media is not null && media.HasAnything ? media : null;
+            }
+            catch (JsonException)
+            {
+                // Written by a version whose shape has since changed, or corrupted. The next sync
+                // replaces it; until then the film simply has no badges.
+                return null;
+            }
+        }
+
+        private static readonly JsonSerializerOptions MediaJson = new()
+        {
+            PropertyNameCaseInsensitive = true,
+            DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
+        };
 
         /// <summary>
         /// Credits are stored one per line. They are only ever read back whole, for one film, to

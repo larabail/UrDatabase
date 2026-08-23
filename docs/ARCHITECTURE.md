@@ -156,12 +156,15 @@ writes to `AppContext.BaseDirectory` under any circumstance.
 The app runs with no file at all, falling back to platform defaults.
 
 API keys resolve most specific first: the loaded `appsettings.json`, then the
-`URDATABASE_TMDB_API_KEY` / `URDATABASE_OMDB_API_KEY` environment variables, then whatever was
-compiled in at build time. Compiled-in keys default to empty, so a local build needs no secrets.
+`URDATABASE_TMDB_API_KEY`, `URDATABASE_OMDB_API_KEY` and `URDATABASE_URACTOR_API_KEY`
+environment variables, then whatever was compiled in at build time. Compiled-in keys default to
+empty, so a local build needs no secrets.
 
 ## Attribution
 
 TMDB's API terms require attribution, shown in the main window footer and the details window:
 *"This product uses the TMDB API but is not endorsed or certified by TMDB."* OMDb is credited as
 the source of the IMDb rating. Neither IMDb nor OMDb endorses this application, and IMDb's logo
-and wordmark are not used.
+and wordmark are not used. UrActor is credited under the awards list as the source of the
+Academy Award nominations; the Academy does not endorse this application either, and no Oscar
+statuette, logo or wordmark is used.

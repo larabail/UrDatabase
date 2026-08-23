@@ -194,6 +194,7 @@ jobs:
           # commit.
           tmdb-api-key: ${{ secrets.TMDB_API_KEY }}
           omdb-api-key: ${{ secrets.OMDB_API_KEY }}
+          uractor-api-key: ${{ secrets.URACTOR_API_KEY }}
           # The five that make the macOS download open at all. Missing, they
           # produce an ad-hoc signed build that a current Mac kills on launch
           # with no dialog -- so the steps below refuse to describe such a

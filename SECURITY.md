@@ -47,20 +47,21 @@ reports produced by a scanner without a demonstrated impact on UrDatabase.
 
 ## What is not a vulnerability
 
-**The API keys inside an official build.** Released archives have the TMDB and
-OMDb keys compiled into them, and **a key compiled into a desktop binary is not
+**The API keys inside an official build.** Released archives have the TMDB,
+OMDb and UrActor keys compiled into them, and **a key compiled into a desktop binary is not
 secret**. Anyone holding a build can extract it. There is no server to keep it
 behind, so this is not a defect to be fixed by obfuscation, and reporting that
 you pulled a key out of a release tells us nothing we have not written here.
 
-The keys live in the `TMDB_API_KEY` and `OMDB_API_KEY` repository secrets for
-two reasons, neither of which is that the shipped value stays private: to keep
-them out of the repository and its history, and to make rotating one a change
-to a single setting rather than a change to the source. If you are rotating
-either, those two secrets are the only place the value needs editing.
+The keys live in the `TMDB_API_KEY`, `OMDB_API_KEY` and `URACTOR_API_KEY`
+repository secrets for two reasons, neither of which is that the shipped value
+stays private: to keep them out of the repository and its history, and to make
+rotating one a change to a single setting rather than a change to the source. If
+you are rotating any of them, those secrets are the only place the value needs
+editing.
 
-What makes that trade acceptable is the specific keys involved. Both are free,
-read-only metadata credentials. The worst an abuser achieves is exhausting a
+What makes that trade acceptable is the specific keys involved. All three are
+free, read-only metadata credentials. The worst an abuser achieves is exhausting a
 quota, at which point posters and ratings stop appearing until it is rotated —
 irritating, cheap to fix, and costing no user anything of theirs. A key that
 could write, spend money or reach personal data would not be shipped this way,
@@ -69,16 +70,24 @@ app. That reasoning, rather than the conclusion, is the part worth carrying to
 the next key.
 
 Anyone who would rather not share the shipped quota can supply their own key
-in `appsettings.json` or in `URDATABASE_TMDB_API_KEY` /
-`URDATABASE_OMDB_API_KEY`; both take precedence over the compiled-in value. A
-build from source has no keys in it at all.
+in `appsettings.json` or in `URDATABASE_TMDB_API_KEY`,
+`URDATABASE_OMDB_API_KEY` or `URDATABASE_URACTOR_API_KEY`; each takes
+precedence over the compiled-in value. A build from source has no keys in it at
+all.
 
-Reading `TMDB_API_KEY` or `OMDB_API_KEY` out of a workflow run therefore gains
-an attacker nothing a published archive would not.
+Reading any of those three out of a workflow run therefore gains an attacker
+nothing a published archive would not.
 
-The third secret is a different matter. `FIREBASE_SERVICE_ACCOUNT` is used only
-to deploy the downloads site and never enters a build, so unlike the other two
-it is genuinely private and nothing that ships contains it. Anything that could
+One caveat particular to the UrActor key: that API takes it as the last segment
+of the URL path rather than in a header, so it reaches server logs and proxies
+in a way the other two do not. The app never writes it to a log of its own —
+`UrActorService.Redact` removes it from anything bound for one — but the
+upstream exposure is inherent to the API and is why it is treated as the
+lowest-value credential of the three.
+
+`FIREBASE_SERVICE_ACCOUNT` is a different matter. It is used only
+to deploy the downloads site and never enters a build, so unlike the metadata
+keys above it is genuinely private and nothing that ships contains it. Anything that could
 expose it — a workflow readable by a fork, a step that echoes it, a change that
 carries it into an artifact — is a real finding and worth reporting, as is any
 workflow change that could place unintended content into a release.

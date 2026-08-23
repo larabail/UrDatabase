@@ -19,8 +19,8 @@ It runs on Windows and macOS from one codebase, built with
 
 - **Set up on first launch.** A fresh install opens a setup screen instead of an
   empty library: tick folders on this computer, a Jellyfin server, or both, test
-  the server before committing to it, and optionally paste your TMDB and OMDb
-  keys. It writes `appsettings.json` for you and never appears again — the
+  the server before committing to it, and optionally paste your TMDB, OMDb and
+  UrActor keys. It writes `appsettings.json` for you and never appears again — the
   **Settings** button reopens the same screen, and anything saved there is
   applied to the running window rather than at the next launch
   (`Views/SetupWindow`, `Models/SetupChoices`, `Services/ConfigStore`).
@@ -111,6 +111,52 @@ It runs on Windows and macOS from one codebase, built with
   fetched they are cached, so a programme you have already opened still lists its
   episodes with the server switched off (`Services/SeriesLoader`,
   `Services/SeriesGrouping`, `Views/SeriesDetailsView`).
+- **What the copy actually is, beside the year and the runtime.** A row of small
+  badges says how big the picture is — `4K`, `2K`, `1080p`, `720p`, `SD` — along
+  with its dynamic range, video codec, audio track, size on disk, and the
+  languages it can be heard and read in as two-letter codes. Text codes rather
+  than flag emoji, because Windows has no flag glyphs and the same build would
+  show `GB` there and 🇬🇧 on macOS.
+
+  The two sources of that are not equally trustworthy and the screen does not
+  pretend otherwise. A film on a Jellyfin server is *measured*: the sync asks for
+  `MediaStreams` and gets real pixel dimensions, real language tags and a real
+  channel count. A scanned file has nothing but its own name, and a name is
+  whatever the person who encoded it typed — so its badges are read from the
+  filename and the tooltip says "according to the filename". Where both exist,
+  the measurement wins.
+
+  Nothing is read from a filename until the film's own title is behind us,
+  which is the whole difficulty: "Italian", "Dual", "4K" and "Atmos" are all
+  words that appear in titles. The tags are taken from after the year, or from
+  the first token no title could contain — so *The Italian Job* is not an
+  Italian-language release and *Casablanca.mkv* claims nothing at all
+  (`Services/MediaFlags`, `Services/FilenameMediaInfo`, `Services/LanguageTag`).
+- **The Academy, under the poster.** A film that was nominated for an Oscar says
+  so: wins first, marked with a star, then the nominations, with the category and
+  who it was for. The panel is hidden outright for the great majority of films
+  that were never nominated for anything — a heading standing over nothing on
+  nine films in ten reads as a request that failed rather than as a fact.
+
+  The archive is searched by title, so the release year decides which film the
+  results belong to: there are four films called *A Star Is Born* and three of
+  them were nominated. A ceremony from the film's own year up to three years
+  after it counts, which covers the early ceremonies that did not follow the
+  modern rule and the international feature award that runs a year or two
+  behind. Anything further away is a different film and is not attributed.
+
+  Answers are cached in the catalogue, including the answer "never nominated",
+  because that is the commonest one and the one it would be most wasteful to ask
+  twice — the archive changes once a year, in March. A rate limit or a network
+  failure is deliberately *not* cached, so one bad afternoon does not record "no
+  awards" against a hundred films permanently. Optional like the other two keys:
+  no `UrActorApiKey`, no awards, and nothing else changes.
+
+  Films only, deliberately. A programme has never won an Academy Award, and the
+  archive is searched by title — so asking about a series called *Fargo* would
+  hand it the 1996 film's Oscars, which is the exact false attribution the year
+  window exists to prevent (`Services/OscarsService`, `Services/UrActorService`,
+  `Services/OscarMatch`).
 - **Posters fill themselves in.** Any film in the catalogue with no poster is
   looked up in the background, four at a time, through one shared connection to
   TMDB, and the result is written back to the database so the next launch is
@@ -255,7 +301,7 @@ platform workload, no Visual Studio and no Xcode: any editor and the `dotnet`
 CLI are enough on both operating systems.
 
 No API key is needed to build the app or to run the tests, and a downloaded
-release needs none either — official builds carry both keys already. You only
+release needs none either — official builds carry the keys already. You only
 supply a key if you build from source and want live metadata. See
 [Configuration](#configuration).
 
@@ -330,6 +376,7 @@ cp src/UrDatabase.App/appsettings.example.json src/UrDatabase.App/appsettings.js
 | `WatchFolders` | Absolute paths the scan button walks, searched recursively. Empty means the platform's film folder, unless `SetupCompleted` is set — somebody who was asked and named none meant none |
 | `TmdbApiKey` | Your TMDB v3 API key. Leave it empty to run without metadata |
 | `OmdbApiKey` | Your OMDb API key. Leave it empty to run without the IMDb rating |
+| `UrActorApiKey` | Your UrActor API key. Leave it empty to run without the Academy Award nominations |
 | `PosterCacheDir` | Where downloaded posters go |
 | `DownloadFolder` | Where a film downloaded from Jellyfin is saved. Defaults to a `UrDatabase` subfolder of the platform's film folder — inside what a scan already walks, so both halves of the library agree about it |
 | `DownloadPosters` | `false` points the UI at TMDB's own image URLs; `true` caches each poster to disk |
@@ -388,28 +435,38 @@ straight to the library and does not ask again.
 ### API keys
 
 **If you downloaded a release, there is nothing to do here.** Official builds
-have both keys compiled in at release time, so metadata and ratings work out of
-the box with no configuration at all.
+have the keys compiled in at release time, so metadata, ratings and awards work
+out of the box with no configuration at all.
 
 Keys matter only when you build from source, because a build from source has
 none compiled in. Without them the app builds, runs and passes its full test
-suite — you simply get no posters, no details and no rating until you supply
-your own.
+suite — you simply get no posters, no details, no rating and no awards until you
+supply your own.
 
 | Service | Get a key from | What it buys |
 | --- | --- | --- |
 | TMDB | [your TMDB account settings](https://www.themoviedb.org/settings/api) | Posters and details. Without it, browsing, genres and search still work |
 | OMDb | [omdbapi.com](https://www.omdbapi.com/apikey.aspx) | The IMDb star, and nothing else |
+| UrActor | [developer.uractor.com](https://developer.uractor.com/) | The Academy Award nominations under the poster, and nothing else |
 
-Either key can be given in `appsettings.json`, as `TmdbApiKey` and
-`OmdbApiKey`, or in the environment:
+Any of them can be given in `appsettings.json`, as `TmdbApiKey`, `OmdbApiKey`
+and `UrActorApiKey`, or in the environment:
 
 ```bash
 export URDATABASE_TMDB_API_KEY=...       # macOS
 export URDATABASE_OMDB_API_KEY=...
+export URDATABASE_URACTOR_API_KEY=...
 $env:URDATABASE_TMDB_API_KEY = '...'     # Windows PowerShell
 $env:URDATABASE_OMDB_API_KEY = '...'
+$env:URDATABASE_URACTOR_API_KEY = '...'
 ```
+
+One thing about the UrActor key is worth knowing before you paste it anywhere:
+that API takes it as the last segment of the URL path rather than in a header,
+so it lands in server logs and browser history like any other part of a URL. It
+grants read-only access to public awards data and nothing else. This app never
+writes it to a log — `UrActorService.Redact` takes it out of anything bound for
+one — but treat it as the low-value credential its own documentation says it is.
 
 Each key is resolved in the same order: the configuration file first, then the
 environment variable, then whatever was compiled in. So the file beats the
@@ -1016,8 +1073,11 @@ in the `.csproj`.
   and try a branch before it merges. Those builds are signed but deliberately
   not notarized, so the first launch needs a right-click → **Open**.
 - **On a merge to `main`**, the version in `Directory.Build.props` is tagged
-  `v<version>`, the TMDB and OMDb keys are compiled in from the `TMDB_API_KEY`
-  and `OMDB_API_KEY` repository secrets, the macOS builds are signed with a
+  `v<version>`, the TMDB, OMDb and UrActor keys are compiled in from the
+  `TMDB_API_KEY`, `OMDB_API_KEY` and `URACTOR_API_KEY` repository secrets — the
+  first two warn loudly when absent, the third does not, because a build with no
+  awards is barely distinguishable from one where nothing on screen was ever
+  nominated — the macOS builds are signed with a
   Developer ID and notarized, a GitHub Release is created with
   `UrDatabase-<version>-win-x64.zip`, `UrDatabase-<version>-osx-arm64.dmg` and
   `UrDatabase-<version>-osx-x64.dmg` attached, and the downloads site is
@@ -1035,7 +1095,7 @@ of its own. See
 Compiling the keys in at release is what makes a downloaded build work with no
 setup. It is not a way of keeping them private, and nothing here pretends it
 is; [SECURITY.md](SECURITY.md) sets out why that is an acceptable trade for
-these two keys in particular and when it would not be.
+these three keys in particular and when it would not be.
 
 Because a merge releases, a pull request that changes anything under `src/` has
 to bump the version above whatever `main` carries at the moment the check runs
@@ -1061,7 +1121,7 @@ src/UrDatabase.App/          the application: one cross-platform project
                              Theme.axaml: the shared control styles
   Models/                    what the views bind to
   Services/                  config, SQLite, scanning, search, TMDB, OMDb,
-                             Jellyfin, posters, playback reporting
+                             UrActor, Jellyfin, posters, playback reporting
   Assets/UrDatabase.icns     the macOS application icon
   Data/schema.sql            the shape a database is created with; Database.Migrate
                              brings an older one up to it
@@ -1141,6 +1201,28 @@ Stated plainly, so nobody has to find out by using it:
   has not identified stays undescribed. TMDB's television catalogue is a separate
   one from its films, and using the film endpoints for it would be worse than
   using nothing.
+- **A scanned film's badges are only as good as its filename.** A copy on this
+  disk is described by its own name, so `Casablanca.mkv` gets no badges at all
+  and a file whose name says `1080p` is badged `1080p` whatever is actually
+  inside it. Nothing opens the container to check, and nothing reads a
+  `.nfo` beside it. Only a Jellyfin film is measured. A film in both places is
+  described by the copy on this disk and not by the server's, deliberately —
+  Play opens the local file, and badging it with the server's 4K remux would
+  describe a copy nobody is about to watch — so such a film can show fewer
+  badges than the same film opened from the server.
+- **A series has no awards panel.** The Academy does not give programmes Oscars,
+  and the archive is searched by title, so a series is never asked about at all —
+  a programme sharing a name with a film would otherwise be handed the film's
+  nominations. Emmys are a different body with a different API and are not part
+  of this.
+- **Awards are matched on the Academy's own spelling of a title.** The archive
+  matches exactly and case-sensitively, so a film catalogued under a translated
+  title, a subtitle the Academy omitted, or a name the filename parser mangled
+  has no awards as far as the app is concerned. There is no fuzzy match. What
+  does fix it is **Wrong film?**, which renames the film to the one you picked —
+  the awards are looked up again on the new name, so identifying a film corrects
+  its Oscars along with its artwork. Until then the quiet failure is deliberate:
+  attaching another film's Oscars would be worse than showing none.
 - **Playback position is shared with the server through VLC, and only VLC.** A
   film streamed through VLC now reports where it got to, so it resumes and is
   marked watched on every device — but four cases still do not. **IINA reports
@@ -1212,7 +1294,7 @@ Stated plainly, so nobody has to find out by using it:
   it through symlinks first, so a catalogue you did not write yourself is worth
   the same suspicion as any other file it hands you.
 - **Settings covers where your films are, and nothing else.** The screen asks
-  about watch folders, a Jellyfin server and the two API keys. `DatabasePath`,
+  about watch folders, a Jellyfin server and the three API keys. `DatabasePath`,
   `PosterCacheDir`, `DownloadFolder`, `JellyfinSftp`, `DownloadPosters` and
   `TmdbImageSize` are still file-only; they survive a save untouched, but nothing
   in the app edits them.

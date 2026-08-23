@@ -73,6 +73,7 @@ been configured. Editing it at all restores it to the top.
 | `DownloadFolder` | Where a film downloaded from Jellyfin is saved | `UrDatabase` inside your films folder |
 | `TmdbApiKey` | TMDB key for metadata and posters | none |
 | `OmdbApiKey` | OMDb key for the IMDb rating | none |
+| `UrActorApiKey` | UrActor key for the Academy Award nominations | none |
 | `DownloadPosters` | Cache posters to disk instead of loading them from TMDB | `false` |
 | `TmdbImageSize` | TMDB image size, e.g. `w185`, `w342`, `w500`, `original` | `w342` |
 | `SetupCompleted` | Written by the setup screen once answered; stops it being offered again | `false` |
@@ -118,13 +119,14 @@ ignored, so an unrecognised key never stops the app starting.
 
 ## 4) API keys
 
-Metadata and ratings are optional. Without keys the app still runs, scans your folders, and
-browses your library — it simply shows no posters and no rating.
+Metadata, ratings and awards are optional. Without keys the app still runs, scans your folders,
+and browses your library — it simply shows no posters, no rating and no Oscars.
 
 Keys resolve **most specific first**:
 
 1. whichever `appsettings.json` was loaded, per the order above
-2. the `URDATABASE_TMDB_API_KEY` / `URDATABASE_OMDB_API_KEY` environment variables
+2. the `URDATABASE_TMDB_API_KEY`, `URDATABASE_OMDB_API_KEY` and `URDATABASE_URACTOR_API_KEY`
+   environment variables
 3. whatever was compiled in at build time
 
 Official release builds have keys compiled in, so they work with no configuration. **A local
@@ -134,9 +136,14 @@ either of the first two routes — no rebuild required for the environment varia
 
 - A TMDB key is free from <https://www.themoviedb.org/settings/api>.
 - An OMDb key is free from <https://www.omdbapi.com/apikey.aspx>.
+- A UrActor key is free from <https://developer.uractor.com/>. Note that this API takes the key
+  as the last segment of the URL path rather than in a header, so it appears in server logs
+  like any other part of a URL. It is read-only access to public awards data.
 
 Ratings are cached in the database and never fetched twice, which matters because OMDb's free
-tier allows 1,000 lookups a day.
+tier allows 1,000 lookups a day. Awards are cached the same way, including the answer "never
+nominated" — UrActor allows 60 requests a minute, and browsing a library is a great many films
+opened quickly. A rate limit is deliberately not cached as an answer.
 
 ## 5) Publishing
 
@@ -152,10 +159,11 @@ Release builds add the keys as MSBuild properties:
 
 ```bash
 dotnet publish src/UrDatabase.App/UrDatabase.App.csproj -c Release -r osx-arm64 --self-contained \
-  -p:TmdbApiKey="$TMDB_API_KEY" -p:OmdbApiKey="$OMDB_API_KEY"
+  -p:TmdbApiKey="$TMDB_API_KEY" -p:OmdbApiKey="$OMDB_API_KEY" \
+  -p:UrActorApiKey="$URACTOR_API_KEY"
 ```
 
-Both properties default to empty, so omitting them is always valid.
+All three properties default to empty, so omitting them is always valid.
 
 The version comes from `<Version>` in `Directory.Build.props`, the single source of truth.
 

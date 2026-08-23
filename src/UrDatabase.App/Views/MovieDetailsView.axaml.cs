@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Threading;
@@ -56,6 +57,14 @@ namespace UrDatabase.Views
         /// screen borrows it rather than building a second one that would ask OMDb again.
         /// </summary>
         private Func<string?, long?, CancellationToken, Task<double?>>? _ratingLookup;
+
+        /// <summary>
+        /// How to look up Academy Award nominations for a film that has just been re-identified.
+        /// Owned by the main window for the same reason as <see cref="_ratingLookup"/>: it holds
+        /// the service and the catalogue it caches through, and a second one here would ask the
+        /// archive again for an answer already on disk.
+        /// </summary>
+        private Func<string?, int?, CancellationToken, Task<OscarHonours>>? _awardsLookup;
 
         /// <summary>
         /// The server, for downloading a film off it. Null when none is configured, which hides
@@ -116,7 +125,8 @@ namespace UrDatabase.Views
             AppConfig? config = null,
             Func<string?, long?, CancellationToken, Task<double?>>? ratingLookup = null,
             JellyfinClient? jellyfin = null,
-            CancellationToken appLifetime = default)
+            CancellationToken appLifetime = default,
+            Func<string?, int?, CancellationToken, Task<OscarHonours>>? awardsLookup = null)
         {
             // Leaving one film open behind another would strand its completion source and hang
             // whichever caller was awaiting it.
@@ -126,6 +136,7 @@ namespace UrDatabase.Views
             _dbPath = dbPath;
             _config = config;
             _ratingLookup = ratingLookup;
+            _awardsLookup = awardsLookup;
             _jellyfin = jellyfin;
             _appLifetime = appLifetime;
             DownloadedSomething = false;
@@ -181,6 +192,9 @@ namespace UrDatabase.Views
         {
             TitleText.Text = vm.Title;
             FactsList.ItemsSource = DetailFacts.For(vm);
+            FlagsList.ItemsSource = MediaFlags.For(vm.Media);
+
+            ShowAwards(vm);
 
             GenresText.Text = vm.Genres ?? "";
             GenresText.IsVisible = !string.IsNullOrWhiteSpace(vm.Genres);
@@ -224,6 +238,36 @@ namespace UrDatabase.Views
                 : "Metadata and artwork from TMDB. This product uses the TMDB API but is not endorsed or certified by TMDB. IMDb rating retrieved from the OMDb API; neither IMDb nor OMDb endorses this application.";
 
             UpdateFileNote();
+        }
+
+        /// <summary>
+        /// Puts the Academy's verdict under the poster, or hides the whole panel.
+        /// </summary>
+        /// <remarks>
+        /// Hidden rather than emptied, and with no "no awards" line. Most films were never
+        /// nominated for anything, and a heading standing over nothing on nine films out of ten
+        /// reads as a request that failed rather than as a fact about the film.
+        /// </remarks>
+        private void ShowAwards(MovieDetailsVm vm)
+        {
+            var awards = vm.Awards ?? OscarHonours.None;
+
+            AwardsPanel.IsVisible = awards.Any;
+            if (!awards.Any)
+            {
+                AwardsList.ItemsSource = null;
+                return;
+            }
+
+            AwardsSummary.Text = awards.Ceremony is int ceremony
+                ? $"{OscarMatch.Summary(awards)} · {ceremony.ToString(CultureInfo.InvariantCulture)}"
+                : OscarMatch.Summary(awards);
+
+            AwardsList.ItemsSource = OscarMatch.Rows(awards, vm.Title);
+
+            var more = OscarMatch.MoreNotice(awards);
+            AwardsMore.Text = more;
+            AwardsMore.IsVisible = more.Length > 0;
         }
 
         /// <summary>
@@ -837,6 +881,18 @@ namespace UrDatabase.Views
             if (_ratingLookup is not null)
             {
                 vm.ImdbRating = await _ratingLookup(vm.ImdbId, vm.LocalId > 0 ? vm.LocalId : null, cts.Token);
+                if (!ReferenceEquals(Vm, vm)) return;
+            }
+
+            // Cleared and asked again for the same reason, and it is the correction that makes it
+            // worth asking at all: the awards archive is searched by title and matches exactly, so
+            // a film catalogued as "S W A T" had no awards until somebody said what it was. The
+            // rename above is what turns that into a name the Academy would recognise, and this is
+            // where the panel catches up with it rather than waiting to be reopened.
+            vm.Awards = OscarHonours.None;
+            if (_awardsLookup is not null)
+            {
+                vm.Awards = await _awardsLookup(vm.Title, vm.Year, cts.Token);
                 if (!ReferenceEquals(Vm, vm)) return;
             }
 
