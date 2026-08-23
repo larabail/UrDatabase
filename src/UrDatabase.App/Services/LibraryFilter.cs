@@ -36,6 +36,29 @@ namespace UrDatabase.Services
     }
 
     /// <summary>
+    /// What is being looked at, as opposed to where it is.
+    /// </summary>
+    /// <remarks>
+    /// The third question the library can be asked, and the newest. Television arrived on the same
+    /// shelves as film — a Jellyfin series carries real genres, so it lands in Drama beside the
+    /// films rather than in a wing of its own — and that is only defensible while somebody who
+    /// wants one and not the other can say so in a click. A row of shelves that silently mixed the
+    /// two would be worse than not having television at all.
+    ///
+    /// Kept apart from <see cref="LibrarySource"/> for exactly the reason that one is kept apart
+    /// from the genre row: a film can be in two places at once, and a card cannot be two kinds at
+    /// once, so folding them into one control would offer combinations that mean nothing.
+    /// </remarks>
+    public enum LibraryKind
+    {
+        Everything = 0,
+
+        Films = 1,
+
+        Television = 2
+    }
+
+    /// <summary>
     /// Narrows the library to one source, and counts what each holds.
     /// </summary>
     public static class LibraryFilter
@@ -105,6 +128,71 @@ namespace UrDatabase.Services
                 LibrarySource.Everywhere,
                 LibrarySource.ThisComputer,
                 LibrarySource.Server
+            };
+        }
+
+        // ---------- what a thing is ----------
+
+        /// <summary>
+        /// The library narrowed to films, or to television, or left alone. Unlike a source, a card
+        /// answers to exactly one of these: nothing is both.
+        /// </summary>
+        public static IReadOnlyList<UiMovie> Apply(IEnumerable<UiMovie>? movies, LibraryKind kind)
+        {
+            if (movies is null) return new List<UiMovie>();
+
+            return kind switch
+            {
+                LibraryKind.Films => movies.Where(m => m.IsFilm).ToList(),
+                LibraryKind.Television => movies.Where(m => m.IsSeries).ToList(),
+                _ => movies.ToList()
+            };
+        }
+
+        /// <summary>
+        /// How many cards a kind holds, counted on <see cref="UiMovie.Key"/> for the same reason
+        /// the source counts are: every remote card carries local id 0.
+        ///
+        /// These do add up to the total, which the source counts deliberately do not.
+        /// </summary>
+        public static int Count(IEnumerable<UiMovie>? movies, LibraryKind kind)
+            => Apply(movies, kind).Select(m => m.Key).Distinct(System.StringComparer.Ordinal).Count();
+
+        /// <summary>The name on the control.</summary>
+        public static string Label(LibraryKind kind) => kind switch
+        {
+            LibraryKind.Films => "Films",
+
+            // "Television" rather than "TV" or "Shows". The app's own vocabulary is unabbreviated
+            // everywhere else, and "Shows" reads as a verb in a row of nouns.
+            LibraryKind.Television => "Television",
+            _ => "Everything"
+        };
+
+        /// <summary>
+        /// Whether the kind row is worth showing, on the same terms as <see cref="Available"/>: a
+        /// library holding only films — which is every library this app has ever had until now —
+        /// grows no control, and neither does one holding only television.
+        ///
+        /// The rule is not an optimisation. A permanent "Television 0" beside "Films 412" is a
+        /// control whose only possible use is to empty the window, and a row of three that all
+        /// select the same cards invites a click that appears to do nothing.
+        /// </summary>
+        public static IReadOnlyList<LibraryKind> AvailableKinds(IEnumerable<UiMovie>? movies)
+        {
+            var materialised = movies as IReadOnlyCollection<UiMovie> ?? movies?.ToList();
+            if (materialised is null || materialised.Count == 0) return new List<LibraryKind>();
+
+            var films = Count(materialised, LibraryKind.Films);
+            var television = Count(materialised, LibraryKind.Television);
+
+            if (films == 0 || television == 0) return new List<LibraryKind>();
+
+            return new List<LibraryKind>
+            {
+                LibraryKind.Everything,
+                LibraryKind.Films,
+                LibraryKind.Television
             };
         }
     }

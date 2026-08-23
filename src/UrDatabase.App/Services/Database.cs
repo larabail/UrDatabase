@@ -306,6 +306,47 @@ CREATE TABLE IF NOT EXISTS jellyfin_movies (
     synced_at        TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS ix_jellyfin_movies_title ON jellyfin_movies(title);
+CREATE TABLE IF NOT EXISTS jellyfin_series (
+    item_id          TEXT PRIMARY KEY,
+    title            TEXT NOT NULL,
+    year             INTEGER,
+    genres           TEXT,
+    overview         TEXT,
+    community_rating REAL,
+    imdb_id          TEXT,
+    tmdb_id          TEXT,
+    cast_list        TEXT,
+    crew_list        TEXT,
+    image_tag        TEXT,
+    season_count     INTEGER,
+    episode_count    INTEGER,
+    synced_at        TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ix_jellyfin_series_title ON jellyfin_series(title);
+CREATE TABLE IF NOT EXISTS jellyfin_seasons (
+    item_id       TEXT PRIMARY KEY,
+    series_id     TEXT NOT NULL,
+    name          TEXT NOT NULL,
+    season_number INTEGER,
+    image_tag     TEXT,
+    episode_count INTEGER,
+    synced_at     TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ix_jellyfin_seasons_series ON jellyfin_seasons(series_id);
+CREATE TABLE IF NOT EXISTS jellyfin_episodes (
+    item_id          TEXT PRIMARY KEY,
+    series_id        TEXT NOT NULL,
+    season_id        TEXT,
+    name             TEXT NOT NULL,
+    season_number    INTEGER,
+    episode_number   INTEGER,
+    overview         TEXT,
+    runtime_minutes  INTEGER,
+    community_rating REAL,
+    image_tag        TEXT,
+    synced_at        TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ix_jellyfin_episodes_series ON jellyfin_episodes(series_id);
 CREATE VIRTUAL TABLE IF NOT EXISTS movies_fts USING fts5(title, genres, content='movies', content_rowid='id');
 CREATE TRIGGER IF NOT EXISTS movies_ai AFTER INSERT ON movies BEGIN
     INSERT INTO movies_fts(rowid, title, genres) VALUES (new.id, new.title, new.genres);

@@ -100,19 +100,22 @@ namespace UrDatabase.Controls
         }
 
         /// <summary>
-        /// Shows the pending plate exactly when there is no artwork to show. The film's parsed
-        /// title and year go on it because that is all the app knows at that point, and a card
-        /// that admits what it knows is more use than an empty rectangle.
+        /// Shows the pending plate exactly when there is no artwork to show, and fills it whether
+        /// or not it is showing. A card that has artwork on the way can still end up on this plate
+        /// — see <see cref="LoadPoster"/> — and the text used to be written only on the branch
+        /// where the plate was already visible, so a poster that failed to arrive revealed a plate
+        /// nothing had written to. See <see cref="PosterPlate"/>.
         /// </summary>
         private void UpdatePending()
         {
-            var pending = string.IsNullOrWhiteSpace(SourcePath);
+            Pending.IsVisible = PosterPlate.ShouldShow(SourcePath, PosterImage.Source is not null);
+            FillPending();
+        }
 
-            Pending.IsVisible = pending;
-            if (!pending) return;
-
-            PendingTitle.Text = string.IsNullOrWhiteSpace(Title) ? "Untitled" : Title;
-            PendingYear.Text = Year?.ToString(CultureInfo.InvariantCulture) ?? "";
+        private void FillPending()
+        {
+            PendingTitle.Text = PosterPlate.Caption(Title);
+            PendingYear.Text = PosterPlate.YearLabel(Year);
             PendingYear.IsVisible = Year is not null;
         }
 
@@ -134,9 +137,11 @@ namespace UrDatabase.Controls
             PosterImage.Source = bitmap;
 
             // A path that resolved to nothing — a poster deleted out of the cache, a URL that
-            // 404s — leaves the card blank otherwise, which looks like a rendering fault. The
-            // pending plate is the honest thing to show instead.
-            if (bitmap is null) Pending.IsVisible = true;
+            // 404s, a whole server that cannot be reached — leaves the card blank otherwise,
+            // which looks like a rendering fault. The plate is the honest thing to show instead,
+            // and it is filled again here because the title may have arrived while the request
+            // was in flight.
+            UpdatePending();
         }
     }
 }

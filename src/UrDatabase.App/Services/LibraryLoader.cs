@@ -132,9 +132,10 @@ namespace UrDatabase.Services
             var status = failure ?? LibraryStatus.Describe(
                 localCount: shown.Count,
                 localWithPosters: shown.Count(x => !string.IsNullOrWhiteSpace(x.PosterPath)),
-                remoteCount: matched.Count,
+                remoteCount: matched.Count(x => x.IsFilm),
                 hasLocalDatabase: _repository.Exists,
-                databasePath: _repository.DatabasePath);
+                databasePath: _repository.DatabasePath,
+                remoteSeriesCount: matched.Count(x => x.IsSeries));
 
             return new LibraryView(query, shown, matched, all, status);
         }

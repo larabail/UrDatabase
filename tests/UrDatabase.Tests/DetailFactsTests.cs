@@ -144,7 +144,8 @@ namespace UrDatabase.Tests
         public void A_film_with_nothing_known_about_it_produces_an_empty_row_rather_than_throwing()
         {
             Assert.Empty(DetailFacts.For(new MovieDetailsVm()));
-            Assert.Empty(DetailFacts.For(null));
+            Assert.Empty(DetailFacts.For((MovieDetailsVm?)null));
+            Assert.Empty(DetailFacts.For((SeriesDetailsVm?)null));
         }
 
         /// <summary>
