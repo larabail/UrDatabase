@@ -108,6 +108,15 @@
                                 Classes="primary"
                                 Content="▶  Play"
                                 Click="PlayBtn_Click"/>
+                        <!-- Only on a film that will genuinely be resumed, because
+                             it is only then that starting over is a choice
+                             somebody has to be given. See PlayPrompts.CanResume. -->
+                        <Button x:Name="StartAgainButton"
+                                Classes="ghost"
+                                Height="34"
+                                IsVisible="False"
+                                Content="Start again"
+                                Click="StartAgain_Click"/>
                         <Button x:Name="LinkFileButton"
                                 Classes="ghost"
                                 Height="34"

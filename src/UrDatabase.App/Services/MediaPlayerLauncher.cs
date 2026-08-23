@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 
@@ -44,6 +45,19 @@ namespace UrDatabase.Services
             /// always has and reports nothing.
             /// </remarks>
             public bool CanReportProgress =>
+                string.Equals(Name, Vlc, StringComparison.OrdinalIgnoreCase);
+
+            /// <summary>
+            /// True when this player can be told to open a film part way through.
+            /// </summary>
+            /// <remarks>
+            /// A separate question from <see cref="CanReportProgress"/>, though both currently
+            /// answer "is it VLC". Reporting needs the HTTP control interface; starting at an
+            /// offset needs <c>--start-time</c>, which is an ordinary command line argument a
+            /// player could perfectly well have without the other. Kept apart so that whichever
+            /// arrives first for some future player does not silently imply the other.
+            /// </remarks>
+            public bool CanStartAtAnOffset =>
                 string.Equals(Name, Vlc, StringComparison.OrdinalIgnoreCase);
         }
 
@@ -131,7 +145,16 @@ namespace UrDatabase.Services
         /// The loopback control interface to add, or null for a plain launch. Only ever supplied
         /// for VLC; see <see cref="PlayerCandidate.CanReportProgress"/>.
         /// </param>
-        public static ProcessStartInfo BuildStartInfo(PlayerCandidate player, string url, VlcControlEndpoint? control = null)
+        /// <param name="startAtTicks">
+        /// Where to open the film, for one being resumed. Ignored by a player that cannot seek
+        /// from the command line, which is why the button offering it is only shown for one that
+        /// can — a label promising to continue and a film starting again is worse than no label.
+        /// </param>
+        public static ProcessStartInfo BuildStartInfo(
+            PlayerCandidate player,
+            string url,
+            VlcControlEndpoint? control = null,
+            long startAtTicks = 0)
         {
             if (player is null) throw new ArgumentNullException(nameof(player));
             if (string.IsNullOrWhiteSpace(url)) throw new ArgumentException("A stream URL is required.", nameof(url));
@@ -143,6 +166,16 @@ namespace UrDatabase.Services
             {
                 foreach (var argument in VlcControl.BuildArguments(control))
                     psi.ArgumentList.Add(argument);
+            }
+
+            if (startAtTicks > 0 && player.CanStartAtAnOffset)
+            {
+                // Seconds, and invariant: VLC parses this as a float and a machine set to a locale
+                // that writes decimals with a comma would otherwise hand it something it reads as
+                // a different number, or as nothing.
+                psi.ArgumentList.Add("--start-time");
+                psi.ArgumentList.Add(
+                    PlaybackPosition.TicksToSeconds(startAtTicks).ToString("0.###", CultureInfo.InvariantCulture));
             }
 
             return psi;
@@ -157,8 +190,12 @@ namespace UrDatabase.Services
         /// when there is nowhere to report to — no server, or a film with no id on it — so a
         /// player is not given an interface nothing is going to read.
         /// </param>
+        /// <param name="startAtTicks">
+        /// Where to open the film. Zero starts at the beginning, which is every film nobody has
+        /// half-watched and every one somebody asked to start again.
+        /// </param>
         /// <exception cref="MediaPlayerNotFoundException">Neither player is installed.</exception>
-        public static LaunchedPlayer Play(string url, bool withProgressReporting = false)
+        public static LaunchedPlayer Play(string url, bool withProgressReporting = false, long startAtTicks = 0)
         {
             if (string.IsNullOrWhiteSpace(url))
                 throw new ArgumentException("A stream URL is required.", nameof(url));
@@ -176,21 +213,30 @@ namespace UrDatabase.Services
 
             try
             {
-                Process.Start(BuildStartInfo(player, url, control));
+                Process.Start(BuildStartInfo(player, url, control, startAtTicks));
             }
             catch when (control is not null)
             {
                 // Vanishingly unlikely, and worth one retry: a VLC too old to understand these
                 // arguments would refuse to start at all, and the film matters more than the
-                // position. Anything that fails without an interface too is a real failure and is
-                // left to the caller.
+                // position. The offset is kept — it is a much older argument than the interface
+                // is, and losing the place somebody asked to return to is the visible failure.
+                // Anything that fails without an interface too is a real failure and is left to
+                // the caller.
                 AppLog.Write("jellyfin.log", "the control interface was refused; playing without it");
-                Process.Start(BuildStartInfo(player, url));
+                Process.Start(BuildStartInfo(player, url, control: null, startAtTicks));
                 return new LaunchedPlayer(player, null);
             }
 
             return new LaunchedPlayer(player, control);
         }
+
+        /// <summary>
+        /// True when the player installed on this machine can open a film part way through, so the
+        /// screen knows whether it may offer to. False with nothing installed at all, which is the
+        /// same answer for this purpose: there is nothing to promise.
+        /// </summary>
+        public static bool CanResumeHere() => Find()?.CanStartAtAnOffset ?? false;
 
     }
 }

@@ -47,6 +47,7 @@ namespace UrDatabase.Services
                 if (card is null) continue;
                 card.ResumeFraction = null;
                 card.ResumeNote = null;
+                card.ResumePositionTicks = 0;
             }
 
             if (resume is null) return Array.Empty<UiMovie>();
@@ -77,6 +78,9 @@ namespace UrDatabase.Services
                     entry.PositionTicks,
                     entry.RuntimeTicks,
                     entry.PlayedPercentage);
+
+                // The seek target, kept exact. Everything above is for drawing and reading.
+                card.ResumePositionTicks = entry.PositionTicks;
 
                 row.Add(card);
             }

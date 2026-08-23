@@ -199,9 +199,11 @@ It runs on Windows and macOS from one codebase, built with
   is the server's own answer, so a film started on the television carries on
   here. Cached like the library, so it is on screen the instant the window opens
   and stays there with the server switched off; an empty row is not shown at
-  all. Films played here report back, so what you watch in UrDatabase appears in
-  Continue watching everywhere else too — VLC only, and see
-  [Known gaps](#known-gaps) for what that costs
+  all. Opening such a film replaces **Play** with **Continue watching**, which
+  starts it where you stopped rather than at the beginning, with **Start again**
+  beside it for when that is not what you wanted. Films played here report back,
+  so what you watch in UrDatabase appears in Continue watching everywhere else
+  too — VLC only, and see [Known gaps](#known-gaps) for what that costs
   (`Services/ResumeRow`, `Services/PlaybackReporter`, `Services/VlcStatus`).
 - **Download a server film to watch offline.** A film on the server has a
   **Download** button that keeps a copy on this disk, named the way the scanner
@@ -688,6 +690,28 @@ only in this row. It is the same film and the same fact, and a mark that
 vanished as soon as you looked at the Drama shelf would be answering "where was
 I" only in the place you already knew. The tooltip says it in words.
 
+#### Picking a film up where you left it
+
+Opening a part-watched film puts **▶ Continue watching** where **Play** normally
+is, and **Start again** beside it. Continue watching hands VLC `--start-time`
+with the position the server reported, so the film opens where you stopped;
+Start again opens it at zero. Jellyfin direct-plays with byte ranges, which is
+what lets VLC seek an HTTP input at all.
+
+The button only says "Continue watching" when it will genuinely do that, and
+four things have to hold at once: the server has a position for the film, the
+film is being streamed rather than played from a downloaded copy, the stream
+exists at all, and the installed player takes an offset. Fail any one and the
+button reads **Play** and starts from the beginning, with the line underneath
+saying why — an IINA user is told outright that only VLC can be told where to
+open a film, rather than being left to wonder why a film the row calls
+part-watched starts over.
+
+That rule lives in `PlayPrompts.CanResume`, and the label and the seek position
+are both read off it, so the button's words and its behaviour cannot drift
+apart. A button that names what it will do and then does something else is
+worse than one that never offered.
+
 #### Reporting playback back to the server
 
 Films played here report their position back, so what you watch in UrDatabase
@@ -1144,14 +1168,14 @@ Stated plainly, so nobody has to find out by using it:
 - **Playback position is shared with the server through VLC, and only VLC.** A
   film streamed through VLC now reports where it got to, so it resumes and is
   marked watched on every device — but four cases still do not. **IINA reports
-  nothing**: it is mpv underneath and exposes a JSON IPC socket rather than an
-  HTTP interface, which is a different protocol over a different transport, so an
-  IINA user plays films exactly as before and contributes nothing to Continue
-  watching. **A downloaded film reports nothing**, because it is opened with the
-  system's default opener, which is not necessarily VLC and may well be away from
-  the server anyway — the position is simply not recorded, rather than queued for
-  later delivery. **Television is neither reported nor shown in the row**: the
-  resume list is asked for films only, so an episode you are part way through
+  nothing, and cannot resume**: it is mpv underneath and exposes a JSON IPC
+  socket rather than an HTTP interface, which is a different protocol over a
+  different transport, so an IINA user plays films exactly as before, sees
+  **Play** rather than **Continue watching**, and contributes nothing to the
+  row. **A downloaded film reports nothing and does not resume**, because it is
+  opened with the system's default opener, which is not necessarily VLC, takes a
+  path and nothing else, and may well be away from the server anyway — the
+  position is simply not recorded, rather than queued for later delivery. **Television is neither reported nor shown in the row**: the  resume list is asked for films only, so an episode you are part way through
   appears in Continue watching everywhere except here, and playing one here
   records nothing. Putting episodes in the row would mean a card for something
   that is neither a programme nor a film but one episode of one, which is a card
