@@ -5,11 +5,21 @@ using Xunit;
 
 namespace UrDatabase.Tests
 {
+    /// <summary>
+    /// In the environment-variable collection because the install directory can now be moved by
+    /// one, and a class asserting where it is by default cannot run beside a class that is
+    /// setting it.
+    /// </summary>
+    [Collection(EnvironmentVariables.CollectionName)]
     public class PlatformPathsTests
     {
         [Fact]
         public void App_data_paths_live_under_the_user_application_data_folder()
         {
+            // Cleared rather than assumed: a developer with the variable exported would otherwise
+            // see this fail for a reason that has nothing to do with the code.
+            using var scope = new EnvironmentVariableScope(PlatformPaths.AppDataVariable);
+
             var root = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "UrDatabase");
 
             Assert.Equal(root, PlatformPaths.AppDataRoot);
@@ -87,6 +97,31 @@ namespace UrDatabase.Tests
             var expanded = PlatformPaths.Expand("/media/%NOT_A_REAL_VARIABLE%/movies");
 
             Assert.Contains("movies", expanded);
+        }
+
+        [Fact]
+        public void A_downloaded_release_lands_in_the_users_own_downloads_folder()
+        {
+            // Which is what "download" means to everything else on the machine, and somewhere they
+            // already clear out — unlike the app's data directory, which nothing here ever empties.
+            var folder = PlatformPaths.ResolveUpdateFolder("/home/someone", "/data/UrDatabase", _ => true);
+
+            Assert.Equal(Path.Combine("/home/someone", "Downloads"), folder);
+        }
+
+        [Fact]
+        public void A_machine_with_no_downloads_folder_gets_one_inside_the_app_data_directory()
+        {
+            var folder = PlatformPaths.ResolveUpdateFolder("/home/someone", "/data/UrDatabase", _ => false);
+
+            Assert.Equal(Path.Combine("/data/UrDatabase", "updates"), folder);
+        }
+
+        [Fact]
+        public void The_update_folder_is_absolute_and_carries_no_windows_tokens()
+        {
+            Assert.True(Path.IsPathRooted(PlatformPaths.DefaultUpdateFolder));
+            Assert.DoesNotContain("%", PlatformPaths.DefaultUpdateFolder);
         }
     }
 }

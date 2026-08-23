@@ -180,6 +180,11 @@ namespace UrDatabase.Services
             AddColumnIfMissing(conn, "jellyfin_resume", "season_number", "INTEGER");
             AddColumnIfMissing(conn, "jellyfin_resume", "episode_number", "INTEGER");
             AddColumnIfMissing(conn, "jellyfin_resume", "name", "TEXT");
+
+            // What the server measured about a film's file, as JSON. Nothing asked Jellyfin for
+            // its media streams until now, so every library synced before this has the column
+            // absent and every film would fail on "no such column" the moment one was opened.
+            AddColumnIfMissing(conn, "jellyfin_movies", "media_info", "TEXT");
         }
 
         /// <summary>
@@ -318,6 +323,7 @@ CREATE TABLE IF NOT EXISTS jellyfin_movies (
     cast_list        TEXT,
     crew_list        TEXT,
     image_tag        TEXT,
+    media_info       TEXT,
     synced_at        TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS ix_jellyfin_movies_title ON jellyfin_movies(title);
@@ -381,6 +387,22 @@ CREATE TABLE IF NOT EXISTS jellyfin_resume_dismissals (
     position_ticks INTEGER NOT NULL,
     dismissed_at   TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS oscar_lookups (
+    title      TEXT    NOT NULL,
+    year       INTEGER NOT NULL,
+    fetched_at TEXT    NOT NULL,
+    PRIMARY KEY (title, year)
+);
+CREATE TABLE IF NOT EXISTS oscar_nominations (
+    title    TEXT    NOT NULL,
+    year     INTEGER NOT NULL,
+    ceremony INTEGER NOT NULL,
+    category TEXT    NOT NULL,
+    nominee  TEXT    NOT NULL,
+    detail   TEXT,
+    won      INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS ix_oscar_nominations_film ON oscar_nominations(title, year);
 CREATE VIRTUAL TABLE IF NOT EXISTS movies_fts USING fts5(title, genres, content='movies', content_rowid='id');
 CREATE TRIGGER IF NOT EXISTS movies_ai AFTER INSERT ON movies BEGIN
     INSERT INTO movies_fts(rowid, title, genres) VALUES (new.id, new.title, new.genres);

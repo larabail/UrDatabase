@@ -42,6 +42,13 @@ namespace UrDatabase.Services
             // app produces, and it is printed under Jellyfin's own name beside the IMDb one rather
             // than standing in for it.
             vm.CommunityRating ??= server.CommunityRating;
+
+            // Media info is deliberately NOT filled from the server, even when the local file's
+            // name says nothing. The badges describe the copy Play will open, and for a film in
+            // both places that is the one on this disk. The server's measurement is of its own
+            // file, which may well be the 4K remux where this disk holds a 1080p web rip — and a
+            // row of badges that describes a copy the user is not about to watch is worse than no
+            // badges at all.
         }
     }
 }

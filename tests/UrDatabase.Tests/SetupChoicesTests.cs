@@ -220,7 +220,8 @@ namespace UrDatabase.Tests
                 DatabasePath = "/somewhere/else/movies.db",
                 PosterCacheDir = "/somewhere/else/posters",
                 DownloadPosters = true,
-                TmdbImageSize = "original"
+                TmdbImageSize = "original",
+                CheckForUpdates = false
             };
 
             var config = WithFolder().ToConfig(previous);
@@ -229,6 +230,17 @@ namespace UrDatabase.Tests
             Assert.Equal("/somewhere/else/posters", config.PosterCacheDir);
             Assert.True(config.DownloadPosters);
             Assert.Equal("original", config.TmdbImageSize);
+
+            // The one with no control anywhere in the app: editing the file is the only way to say
+            // it, so putting it back to the default here would undo the only place it was said.
+            Assert.False(config.CheckForUpdates);
+        }
+
+        [Fact]
+        public void An_install_that_has_never_said_otherwise_keeps_the_update_check_on()
+        {
+            Assert.True(WithFolder().ToConfig().CheckForUpdates);
+            Assert.True(WithFolder().ToConfig(new AppConfig()).CheckForUpdates);
         }
 
         [Fact]
@@ -237,11 +249,30 @@ namespace UrDatabase.Tests
             var choices = WithFolder();
             choices.TmdbApiKey = "  pasted-with-a-newline\n";
             choices.OmdbApiKey = " ";
+            choices.UrActorApiKey = "  uractor-key ";
 
             var config = choices.ToConfig();
 
             Assert.Equal("pasted-with-a-newline", config.TmdbApiKey);
             Assert.Equal("", config.OmdbApiKey);
+            Assert.Equal("uractor-key", config.UrActorApiKey);
+        }
+
+        /// <summary>
+        /// Every key this screen edits has to make the round trip. A key the screen can set and
+        /// then silently drops on the next save is worse than one it never offered.
+        /// </summary>
+        [Fact]
+        public void A_key_typed_into_this_screen_comes_back_to_it()
+        {
+            var choices = SetupChoices.From(new AppConfig
+            {
+                WatchFolders = new[] { "/films" },
+                UrActorApiKey = "typed-by-the-user"
+            });
+
+            Assert.Equal("typed-by-the-user", choices.UrActorApiKey);
+            Assert.Equal("typed-by-the-user", choices.ToConfig().UrActorApiKey);
         }
 
         [Fact]

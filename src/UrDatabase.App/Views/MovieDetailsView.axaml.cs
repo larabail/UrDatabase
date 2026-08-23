@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Threading;
@@ -7,6 +8,7 @@ using System.Threading.Tasks;
 using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Interactivity;
+using Avalonia.Layout;
 using Avalonia.Platform.Storage;
 using UrDatabase.Models;
 using UrDatabase.Services;
@@ -58,6 +60,14 @@ namespace UrDatabase.Views
         private Func<string?, long?, CancellationToken, Task<double?>>? _ratingLookup;
 
         /// <summary>
+        /// How to look up Academy Award nominations for a film that has just been re-identified.
+        /// Owned by the main window for the same reason as <see cref="_ratingLookup"/>: it holds
+        /// the service and the catalogue it caches through, and a second one here would ask the
+        /// archive again for an answer already on disk.
+        /// </summary>
+        private Func<string?, int?, CancellationToken, Task<OscarHonours>>? _awardsLookup;
+
+        /// <summary>
         /// The server, for downloading a film off it. Null when none is configured, which hides
         /// the button rather than offering something that cannot work.
         /// </summary>
@@ -94,6 +104,31 @@ namespace UrDatabase.Views
         public bool DownloadedSomething { get; private set; }
 
         /// <summary>
+        /// A film the user picked off the related shelf, to be opened once this screen closes.
+        /// </summary>
+        /// <remarks>
+        /// Requested rather than opened here, and this is the whole reason it exists. Opening the
+        /// next film from inside the click handler would call <see cref="ShowAsync"/> while the
+        /// current one is still being awaited, so ten films followed in a row would be ten nested
+        /// awaits holding ten view models alive. The caller loops instead: it reads this, opens
+        /// that film, and comes back for the next one, so following a shelf costs the same as
+        /// opening one film however far it is followed.
+        /// </remarks>
+        public UiMovie? RequestedNext { get; private set; }
+
+        /// <summary>
+        /// Reads the request and clears it, so it is answered exactly once. A plain property would
+        /// still be set after the caller had acted on it, and the next screen to close without a
+        /// request of its own would open the same film again.
+        /// </summary>
+        public UiMovie? TakeRequestedNext()
+        {
+            var next = RequestedNext;
+            RequestedNext = null;
+            return next;
+        }
+
+        /// <summary>
         /// True once a correction on this screen renamed the film. Read by the caller after
         /// <see cref="ShowAsync"/> returns, for the same reason as
         /// <see cref="DownloadedSomething"/>: the library behind it is sorted and grouped by a name
@@ -116,7 +151,9 @@ namespace UrDatabase.Views
             AppConfig? config = null,
             Func<string?, long?, CancellationToken, Task<double?>>? ratingLookup = null,
             JellyfinClient? jellyfin = null,
-            CancellationToken appLifetime = default)
+            CancellationToken appLifetime = default,
+            Func<string?, int?, CancellationToken, Task<OscarHonours>>? awardsLookup = null,
+            RelatedShelf? related = null)
         {
             // Leaving one film open behind another would strand its completion source and hang
             // whichever caller was awaiting it.
@@ -126,10 +163,12 @@ namespace UrDatabase.Views
             _dbPath = dbPath;
             _config = config;
             _ratingLookup = ratingLookup;
+            _awardsLookup = awardsLookup;
             _jellyfin = jellyfin;
             _appLifetime = appLifetime;
             DownloadedSomething = false;
             RenamedSomething = false;
+            RequestedNext = null;
             DataContext = vm;
 
             _cts?.Cancel();
@@ -137,6 +176,7 @@ namespace UrDatabase.Views
             _closed = new TaskCompletionSource();
 
             Bind(vm);
+            ShowRelated(related);
             IsVisible = true;
 
             // Focus has to land inside this screen or Escape and the arrow keys keep going to
@@ -181,6 +221,9 @@ namespace UrDatabase.Views
         {
             TitleText.Text = vm.Title;
             FactsList.ItemsSource = DetailFacts.For(vm);
+            FlagsList.ItemsSource = MediaFlags.For(vm.Media);
+
+            ShowAwards(vm);
 
             GenresText.Text = vm.Genres ?? "";
             GenresText.IsVisible = !string.IsNullOrWhiteSpace(vm.Genres);
@@ -224,6 +267,75 @@ namespace UrDatabase.Views
                 : "Metadata and artwork from TMDB. This product uses the TMDB API but is not endorsed or certified by TMDB. IMDb rating retrieved from the OMDb API; neither IMDb nor OMDb endorses this application.";
 
             UpdateFileNote();
+        }
+
+        /// <summary>
+        /// Fills the shelf of films to watch next, or hides it and gives the space back.
+        /// </summary>
+        /// <remarks>
+        /// The row heights are swapped rather than left fixed. With a shelf, the plot is capped so
+        /// the posters have somewhere to be; without one, the plot takes the star again and the
+        /// screen is exactly what it was before this existed. Leaving the plot capped either way
+        /// would reintroduce the empty band this shelf was added to fill, only higher up.
+        /// </remarks>
+        private void ShowRelated(RelatedShelf? related)
+        {
+            var shelf = related ?? RelatedShelf.Empty;
+
+            RelatedPane.IsVisible = shelf.Any;
+            RelatedList.ItemsSource = shelf.Any ? shelf.Films : null;
+            RelatedHeading.Text = shelf.Heading;
+
+            var rows = ((Grid)RelatedPane.Parent!).RowDefinitions;
+            rows[3].Height = shelf.Any ? GridLength.Auto : new GridLength(1, GridUnitType.Star);
+            rows[4].Height = shelf.Any ? new GridLength(1, GridUnitType.Star) : GridLength.Auto;
+
+            // Only capped when something is competing for the space. A film with a long plot and
+            // a shelf scrolls the plot, which is what the ScrollViewer around it was always for.
+            PlotPane.MaxHeight = shelf.Any ? 168 : double.PositiveInfinity;
+        }
+
+        /// <summary>
+        /// Asks the caller to open a film off the shelf, and leaves. See
+        /// <see cref="RequestedNext"/> for why it does not open it here.
+        /// </summary>
+        private void RelatedCard_Click(object? sender, PointerPressedEventArgs e)
+        {
+            if (!e.GetCurrentPoint(sender as Control).Properties.IsLeftButtonPressed) return;
+            if ((sender as Control)?.DataContext is not UiMovie film) return;
+
+            RequestedNext = film;
+            Close();
+        }
+
+        /// <summary>
+        /// Puts the Academy's verdict under the poster, or hides the whole panel.
+        /// </summary>
+        /// <remarks>
+        /// Hidden rather than emptied, and with no "no awards" line. Most films were never
+        /// nominated for anything, and a heading standing over nothing on nine films out of ten
+        /// reads as a request that failed rather than as a fact about the film.
+        /// </remarks>
+        private void ShowAwards(MovieDetailsVm vm)
+        {
+            var awards = vm.Awards ?? OscarHonours.None;
+
+            AwardsPanel.IsVisible = awards.Any;
+            if (!awards.Any)
+            {
+                AwardsList.ItemsSource = null;
+                return;
+            }
+
+            AwardsSummary.Text = awards.Ceremony is int ceremony
+                ? $"{OscarMatch.Summary(awards)} · {ceremony.ToString(CultureInfo.InvariantCulture)}"
+                : OscarMatch.Summary(awards);
+
+            AwardsList.ItemsSource = OscarMatch.Rows(awards, vm.Title);
+
+            var more = OscarMatch.MoreNotice(awards);
+            AwardsMore.Text = more;
+            AwardsMore.IsVisible = more.Length > 0;
         }
 
         /// <summary>
@@ -837,6 +949,18 @@ namespace UrDatabase.Views
             if (_ratingLookup is not null)
             {
                 vm.ImdbRating = await _ratingLookup(vm.ImdbId, vm.LocalId > 0 ? vm.LocalId : null, cts.Token);
+                if (!ReferenceEquals(Vm, vm)) return;
+            }
+
+            // Cleared and asked again for the same reason, and it is the correction that makes it
+            // worth asking at all: the awards archive is searched by title and matches exactly, so
+            // a film catalogued as "S W A T" had no awards until somebody said what it was. The
+            // rename above is what turns that into a name the Academy would recognise, and this is
+            // where the panel catches up with it rather than waiting to be reopened.
+            vm.Awards = OscarHonours.None;
+            if (_awardsLookup is not null)
+            {
+                vm.Awards = await _awardsLookup(vm.Title, vm.Year, cts.Token);
                 if (!ReferenceEquals(Vm, vm)) return;
             }
 

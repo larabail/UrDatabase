@@ -160,11 +160,13 @@ namespace UrDatabase.Services
                 WatchFolders = config.WatchFolders ?? Array.Empty<string>(),
                 TmdbApiKey = config.TmdbApiKey ?? "",
                 OmdbApiKey = config.OmdbApiKey ?? "",
+                UrActorApiKey = config.UrActorApiKey ?? "",
                 PosterCacheDir = BlankWhenDefault(config.PosterCacheDir, PlatformPaths.DefaultPosterCacheDir),
                 DownloadFolder = BlankWhenDefault(config.DownloadFolder, PlatformPaths.DefaultDownloadFolder),
                 config.DownloadPosters,
                 TmdbImageSize = config.TmdbImageSize ?? "",
                 config.SetupCompleted,
+                config.CheckForUpdates,
                 Jellyfin = new
                 {
                     jellyfin.ServerUrl,

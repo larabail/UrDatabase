@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
+using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -114,6 +115,12 @@ namespace UrDatabase.Views
         /// <summary>Rebuilt whenever the configuration changes; never null once the window exists.</summary>
         private ImdbRatingService _ratings = null!;
 
+        /// <summary>
+        /// Academy Award nominations, cached in the catalogue. Rebuilt with the configuration for
+        /// the same reason as the rating service, and idle until a film is opened.
+        /// </summary>
+        private OscarsService _awards = null!;
+
         /// <summary>Rebuilt with the configuration, because the catalogue can move. Never null once the window exists.</summary>
         private LibraryLoader _library = null!;
 
@@ -139,6 +146,26 @@ namespace UrDatabase.Views
         private bool _syncing;
 
         /// <summary>
+        /// The release the banner is offering, or null when there is nothing to offer — which is
+        /// every launch on the newest build, every launch with the check switched off, and every
+        /// launch that could not reach GitHub.
+        /// </summary>
+        private AvailableUpdate? _update;
+
+        /// <summary>Non-null only while a build is being fetched, which is what makes one button do Cancel too.</summary>
+        private CancellationTokenSource? _updateCts;
+
+        /// <summary>Where the fetched build landed, so pressing the button again opens it rather than fetching it twice.</summary>
+        private string? _updateDownloadPath;
+
+        /// <summary>
+        /// Set when a fetch failed. The button then offers the website, because a failed download
+        /// that leaves somebody with nothing to press is a dead end, and the website is where they
+        /// would have gone had the app never offered at all.
+        /// </summary>
+        private bool _updateFetchFailed;
+
+        /// <summary>
         /// Set once the poster loader has been given its chance to finish, so the close that
         /// follows the drain is not deferred a second time.
         /// </summary>
@@ -158,7 +185,7 @@ namespace UrDatabase.Views
 
             // Runs after the poster drain in OnClosing, and has to: cancelling this first would
             // cut short the very fetches the drain is there to let finish.
-            Closed += (_, __) => { _cts.Cancel(); _searchLoop.Dispose(); _posterLoader?.Dispose(); _ratings.Dispose(); _jellyfin?.Dispose(); };
+            Closed += (_, __) => { _cts.Cancel(); _searchLoop.Dispose(); _posterLoader?.Dispose(); _ratings.Dispose(); _awards.Dispose(); _jellyfin?.Dispose(); };
 
             DataContext = this;
 
@@ -183,6 +210,13 @@ namespace UrDatabase.Views
             // absent server delays nothing anybody is looking at.
             if (_jellyfin is not null)
                 Dispatcher.UIThread.Post(() => _ = SyncJellyfinAsync(announceFailure: false));
+
+            // Same reasoning, and the same posture: the check happens behind an already usable
+            // window, and an unreachable GitHub costs a background task and nothing on screen.
+            // Switched off in configuration it does not happen at all, rather than happening and
+            // having its answer hidden — an install kept off the network stays off it.
+            if (_config.CheckForUpdates)
+                Dispatcher.UIThread.Post(() => _ = CheckForUpdateAsync());
         }
 
         /// <summary>
@@ -257,6 +291,9 @@ namespace UrDatabase.Views
             // at all when no OMDb key is available.
             _ratings?.Dispose();
             _ratings = new ImdbRatingService(new OmdbService(_config.OmdbApiKey), ownsLookup: true);
+
+            _awards?.Dispose();
+            _awards = new OscarsService(new UrActorService(_config.UrActorApiKey), ownsLookup: true);
 
             // Nothing is constructed, and no database is touched, when no server is configured.
             _jellyfin?.Dispose();
@@ -1041,6 +1078,221 @@ namespace UrDatabase.Views
                 await SyncJellyfinAsync(announceFailure: true);
         }
 
+        // ==============================================================
+        //  the update banner
+        // ==============================================================
+
+        /// <summary>
+        /// Asks GitHub whether there is a newer release and, if there is one worth mentioning,
+        /// raises the banner.
+        ///
+        /// Runs on the UI thread and stays there: the request is awaited, so every line that
+        /// touches a control is a continuation on the same thread rather than a marshalled post.
+        /// Nothing here is allowed to matter — an update check that could take the window down
+        /// with it would be a far worse fault than one that never ran.
+        /// </summary>
+        private async Task CheckForUpdateAsync()
+        {
+            try
+            {
+                using var service = new UpdateService();
+
+                var update = await service.CheckAsync(_cts.Token);
+                if (update is null) return;
+
+                // Asked after the request rather than before it. The file records one version and
+                // this is the only place that knows which version was actually found, so reading it
+                // first would mean loading it on every launch to answer a question that usually
+                // never gets asked.
+                if (!UpdatePrompt.ShouldShow(update, UpdateState.Load().SkippedVersion))
+                {
+                    AppLog.Write("update.log", $"{update.Version} is available and was dismissed earlier; saying nothing.");
+                    return;
+                }
+
+                _update = update;
+                UpdateHeadline.Text = UpdatePrompt.Headline(update);
+                UpdateDetail.Text = UpdatePrompt.Detail(update, service.RunningVersion);
+                UpdateActionButton.Content = UpdatePrompt.ActionText(update);
+                UpdateBanner.IsVisible = true;
+
+                // The one line that makes "why was I never told about 0.12.0?" answerable. A check
+                // that finds nothing writes nothing, so this file stays empty on an up-to-date
+                // install rather than growing a line per launch.
+                AppLog.Write(
+                    "update.log",
+                    $"{service.RunningVersion} is behind {update.Version}; offering {update.Asset?.Name ?? "the downloads page"}.");
+            }
+            catch (OperationCanceledException)
+            {
+                // The window closed while the check was in flight.
+            }
+            catch (Exception ex)
+            {
+                AppLog.Write("update.log", $"update check failed: {ex}");
+            }
+        }
+
+        /// <summary>
+        /// The banner's one action, which is four depending on where things stand: stop a running
+        /// download, open one that has already landed, fetch the build, or — when there is nothing
+        /// this app can fetch — open the downloads page.
+        ///
+        /// One button rather than four, because only one of them is ever the sensible thing to do
+        /// and a row of disabled controls says less than a single live one.
+        /// </summary>
+        private async void UpdateAction_Click(object? sender, RoutedEventArgs e)
+        {
+            if (_updateCts is not null)
+            {
+                _updateCts.Cancel();
+                return;
+            }
+
+            // Checked against the disk and not just the field: the archive can be moved or thrown
+            // away between the download finishing and somebody pressing this, and re-fetching is a
+            // better answer than opening a path that no longer exists.
+            if (_updateDownloadPath is string ready && File.Exists(ready))
+            {
+                OpenDownloadedUpdate(ready);
+                return;
+            }
+
+            var update = _update;
+            if (update is null) return;
+
+            if (_updateFetchFailed || update.Asset is not UpdateAsset asset)
+            {
+                await OpenWebAsync(UpdateFeed.DownloadsPageUrl);
+                return;
+            }
+
+            await DownloadUpdateAsync(update, asset);
+        }
+
+        /// <summary>
+        /// Fetches the build, then opens it. Opening it is as far as this goes: the running app
+        /// cannot replace itself — on macOS it is a signed bundle that would invalidate its own
+        /// signature, on Windows a folder of files it holds open — so the honest end of this
+        /// journey is the archive, in front of the user, in whatever their machine opens it with.
+        /// </summary>
+        private async Task DownloadUpdateAsync(AvailableUpdate update, UpdateAsset asset)
+        {
+            _updateCts = CancellationTokenSource.CreateLinkedTokenSource(_cts.Token);
+
+            UpdateActionButton.Content = "Cancel";
+            UpdateLaterButton.IsEnabled = false;
+            UpdateProgressBar.IsVisible = true;
+            UpdateProgressBar.IsIndeterminate = true;
+            UpdateProgressBar.Value = 0;
+
+            var progress = new Progress<UpdateProgress>(report =>
+            {
+                UpdateDetail.Text = UpdatePrompt.Downloading(report);
+
+                // A server that sends no length leaves the bar sweeping rather than sitting at
+                // zero, which reads as stalled.
+                UpdateProgressBar.IsIndeterminate = report.Fraction is null;
+                if (report.Fraction is double fraction) UpdateProgressBar.Value = fraction;
+            });
+
+            try
+            {
+                using var downloader = new UpdateDownloader();
+
+                var path = await downloader.DownloadAsync(
+                    asset, PlatformPaths.DefaultUpdateFolder, progress, _updateCts.Token);
+
+                _updateDownloadPath = path;
+                _updateFetchFailed = false;
+
+                UpdateDetail.Text = UpdatePrompt.Downloaded(path);
+                UpdateActionButton.Content = UpdatePrompt.OpenAgainAction;
+
+                OpenDownloadedUpdate(path);
+            }
+            catch (OperationCanceledException)
+            {
+                // Only ever the user's own Cancel here, or the window closing, and in the second
+                // case there is nobody to tell.
+                if (!_cts.IsCancellationRequested)
+                {
+                    UpdateDetail.Text = UpdatePrompt.DownloadStopped;
+                    UpdateActionButton.Content = UpdatePrompt.ActionText(update);
+                }
+            }
+            catch (Exception ex)
+            {
+                AppLog.Write("update.log", $"could not fetch {asset.Name}: {ex}");
+
+                _updateFetchFailed = true;
+                UpdateDetail.Text = UpdatePrompt.DownloadFailed(ex is UpdateException ? ex.Message : null);
+                UpdateActionButton.Content = UpdatePrompt.WebsiteAction;
+            }
+            finally
+            {
+                _updateCts.Dispose();
+                _updateCts = null;
+
+                UpdateProgressBar.IsVisible = false;
+                UpdateLaterButton.IsEnabled = true;
+            }
+        }
+
+        /// <summary>
+        /// Hands the archive to the operating system. A failure here is not a failed update — the
+        /// file is on the disk and the message says where — so it says so rather than pretending
+        /// the download was wasted.
+        /// </summary>
+        private void OpenDownloadedUpdate(string path)
+        {
+            try
+            {
+                FileLauncher.Open(path);
+            }
+            catch (Exception ex)
+            {
+                AppLog.Write("update.log", $"could not open {path}: {ex.Message}");
+                UpdateDetail.Text = $"The update is at {path}, but it could not be opened from here.";
+            }
+        }
+
+        /// <summary>
+        /// Dismisses the banner and remembers the version, so this release is not announced again
+        /// on every launch until it is installed. A newer one still gets through.
+        /// </summary>
+        private void UpdateLater_Click(object? sender, RoutedEventArgs e)
+        {
+            UpdateBanner.IsVisible = false;
+            UpdateState.SaveSkipped(_update?.Version);
+        }
+
+        /// <summary>
+        /// The release notes, which are the only thing that answers "why should I?" — the first
+        /// question any update prompt raises and the one it is least able to answer itself.
+        /// </summary>
+        private async void UpdateNotes_Click(object? sender, RoutedEventArgs e) =>
+            await OpenWebAsync(_update?.Page ?? UpdateFeed.ReleasesPageUrl);
+
+        private async Task OpenWebAsync(string url)
+        {
+            try
+            {
+                FileLauncher.OpenUrl(url);
+            }
+            catch (Exception ex)
+            {
+                AppLog.Write("update.log", $"could not open {url}: {ex.Message}");
+
+                // The address is put on screen rather than only in a log, because a machine with
+                // no working default browser still has one somewhere the user can paste into.
+                await MessageBoxWindow.ShowAsync(
+                    this,
+                    "UrDatabase",
+                    $"Could not open your browser.{Environment.NewLine}{Environment.NewLine}{url}");
+            }
+        }
+
         /// <summary>
         /// Opens the details screen over the library, and puts the library back when it closes.
         /// </summary>
@@ -1051,13 +1303,14 @@ namespace UrDatabase.Views
         /// half of the screen. Hiding it also takes its buttons out of the tab order, which were
         /// otherwise still reachable, and still clickable, behind a screen covering them.
         /// </remarks>
-        private async Task ShowDetailsAsync(MovieDetailsVm vm)
+        private async Task ShowDetailsAsync(MovieDetailsVm vm, RelatedShelf? related = null)
         {
             LibraryRoot.IsVisible = false;
 
             try
             {
-                await DetailsView.ShowAsync(vm, _dbPath, _config, LoadImdbRatingAsync, _jellyfin, _cts.Token);
+                await DetailsView.ShowAsync(
+                    vm, _dbPath, _config, LoadImdbRatingAsync, _jellyfin, _cts.Token, LoadAwardsAsync, related);
 
                 // A downloaded film is a row the library behind this screen does not have yet: it
                 // would still be shown as living only on the server until something reloaded it.
@@ -1113,31 +1366,49 @@ namespace UrDatabase.Views
 
             if (!e.GetCurrentPoint(sender as Control).Properties.IsLeftButtonPressed) return;
 
-            // An episode only ever appears in the Continue watching row, and it opens its
-            // programme rather than playing on the spot. Every other card in this app opens a
-            // screen and every film is played from one, so a card that started a stream on a
-            // single click — in the first row on the page, under the cursor as the window opens —
-            // would be the one exception and the easiest thing here to hit by accident.
-            if (m.IsEpisode)
-            {
-                await ShowEpisodesProgrammeAsync(m);
-                return;
-            }
+            await OpenAsync(m);
+        }
 
-            // A series is not a film with episodes attached: it opens a different screen, and it
-            // is never sent to TMDB, which would answer about a film of the same name.
-            if (m.IsSeries)
-            {
-                await ShowSeriesDetailsAsync(m);
-                return;
-            }
+        /// <summary>
+        /// Opens a card, and keeps opening one for as long as the user follows the related shelf.
+        /// </summary>
+        /// <remarks>
+        /// A loop rather than recursion. The details screen asks for the next film instead of
+        /// opening it, so following ten films is ten turns of this loop rather than ten nested
+        /// awaits each holding a view model, a cancellation source and an HTTP client alive.
+        ///
+        /// Following a film replaces the one on screen rather than stacking on it: <b>Library</b>
+        /// and Escape go back to the library from wherever you have got to, which is the one thing
+        /// they have always done. A history stack would be a second meaning for the same button.
+        /// </remarks>
+        private async Task OpenAsync(UiMovie card)
+        {
+            var next = card;
 
-            if (m.IsRemote)
+            while (next is not null)
             {
-                await ShowRemoteDetailsAsync(m);
-                return;
-            }
+                var current = next;
 
+                // An episode only ever appears in the Continue watching row, and it opens its
+                // programme rather than playing on the spot. Every other card in this app opens a
+                // screen and everything is played from one, so a card that started a stream on a
+                // single click — in the first row on the page, under the cursor as the window
+                // opens — would be the one exception and the easiest thing here to hit by
+                // accident.
+                if (current.IsEpisode) await ShowEpisodesProgrammeAsync(current);
+
+                // A series is not a film with episodes attached: it opens a different screen, and
+                // it is never sent to TMDB, which would answer about a film of the same name.
+                else if (current.IsSeries) await ShowSeriesDetailsAsync(current);
+                else if (current.IsRemote) await ShowRemoteDetailsAsync(current);
+                else await ShowLocalDetailsAsync(current);
+
+                next = DetailsView.TakeRequestedNext();
+            }
+        }
+
+        private async Task ShowLocalDetailsAsync(UiMovie m)
+        {
             try
             {
                 using var tmdb = new TmdbService(
@@ -1206,7 +1477,14 @@ namespace UrDatabase.Views
                 vm.FilePath = target.FilePath;
                 vm.FileMatch = target.Kind;
 
-                await ShowDetailsAsync(vm);
+                // Read from the file Play would open, so the badges describe the copy the user is
+                // about to watch. A filename is a claim rather than a measurement and the screen
+                // says so; it is still the only thing a scanned film has.
+                vm.Media = LocalMedia.Describe(target.FilePath);
+
+                vm.Awards = await LoadAwardsAsync(vm.Title, vm.Year, cts.Token);
+
+                await ShowDetailsAsync(vm, await LoadRelatedAsync(vm, tmdb, cts.Token));
 
                 // The film may have been re-identified while the details screen was up, and the
                 // card behind it is still showing the poster that was wrong. Only when the screen
@@ -1287,7 +1565,12 @@ namespace UrDatabase.Views
                     // it. Nothing used to ask for them, so every film from a server showed an
                     // empty list as though it genuinely had none.
                     TopCast = film.Cast.ToList(),
-                    KeyCrew = film.Crew.ToList()
+                    KeyCrew = film.Crew.ToList(),
+
+                    // Measured by the server rather than read off a filename — the one path in
+                    // this app where the resolution and the languages are facts about the file
+                    // instead of a claim somebody typed into its name.
+                    Media = film.Media
                 };
 
                 using var cts = CancellationTokenSource.CreateLinkedTokenSource(_cts.Token);
@@ -1309,8 +1592,9 @@ namespace UrDatabase.Views
                 // one — a film whose copy has gone still has a row that owns the rating — and to
                 // nothing at all for a film that only ever came from the server.
                 vm.ImdbRating = await LoadImdbRatingAsync(vm.ImdbId, vm.LocalId > 0 ? vm.LocalId : null, cts.Token);
+                vm.Awards = await LoadAwardsAsync(vm.Title, vm.Year, cts.Token);
 
-                await ShowDetailsAsync(vm);
+                await ShowDetailsAsync(vm, await LoadRelatedAsync(vm, null, cts.Token));
             }
             catch (OperationCanceledException)
             {
@@ -1377,6 +1661,10 @@ namespace UrDatabase.Views
                 // not the community number beside it. No local movie row owns it.
                 vm.ImdbRating = await LoadImdbRatingAsync(vm.ImdbId, null, cts.Token);
 
+                // Deliberately no awards lookup. The archive holds Academy Awards, a programme
+                // has never won one, and it is searched by title — so a series called "Fargo"
+                // would be handed the 1996 film's Oscars. Emmys are a different body with a
+                // different API and are not what this key buys.
                 LibraryRoot.IsVisible = false;
 
                 try
@@ -1549,6 +1837,82 @@ namespace UrDatabase.Views
             {
                 AppLog.Write("omdb.log", $"rating lookup failed for {imdbId}: {ex.Message}");
                 return null;
+            }
+        }
+
+        /// <summary>
+        /// The shelf of films to put on next, all of them already in this library.
+        /// </summary>
+        /// <remarks>
+        /// TMDB supplies the ordering and the catalogue supplies the contents; see
+        /// <see cref="RelatedFilms"/> for why it is never the other way round. A film nothing has
+        /// identified, an install with no TMDB key and a server that cannot be reached all skip
+        /// the request and fall through to the genre shelf, which needs no network at all.
+        ///
+        /// <paramref name="tmdb"/> is borrowed from the caller when it already built one for this
+        /// film, rather than opening a second connection to fetch one list.
+        /// </remarks>
+        private async Task<RelatedShelf> LoadRelatedAsync(MovieDetailsVm vm, TmdbService? tmdb, CancellationToken ct)
+        {
+            IReadOnlyList<TmdbMatch.Candidate> recommended = Array.Empty<TmdbMatch.Candidate>();
+
+            try
+            {
+                if (vm.TmdbId is int id && id > 0 && !string.IsNullOrWhiteSpace(_config.TmdbApiKey))
+                {
+                    if (tmdb is not null)
+                    {
+                        recommended = await tmdb.GetRecommendationsAsync(id, ct);
+                    }
+                    else
+                    {
+                        using var client = new TmdbService(
+                            apiKey: _config.TmdbApiKey ?? "",
+                            posterCacheDir: _config.PosterCacheDir ?? "",
+                            imageSize: _config.TmdbImageSize ?? "w342",
+                            downloadPosters: false);
+
+                        recommended = await client.GetRecommendationsAsync(id, ct);
+                    }
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                // The shelf is an offer, not a fact. Falling through to genres is better than
+                // failing to open a film over it.
+                AppLog.Write("app.log", $"recommendations for {vm.Title} failed: {ex.Message}");
+            }
+
+            return RelatedFilms.For(recommended, _allMovies, vm);
+        }
+
+        /// <summary>
+        /// Academy Award nominations from the UrActor API, matched on the title and the release
+        /// year and cached in the catalogue. Entirely optional in the same way the IMDb rating is:
+        /// no key, no network or a title the Academy spells differently all mean no awards, never
+        /// another film's.
+        /// </summary>
+        private async Task<OscarHonours> LoadAwardsAsync(string? title, int? year, CancellationToken ct)
+        {
+            if (string.IsNullOrWhiteSpace(title) || !_awards.IsConfigured) return OscarHonours.None;
+
+            try
+            {
+                using var conn = Database.Open(_dbPath);
+                return await _awards.GetAsync(conn, title, year, ct);
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                AppLog.Write("oscars.log", $"awards lookup failed for {title}: {ex.Message}");
+                return OscarHonours.None;
             }
         }
 

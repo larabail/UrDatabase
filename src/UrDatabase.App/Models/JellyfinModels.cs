@@ -57,6 +57,61 @@ namespace UrDatabase.Models
 
         /// <summary>Cache buster for the primary image; changes when the artwork does.</summary>
         public string? ImageTag { get; set; }
+
+        /// <summary>
+        /// What the server measured about the file itself: picture size, codecs, and the audio and
+        /// subtitle languages it carries. Null for a library synced before this was asked for, and
+        /// for an item the server reported no streams on.
+        /// </summary>
+        public MediaInfo? Media { get; set; }
+    }
+
+    /// <summary>
+    /// One track inside a Jellyfin item — the picture, an audio dub, a subtitle file.
+    /// </summary>
+    /// <remarks>
+    /// This is the only place in the app where resolution and language are measured rather than
+    /// guessed. A scanned file offers nothing but its own name, and a name is whatever the person
+    /// who encoded it typed; these numbers came from the container.
+    /// </remarks>
+    public sealed class JellyfinMediaStreamDto
+    {
+        /// <summary><c>Video</c>, <c>Audio</c>, <c>Subtitle</c>, <c>EmbeddedImage</c>.</summary>
+        [JsonPropertyName("Type")] public string? Type { get; set; }
+
+        [JsonPropertyName("Codec")] public string? Codec { get; set; }
+
+        /// <summary>ISO 639-2, usually. Absent on a track nobody tagged.</summary>
+        [JsonPropertyName("Language")] public string? Language { get; set; }
+
+        [JsonPropertyName("Channels")] public int? Channels { get; set; }
+        [JsonPropertyName("Width")] public int? Width { get; set; }
+        [JsonPropertyName("Height")] public int? Height { get; set; }
+
+        /// <summary>The plain answer: <c>HDR</c> or <c>SDR</c>.</summary>
+        [JsonPropertyName("VideoRange")] public string? VideoRange { get; set; }
+
+        /// <summary>The specific one: <c>HDR10</c>, <c>DOVI</c>, <c>HLG</c>. Preferred when present.</summary>
+        [JsonPropertyName("VideoRangeType")] public string? VideoRangeType { get; set; }
+
+        /// <summary>Jellyfin's own rendering of the track, which is where Atmos is named.</summary>
+        [JsonPropertyName("DisplayTitle")] public string? DisplayTitle { get; set; }
+
+        /// <summary>The codec profile. <c>TrueHD</c> writes "Dolby Atmos" here on some servers.</summary>
+        [JsonPropertyName("Profile")] public string? Profile { get; set; }
+
+        [JsonPropertyName("IsDefault")] public bool IsDefault { get; set; }
+
+        public bool IsVideo => Is("Video");
+
+        public bool IsAudio => Is("Audio");
+
+        public bool IsSubtitle => Is("Subtitle");
+
+        // Compared case-insensitively for the same reason JellyfinPersonDto does it: Jellyfin has
+        // shipped these capitalised and lowercased, and losing every audio track over a capital A
+        // is the kind of failure nobody thinks to look for.
+        private bool Is(string type) => string.Equals(Type?.Trim(), type, StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>
@@ -296,6 +351,19 @@ namespace UrDatabase.Models
 
         /// <summary>Children all the way down: the episode count of a whole series.</summary>
         [JsonPropertyName("RecursiveItemCount")] public int? RecursiveItemCount { get; set; }
+        /// Every track in the file, when <c>MediaStreams</c> was among the requested fields. The
+        /// only measured description of a copy this app can get: a scanned file offers nothing but
+        /// its own name.
+        /// </summary>
+        [JsonPropertyName("MediaStreams")] public List<JellyfinMediaStreamDto>? MediaStreams { get; set; }
+
+        /// <summary>Picture width as the server records it on the item, independent of the streams.</summary>
+        [JsonPropertyName("Width")] public int? Width { get; set; }
+
+        [JsonPropertyName("Height")] public int? Height { get; set; }
+
+        /// <summary>The container — <c>mkv</c>, <c>mp4</c>. Not always populated on a list request.</summary>
+        [JsonPropertyName("Container")] public string? Container { get; set; }
 
         /// <summary>
         /// What this user has done with the item: how far in they are, and whether they finished
@@ -368,7 +436,8 @@ namespace UrDatabase.Models
                 TmdbId = Lookup(ProviderIds, "Tmdb"),
                 Cast = BuildCast(People),
                 Crew = BuildCrew(People),
-                ImageTag = Lookup(ImageTags, "Primary")
+                ImageTag = Lookup(ImageTags, "Primary"),
+                Media = BuildMedia(MediaStreams, Width, Height, Container)
             };
         }
 
@@ -461,6 +530,75 @@ namespace UrDatabase.Models
         /// false.
         /// </summary>
         internal static int? Positive(int? count) => count is > 0 ? count : null;
+        /// Folds the server's tracks into the shape the details screen renders, dropping anything
+        /// it has no badge for. Returns null when there is nothing worth showing, so a library
+        /// synced before this was asked for is indistinguishable from one whose server reported no
+        /// streams — in both cases the honest answer is that nobody measured this film.
+        /// </summary>
+        internal static MediaInfo? BuildMedia(
+            IReadOnlyList<JellyfinMediaStreamDto>? streams,
+            int? width,
+            int? height,
+            string? container)
+        {
+            var info = new MediaInfo
+            {
+                Width = width is > 0 ? width : null,
+                Height = height is > 0 ? height : null,
+                Container = string.IsNullOrWhiteSpace(container) ? null : container.Trim().ToLowerInvariant()
+            };
+
+            var list = streams ?? new List<JellyfinMediaStreamDto>();
+
+            var video = list.FirstOrDefault(s => s.IsVideo);
+            if (video is not null)
+            {
+                // The stream's own dimensions win over the item's. They are the same number in
+                // almost every case, but the item's is a summary and the stream's is the file.
+                info.Width = video.Width is > 0 ? video.Width : info.Width;
+                info.Height = video.Height is > 0 ? video.Height : info.Height;
+                info.VideoCodec = Clean(video.Codec);
+
+                // VideoRangeType names the format; VideoRange only says whether there is one.
+                // Older servers send just the latter, so both are read and the specific one wins.
+                info.VideoRange = Clean(video.VideoRangeType) ?? Clean(video.VideoRange);
+            }
+
+            var audio = list.FirstOrDefault(s => s.IsAudio && s.IsDefault) ?? list.FirstOrDefault(s => s.IsAudio);
+            if (audio is not null)
+            {
+                info.AudioCodec = Clean(audio.Codec);
+                info.AudioChannels = audio.Channels is > 0 ? audio.Channels : null;
+                info.HasAtmos = MentionsAtmos(audio.Profile) || MentionsAtmos(audio.DisplayTitle);
+            }
+
+            info.AudioLanguages = Languages(list.Where(s => s.IsAudio));
+            info.SubtitleLanguages = Languages(list.Where(s => s.IsSubtitle));
+
+            return info.HasAnything ? info : null;
+        }
+
+        /// <summary>
+        /// Every language in a set of tracks, in the server's order, with blanks dropped. Not
+        /// deduplicated here — <c>MediaFlags</c> does that by resolved code, which correctly folds
+        /// <c>fre</c> and <c>fra</c> together where a comparison of the raw tags would not.
+        /// </summary>
+        private static List<string> Languages(IEnumerable<JellyfinMediaStreamDto> streams) =>
+            streams
+                .Select(s => s.Language?.Trim())
+                .Where(l => !string.IsNullOrWhiteSpace(l))
+                .Select(l => l!)
+                .ToList();
+
+        /// <summary>
+        /// Atmos is not a codec and never appears in the codec field; it rides on TrueHD or E-AC-3
+        /// and is named only in the profile or the display title.
+        /// </summary>
+        private static bool MentionsAtmos(string? text) =>
+            !string.IsNullOrWhiteSpace(text) && text.Contains("atmos", StringComparison.OrdinalIgnoreCase);
+
+        private static string? Clean(string? value) =>
+            string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 
         /// <summary>
         /// The billed cast, in Jellyfin's own order, capped at ten to match what TMDB supplies for
