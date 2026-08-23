@@ -26,9 +26,11 @@ It runs on Windows and macOS from one codebase, built with
 - **Browse by genre.** The library opens as rows of poster cards, one row per
   genre, newest first within each row, each shelf headed by the genre and the
   number of films on it. The genre row across the top carries those counts too,
-  and picking one narrows the whole view to that genre. `Cmd+F` — `Ctrl+F` on
-  Windows — puts the cursor in the search field, and the field says so
-  (`Views/MainWindow`).
+  and picking one narrows the whole view to that genre. A server library brings
+  about twenty genres and a window fits roughly fifteen, so the row is wheeled
+  or dragged sideways, and it travels the whole way — the last genre on it can
+  be read in full. `Cmd+F` — `Ctrl+F` on Windows — puts the cursor in the
+  search field, and the field says so (`Views/MainWindow`).
 - **Filter by where a film is.** When the library draws on both this computer
   and a server, a row above the genres offers **Everywhere**, **Offline** and
   **On the server**, each with a count. Genre and location are different
