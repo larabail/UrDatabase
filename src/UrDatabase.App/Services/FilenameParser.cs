@@ -17,8 +17,13 @@ namespace UrDatabase.Services
     /// "The Matrix [1999].mp4") is to be able to assert on them directly.
     ///
     /// Known limits, all deliberate: a dotted name loses genuine full stops ("S.W.A.T." becomes
-    /// "S W A T"), release noise is only stripped from the end of the title, and nothing here
-    /// understands television, so "Show.S01E02" parses as a film with a clumsy title.
+    /// "S W A T"), and release noise is only stripped from the end of the title.
+    ///
+    /// Nothing here understands television, and that is now a division of labour rather than a
+    /// gap: <see cref="EpisodeParser"/> reads a path that names a season and an episode, and a
+    /// scan asks it first. What reaches this class is what that one declined, so "Show.S01E02"
+    /// still parses as a film with a clumsy title if it ever gets here — which is the right
+    /// fallback for a name no episode parser could file.
     /// </summary>
     public static class FilenameParser
     {
@@ -161,6 +166,22 @@ namespace UrDatabase.Services
         /// </summary>
         public static bool IsPlausibleYear(int year) =>
             year >= EarliestPlausibleYear && year <= LatestPlausibleYear;
+
+        /// <summary>
+        /// Recovers readable text from a fragment of a filename, without reading a year out of it.
+        /// </summary>
+        /// <remarks>
+        /// Exposed for <see cref="EpisodeParser"/>, which has a fragment that is a title and needs
+        /// exactly the cleaning below — separators to spaces, release noise off the end, capitals
+        /// back on a wholly lower-case name — and must not have a year taken out of it. An episode
+        /// called "1999" is an episode called "1999", where a film called "The Matrix 1999" is the
+        /// 1999 release of The Matrix; <see cref="Parse"/> is right for the second and would
+        /// silently empty the first.
+        ///
+        /// The alternative was a second copy of the noise list, which is how a scanner and a
+        /// parser start disagreeing about what "web-dl" means.
+        /// </remarks>
+        public static string CleanText(string? raw) => CleanTitle(raw ?? "");
 
         /// <summary>
         /// Finds the year and returns everything before it. A bracketed year always wins, which is
