@@ -455,11 +455,20 @@ other's name.
 
 A film the server holds and this computer holds too is shown once, as one card
 badged **Server** and **Offline**, and the details screen says the same thing on
-its facts row. The two are matched by title and year, using the rules a re-scan
+its facts row.
+
+The two are matched on the TMDB id first, when both sides have one — the
+catalogue's `movies.tmdb_id` and the server's own provider id. That is the only
+thing that survives the two sources disagreeing about the name: a file
+catalogued as `El Drama` is `The Drama` on the server, and no amount of folding
+case and punctuation turns one into the other.
+
+Failing that, they are matched by title and year, using the rules a re-scan
 already uses to avoid cataloguing the same film twice: case, accents and
 punctuation are not differences, and a filename that carried no year is treated
-as agreeing with the server's. Not by TMDB or IMDb id, because the local half of
-a library mostly has neither.
+as agreeing with the server's. The fallback has to stay, because only a film
+something has identified has an id — a scan TMDB refused to match has none, and
+so does a film the server could not identify.
 
 The local row is the one kept, so such a film plays from disk, links to a file
 and can have its TMDB match corrected like any other. It borrows the server's
@@ -733,14 +742,16 @@ Stated plainly, so nobody has to find out by using it:
   server are unaffected: the server supplies their genres, and a scanned film
   the server also has borrows them for as long as the two are shown as one card
   — the catalogue itself is not written to.
-- **A film in both places is matched by its name.** The server's copy and this
-  computer's are shown as one card when their titles agree once case, accents
-  and punctuation are set aside and their years do not contradict each other.
-  Two spellings that differ by a word — a translated title, or one the filename
-  parser mangled — stay two cards, and there is no way to say by hand that they
-  are the same film. Nor does such a card offer the stream as a fallback: it
-  plays the file on this disk, and says the server has it rather than doing
-  anything with that.
+- **A film in both places is matched by identity, then by name.** The server's
+  copy and this computer's are shown as one card when they agree on a TMDB id,
+  and otherwise when their titles agree once case, accents and punctuation are
+  set aside and their years do not contradict each other. So two spellings that
+  differ by a word — a translated title, or one the filename parser mangled —
+  are folded together once both sides have identified the film, and stay two
+  cards until they have. Correcting the local film's match with **Wrong film?**
+  is what fixes that by hand. Nor does such a card offer the stream as a
+  fallback: it plays the file on this disk, and says the server has it rather
+  than doing anything with that.
 - **Films only.** The filename parser has no concept of television, so
   `Show.S01E02` becomes an oddly titled film rather than an episode. A mixed
   library will look wrong rather than broken. A Jellyfin server's series

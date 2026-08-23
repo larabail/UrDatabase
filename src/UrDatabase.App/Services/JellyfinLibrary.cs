@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Linq;
 using UrDatabase.Models;
 
@@ -30,12 +31,24 @@ namespace UrDatabase.Services
                 Source = MovieSource.Jellyfin,
                 Title = movie.Title ?? "",
                 Year = movie.Year,
+                TmdbId = ParseTmdbId(movie.TmdbId),
                 // Already a real list from Jellyfin's own metadata, so a server library never
                 // piles into the "Uncategorised" bucket the way a freshly scanned one does.
                 Genres = movie.Genres ?? "",
                 PosterPath = posterUrl?.Invoke(movie)
             };
         }
+
+        /// <summary>
+        /// Jellyfin reports provider ids as strings, and reports nothing at all for a film it could
+        /// not identify. Anything that is not a positive whole number is treated as no id rather
+        /// than as a zero, because zero would then match every other unidentified film on the
+        /// server and fold them all onto one card.
+        /// </summary>
+        internal static int? ParseTmdbId(string? value) =>
+            int.TryParse((value ?? "").Trim(), NumberStyles.None, CultureInfo.InvariantCulture, out var id) && id > 0
+                ? id
+                : null;
 
         public static IReadOnlyList<UiMovie> ToUiMovies(
             IEnumerable<JellyfinMovie>? movies,
@@ -78,6 +91,11 @@ namespace UrDatabase.Services
             var here = new MovieIndex();
             var byId = new Dictionary<long, UiMovie>();
 
+            // The local films that have been identified, keyed by the film they are. Built
+            // alongside the title index rather than instead of it: a film nothing has identified
+            // has no entry here and still has to be foldable by name.
+            var byTmdbId = new Dictionary<int, UiMovie>();
+
             foreach (var movie in local ?? Array.Empty<UiMovie>())
             {
                 if (movie is null) continue;
@@ -85,6 +103,11 @@ namespace UrDatabase.Services
 
                 combined.Add(movie);
                 if (byId.TryAdd(movie.Id, movie)) here.Add(movie.Id, movie.Title, movie.Year);
+
+                // First wins, as everywhere else here. Two local rows claiming one TMDB film is a
+                // duplicate in the catalogue, and the server's copy belongs to whichever the rest
+                // of this method already kept.
+                if (movie.TmdbId is int tmdbId) byTmdbId.TryAdd(tmdbId, movie);
             }
 
             foreach (var movie in remote ?? Array.Empty<UiMovie>())
@@ -92,7 +115,7 @@ namespace UrDatabase.Services
                 if (movie is null) continue;
                 if (!seen.Add(movie.Key)) continue;
 
-                if (TryFold(movie, here, byId)) continue;
+                if (TryFold(movie, here, byId, byTmdbId)) continue;
 
                 combined.Add(movie);
             }
@@ -113,8 +136,35 @@ namespace UrDatabase.Services
         /// the first with the second would lose a film from the library rather than merely
         /// showing it separately.
         /// </remarks>
-        private static bool TryFold(UiMovie server, MovieIndex here, IReadOnlyDictionary<long, UiMovie> byId)
+        /// <summary>
+        /// Folds a server film onto the local copy of the same film, when there is one.
+        /// </summary>
+        /// <remarks>
+        /// Identity is tried before the name, because the two sources genuinely disagree about
+        /// names. A film catalogued from <c>El Drama (The Drama) (2026).mkv</c> is <em>El Drama</em>
+        /// here and <em>The Drama</em> on the server; normalisation folds case, accents and
+        /// punctuation but not a translated title, so the wall showed one film twice with no way to
+        /// tell it they were the same. A TMDB id is the same number on both sides whatever either
+        /// calls the film.
+        ///
+        /// The name is still the fallback, and has to be: only a film something has identified has
+        /// an id at all. A scanned film TMDB refused to match has none, and a server that could not
+        /// identify a film reports none either.
+        /// </remarks>
+        private static bool TryFold(
+            UiMovie server,
+            MovieIndex here,
+            IReadOnlyDictionary<long, UiMovie> byId,
+            IReadOnlyDictionary<int, UiMovie> byTmdbId)
         {
+            if (server.TmdbId is int tmdbId &&
+                byTmdbId.TryGetValue(tmdbId, out var identified) &&
+                !identified.IsOnServer)
+            {
+                identified.AdoptServerCopy(server);
+                return true;
+            }
+
             if (!here.TryResolve(new ParsedMedia(server.Title, server.Year), out var id, out _)) return false;
             if (!byId.TryGetValue(id, out var local) || local.IsOnServer) return false;
 
