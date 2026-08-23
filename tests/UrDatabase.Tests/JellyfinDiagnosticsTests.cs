@@ -22,10 +22,15 @@ namespace UrDatabase.Tests
     /// Nothing here touches the network: every failure is handed to the client through the
     /// injectable handler, and every message is asserted on directly.
     /// </summary>
-    public class JellyfinDiagnosticsTests
+    public class JellyfinDiagnosticsTests : IDisposable
     {
         private const string ServerUrl = "http://media.invalid:8096";
         private const string ProxyUrl = "http://media.invalid";
+
+        // Every test here is a failure path, and the client writes one line per failure.
+        private readonly TempLog _log = new();
+
+        public void Dispose() => _log.Dispose();
 
         private static JellyfinSettings Settings(string url = ServerUrl) => new()
         {

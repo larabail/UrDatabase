@@ -1317,7 +1317,9 @@ src/UrDatabase.App/          the application: one cross-platform project
   appsettings.example.json   configuration template, copied to the user's data
                              directory on first run; the real file is ignored
   UrDatabase.App.entitlements  hardened runtime exceptions the .NET JIT needs
-tests/UrDatabase.Tests/      xUnit suite
+tests/UrDatabase.Tests/      xUnit suite; TempLog is how a test class stays out
+                             of the real log directory, and LogIsolation is what
+                             stops it forgetting
 tool/                        Python helpers with their own unittest suite:
                              the version-bump check, the release gate and the
                              macOS bundler
@@ -1337,6 +1339,37 @@ and that a change under `src/` bumps the version.
 
 `dotnet build` and `dotnet test` must both be clean before you open a pull
 request.
+
+### The suite never touches your install
+
+Nothing under `tests/` may read or write the app's own data directory — it holds
+somebody's catalogue, their poster cache and an `appsettings.json` with their
+Jellyfin password and their API keys in it. That is not a convention here, it is
+enforced: the test assembly calls `AppLog.ForbidRealDirectory()` before any test
+runs, and from then on a log line that has not been pointed somewhere else
+throws `UnredirectedLogWriteException` rather than reaching the filesystem.
+
+It is enforced because asking people to remember did not work. `AppLog.Redirect`
+had been available for a while and twelve test classes were still appending to a
+real `jellyfin.log` on every run — not tests about logging, tests about uploads
+and downloads and caches, whose subject happened to log on a failure path.
+
+If you add a log line to a service and a test starts failing with that
+exception, the test is the thing to fix, not the log line. Give the class a
+`TempLog`:
+
+```csharp
+public class WhateverTests : IDisposable
+{
+    private readonly TempLog _log = new();
+
+    public void Dispose() => _log.Dispose();
+}
+```
+
+Put it on the class, not inside the single test you know logs today. The app
+itself is unaffected: nothing in a shipped build arms the guard, so it logs to
+the real directory exactly as it always has.
 
 ## Known gaps
 

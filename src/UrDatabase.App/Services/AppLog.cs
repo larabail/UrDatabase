@@ -24,8 +24,51 @@ namespace UrDatabase.Services
         /// </remarks>
         private static readonly AsyncLocal<string?> Override = new();
 
+        /// <summary>
+        /// Whether a write that has not been redirected is an error rather than a log line. Off in
+        /// the application, and only ever turned on by a test assembly.
+        /// </summary>
+        /// <remarks>
+        /// A plain static, unlike <see cref="Override"/>, and deliberately: this is a fact about
+        /// the process — "these binaries are being exercised by a test run" — rather than about one
+        /// logical call. An async-local here would be worse than useless, because the writes most
+        /// likely to escape notice are the ones on a background task, and those are exactly the
+        /// contexts an async-local flag set by a test method would not reach.
+        /// </remarks>
+        private static volatile bool _realDirectoryForbidden;
+
         /// <summary>The directory being written to, real or redirected.</summary>
         public static string Directory => Override.Value ?? PlatformPaths.LogDirectory;
+
+        /// <summary>Whether <see cref="ForbidRealDirectory"/> has been called.</summary>
+        public static bool IsRealDirectoryForbidden => _realDirectoryForbidden;
+
+        /// <summary>
+        /// Refuses, from here until the process ends, any write that has not been redirected.
+        /// </summary>
+        /// <remarks>
+        /// <see cref="Redirect"/> gave tests a way to stay out of somebody's install;
+        /// this is what stops the next one forgetting. Two years of "remember to redirect" is how
+        /// the upload tests came to append a twelve-byte <c>Arrival (2016)</c> to a maintainer's
+        /// real <c>jellyfin.log</c> on every full run, on every machine, unnoticed — a rule nobody
+        /// is reminded of is a rule that holds until the next feature adds a log line.
+        ///
+        /// The refusal happens before the filesystem is touched, which is the guarantee that
+        /// matters: an un-redirected write cannot reach the real directory even when the resulting
+        /// exception is swallowed by the <c>catch</c> the log line was written inside, or lost on a
+        /// fire-and-forget task nobody awaits. Throwing on top of that is what usually makes it
+        /// loud, and it is the part that is best-effort rather than absolute.
+        ///
+        /// There is no way back. A scope would only invite a test to switch the guard off for the
+        /// duration of the write it could not be bothered to redirect, which is the failure this
+        /// exists to prevent, and the flag is process-wide so one test disarming it would disarm
+        /// every collection running beside it.
+        ///
+        /// Nothing in the application calls this. With it unset — which is every shipped build —
+        /// <see cref="Write"/> behaves exactly as it did, still swallowing everything, because
+        /// logging must never be the reason the app fails.
+        /// </remarks>
+        public static void ForbidRealDirectory() => _realDirectoryForbidden = true;
 
         /// <summary>
         /// Points the log at a directory of the caller's choosing until the returned scope is
@@ -59,9 +102,16 @@ namespace UrDatabase.Services
 
         public static void Write(string fileName, string message)
         {
+            var directory = Override.Value;
+
+            // Before the try, so it cannot be swallowed by the catch below, and before any
+            // filesystem call, so the real directory is untouched whatever happens to the throw.
+            if (directory is null && _realDirectoryForbidden)
+                throw new UnredirectedLogWriteException(fileName, message);
+
             try
             {
-                var directory = Directory;
+                directory ??= PlatformPaths.LogDirectory;
                 System.IO.Directory.CreateDirectory(directory);
                 var path = Path.Combine(directory, fileName);
                 File.AppendAllText(path, $"[{DateTime.Now:O}] {message}{Environment.NewLine}");
@@ -86,5 +136,38 @@ namespace UrDatabase.Services
                 _restore();
             }
         }
+    }
+
+    /// <summary>
+    /// Thrown when a test writes a log line without saying where it should go.
+    /// </summary>
+    /// <remarks>
+    /// Its own type rather than a bare <see cref="InvalidOperationException"/> so that the one test
+    /// which triggers it deliberately can say so precisely, and so that a reader hitting it in a
+    /// failure report has something to search for. The message carries the fix rather than the
+    /// complaint, because whoever meets this will be someone who has just added a log line to a
+    /// service and has no reason yet to know any of this history.
+    /// </remarks>
+    public sealed class UnredirectedLogWriteException : InvalidOperationException
+    {
+        public UnredirectedLogWriteException(string fileName, string message)
+            : base(Describe(fileName, message))
+        {
+            FileName = fileName;
+            LogMessage = message;
+        }
+
+        /// <summary>The log the refused line was headed for, such as <c>jellyfin.log</c>.</summary>
+        public string FileName { get; }
+
+        /// <summary>The line itself, which is usually enough to name the code that wrote it.</summary>
+        public string LogMessage { get; }
+
+        private static string Describe(string fileName, string message) =>
+            $"This write to {fileName} was refused because nothing redirected it, so it would have " +
+            $"gone to {PlatformPaths.LogDirectory} — somebody's real install, which AGENTS.md " +
+            "forbids a test from touching because the same folder holds their catalogue and their " +
+            "credentials. Wrap the code under test in `using (AppLog.Redirect(dir))`, pointing at a " +
+            "temporary directory the test creates and deletes. The refused line was: " + message;
     }
 }

@@ -30,6 +30,7 @@ namespace UrDatabase.Tests
         private const string RemotePartial = "movies/Arrival (2016)/Arrival (2016).mkv.uploading";
 
         private readonly string _folder;
+        private readonly TempLog _log = new();
 
         public JellyfinUploaderTests()
         {
@@ -39,6 +40,7 @@ namespace UrDatabase.Tests
 
         public void Dispose()
         {
+            _log.Dispose();
             try { Directory.Delete(_folder, recursive: true); } catch { }
         }
 

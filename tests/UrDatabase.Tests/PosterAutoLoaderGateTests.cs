@@ -18,6 +18,7 @@ namespace UrDatabase.Tests
     public class PosterAutoLoaderGateTests : IDisposable
     {
         private readonly string _dir;
+        private readonly TempLog _log = new();
 
         public PosterAutoLoaderGateTests()
         {
@@ -41,6 +42,7 @@ namespace UrDatabase.Tests
 
         public void Dispose()
         {
+            _log.Dispose();
             try { Directory.Delete(_dir, recursive: true); } catch { }
         }
 

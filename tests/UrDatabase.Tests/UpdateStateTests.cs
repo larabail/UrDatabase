@@ -5,6 +5,12 @@ using Xunit;
 
 namespace UrDatabase.Tests
 {
+    /// <summary>
+    /// In the environment-variable collection for one assertion: the default path is built from
+    /// <c>PlatformPaths.AppDataRoot</c>, which <c>URDATABASE_DATA_DIR</c> moves under a class
+    /// running in parallel.
+    /// </summary>
+    [Collection(EnvironmentVariables.CollectionName)]
     public class UpdateStateTests : IDisposable
     {
         private readonly string _dir;

@@ -18,9 +18,14 @@ namespace UrDatabase.Tests
     /// and all of CI. The fixtures below are invented — the film titles, the ids and the user
     /// names are all made up, because a real library is private.
     /// </summary>
-    public class JellyfinClientTests
+    public class JellyfinClientTests : IDisposable
     {
         private const string ServerUrl = "http://media.invalid:8096";
+
+        // Several tests here drive the client into a failure it logs on the way out.
+        private readonly TempLog _log = new();
+
+        public void Dispose() => _log.Dispose();
 
         private static JellyfinSettings UserSettings() => new()
         {

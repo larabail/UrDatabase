@@ -1,3 +1,4 @@
+using System;
 using System.Net;
 using System.Threading;
 using System.Threading.Tasks;
@@ -6,8 +7,13 @@ using Xunit;
 
 namespace UrDatabase.Tests
 {
-    public class OmdbServiceTests
+    public class OmdbServiceTests : IDisposable
     {
+        // The three "yields no rating rather than throwing" tests below log the reason it did.
+        private readonly TempLog _log = new();
+
+        public void Dispose() => _log.Dispose();
+
         [Fact]
         public void Lookup_url_targets_omdb_with_the_imdb_id_and_key()
         {
