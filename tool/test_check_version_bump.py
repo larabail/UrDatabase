@@ -32,6 +32,7 @@ from check_version_bump import (
     main,
     parse_version,
     props_at_ref,
+    readable,
     touches_shipped_code,
     version_from_props,
 )
@@ -237,6 +238,109 @@ class CheckTests(unittest.TestCase):
         self.assertTrue(result.ok)
 
 
+class ReadsTheSameVersionAsTheReleaseAction(unittest.TestCase):
+    """This check and the thing that tags have to read one file alike.
+
+    They are two implementations of "what version is this?" in two languages:
+    `version_from_props` here, and a `sed` pipeline in
+    `.github/actions/read-version`. Everything above tests one of them against
+    its own expectations, which is exactly how they came to disagree -- the
+    regex took the first `<Version>` and the greedy `sed` took the last, so a
+    file with two of them read as `0.15.0` to the check that clears a pull
+    request and as unusable to the workflow that would release it. That reads
+    as "no version", which tags nothing and passes every merge afterwards.
+
+    So the action's own command is extracted and run, rather than described.
+    A test that restated the pipeline would agree with itself forever.
+    """
+
+    ACTION = Path(".github") / "actions" / "read-version" / "action.yml"
+
+    # Each is a file somebody could plausibly save, including several nobody
+    # should. What they are worth is disagreement, not correctness: the point
+    # is that both readers say the same thing about each.
+    FILES = [
+        props("0.15.0"),
+        "<Project><PropertyGroup><Version>0.15.0</Version></PropertyGroup></Project>",
+        "<Version>\n  0.15.0\n</Version>",
+        "<Version> 0.15.0 </Version>",
+        "<Project></Project>",
+        "<Version></Version>",
+        "<Version>   </Version>",
+        "<Version>0.15.0-preview</Version>",
+        "<Version>$(BuildVersion)</Version>",
+        "<Version>1.2.3.4</Version>",
+        # The shape that started this: a second element, conditional, later in
+        # the file. MSBuild takes the last, the action takes the last, and this
+        # used to take the first.
+        props("0.15.0") + props("0.0.0-dev"),
+        "<Version>0.15.0</Version><Version>0.16.0</Version>",
+        "<Version>0.15.0</Version><Version></Version>",
+        # An attributed element is invisible to both, which is worth pinning:
+        # they agree, and what they agree on is "no version here".
+        '<Version Condition="\'$(X)\'==\'1\'">0.15.0</Version>',
+    ]
+
+    def setUp(self):
+        text = (REPO_ROOT / self.ACTION).read_text(encoding="utf-8")
+        script = re.search(r"sed -n '([^']*)'", text)
+        self.assertIsNotNone(
+            script, "%s no longer reads the version with sed" % self.ACTION
+        )
+        self.script = script.group(1)
+        # The validation the action applies to whatever that pipeline returned.
+        # Pinned from the same file for the same reason.
+        self.assertIn("^[0-9]+\\.[0-9]+\\.[0-9]+$", text)
+
+    def action_reads(self, text):
+        """What `read-version` would make of [text], via its own commands."""
+        scratch = tempfile.TemporaryDirectory()
+        self.addCleanup(scratch.cleanup)
+        path = Path(scratch.name) / "Directory.Build.props"
+        path.write_text(text, encoding="utf-8")
+        read = subprocess.run(
+            "tr -d '\\n' < %s | sed -n '%s' | head -n 1 | tr -d '[:space:]'"
+            % (path, self.script),
+            shell=True,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        return read.stdout.strip()
+
+    def test_both_readers_agree_on_every_shape(self):
+        for text in self.FILES:
+            with self.subTest(text=text):
+                self.assertEqual(
+                    version_from_props(text) or "",
+                    self.action_reads(text),
+                    "the version check and read-version disagree about this file",
+                )
+
+    def test_both_readers_agree_on_whether_it_is_usable(self):
+        # The narrower claim the guard against losing the version rests on:
+        # not just the same text, but the same verdict on it.
+        for text in self.FILES:
+            with self.subTest(text=text):
+                by_action = re.match(r"^\d+\.\d+\.\d+$", self.action_reads(text))
+                self.assertEqual(readable(text), bool(by_action))
+
+    def test_the_last_element_is_the_one_that_counts(self):
+        # Stated on its own so the reason survives even if the table above is
+        # ever trimmed.
+        self.assertEqual(
+            version_from_props(props("0.15.0") + props("0.0.0-dev")), "0.0.0-dev"
+        )
+
+    def test_an_empty_last_element_falls_back_the_way_sed_does(self):
+        # sed cannot match an empty value, so it keeps looking backwards. The
+        # loop here does the same rather than reporting "no version".
+        self.assertEqual(
+            version_from_props("<Version>0.15.0</Version><Version></Version>"),
+            "0.15.0",
+        )
+
+
 class LosingTheVersionTests(unittest.TestCase):
     """A pull request may ship nothing. It may not leave nothing to tag.
 
@@ -277,6 +381,11 @@ class LosingTheVersionTests(unittest.TestCase):
     def test_a_props_only_pull_request_that_keeps_a_version_still_passes(self):
         # The ordinary bump, and a props edit that changes something else. The
         # rule is about leaving nothing to tag, not about touching the file.
+        #
+        # This and the two below pin the rule's *upper* bound: they pass with
+        # the guard and without it, so they are not evidence that it is
+        # enforced -- they are what fails if it is ever widened or hoisted out
+        # of the "nothing shipped changed" branch.
         for version in ["0.4.1", "0.4.2"]:
             with self.subTest(version=version):
                 result = check(
