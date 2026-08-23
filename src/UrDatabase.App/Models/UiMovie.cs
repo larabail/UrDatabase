@@ -344,6 +344,18 @@ namespace UrDatabase.Models
         private double? _resumeFraction;
 
         /// <summary>
+        /// Where the server says playback stopped, in ticks, or zero for a film that is not
+        /// part-watched.
+        /// </summary>
+        /// <remarks>
+        /// Carried beside <see cref="ResumeFraction"/> rather than derived from it, because the
+        /// fraction is for drawing and this is for seeking: a film resumed from a rounded
+        /// percentage of its runtime would start minutes from where it was left, and the runtime
+        /// the fraction came from may not even be the same cut.
+        /// </remarks>
+        public long ResumePositionTicks { get; set; }
+
+        /// <summary>
         /// How far through this film the server says the viewer is, between 0 and 1, or null for a
         /// film that is not part-watched — which is nearly every card.
         /// </summary>

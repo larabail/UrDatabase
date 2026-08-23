@@ -268,9 +268,11 @@ It runs on Windows and macOS from one codebase, built with
   clicking it opens that programme at that season. It is the server's own
   answer, so a film started on the television carries on here. Cached like the
   library, so it is on screen the instant the window opens and stays there with
-  the server switched off; an empty row is not shown at all. Anything played
-  here reports back, so what you watch in UrDatabase appears in Continue
-  watching everywhere else too — VLC only, and see
+  the server switched off; an empty row is not shown at all. Opening a
+  part-watched film replaces **Play** with **Continue watching**, which starts it
+  where you stopped rather than at the beginning, with **Start again** beside it.
+  Anything played here reports back, so what you watch in UrDatabase appears in
+  Continue watching everywhere else too — VLC only, and see
   [Known gaps](#known-gaps) for what that costs. Right-click a card to take it
   out of the row **in this app only**; it comes back if you watch any more of it
   anywhere
@@ -911,6 +913,28 @@ Dismissals live in `jellyfin_resume_dismissals`, a table of their own rather
 than a column on `jellyfin_resume` — that one is deleted and rewritten by every
 sync, so a dismissal stored there would last minutes.
 
+#### Picking a film up where you left it
+
+Opening a part-watched film puts **▶ Continue watching** where **Play** normally
+is, and **Start again** beside it. Continue watching hands VLC `--start-time`
+with the position the server reported, so the film opens where you stopped;
+Start again opens it at zero. Jellyfin direct-plays with byte ranges, which is
+what lets VLC seek an HTTP input at all.
+
+The button only says "Continue watching" when it will genuinely do that, and
+four things have to hold at once: the server has a position for the film, the
+film is being streamed rather than played from a downloaded copy, the stream
+exists at all, and the installed player takes an offset. Fail any one and the
+button reads **Play** and starts from the beginning, with the line underneath
+saying why — an IINA user is told outright that only VLC can be told where to
+open a film, rather than being left to wonder why a film the row calls
+part-watched starts over.
+
+That rule lives in `PlayPrompts.CanResume`, and the label and the seek position
+are both read off it, so the button's words and its behaviour cannot drift
+apart. A button that names what it will do and then does something else is
+worse than one that never offered.
+
 #### Reporting playback back to the server
 
 Films **and episodes** played here report their position back, so what you watch
@@ -1424,15 +1448,16 @@ Stated plainly, so nobody has to find out by using it:
 - **Playback position is shared with the server through VLC, and only VLC.** A
   film or an episode streamed through VLC now reports where it got to, so it
   resumes and is marked watched on every device — but three cases still do not.
-  **IINA reports nothing**: it is mpv underneath and exposes a JSON IPC socket
-  rather than an HTTP interface, which is a different protocol over a different
-  transport, so an IINA user plays films exactly as before and contributes
-  nothing to Continue watching. **A downloaded film reports nothing**, because it
-  is opened with the system's default opener, which is not necessarily VLC and
-  may well be away from the server anyway — the position is simply not recorded,
-  rather than queued for later delivery. And **the last few seconds are lost**:
-  the position is read every two seconds and a player that goes away is noticed
-  after six, so the stop is recorded up to about six seconds behind where the
+  **IINA reports nothing, and cannot resume**: it is mpv underneath and exposes a
+  JSON IPC socket rather than an HTTP interface, which is a different protocol
+  over a different transport, so an IINA user plays films exactly as before, sees
+  **Play** rather than **Continue watching**, and contributes nothing to Continue
+  watching. **A downloaded film reports nothing and does not resume**, because it
+  is opened with the system's default opener, which is not necessarily VLC, takes
+  a path and nothing else, and may well be away from the server anyway — the
+  position is simply not recorded, rather than queued for later delivery. And
+  **the last few seconds are lost**: the position is read every two seconds and a
+  player that goes away is noticed after six, so the stop is recorded up to about six seconds behind where the
   film actually reached. That is deliberate — a stop at nearly the right place
   beats no stop at all — but it means a film you quit at the very end may not tip
   over into "watched".
