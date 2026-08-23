@@ -207,6 +207,13 @@ no version tags nothing and reports success on every merge from then on. The
 `Version` check refuses that on any pull request, including one that changes
 nothing else.
 
+Write only one of them, too. Nothing refuses a second `<Version>` — in a
+conditional `PropertyGroup`, say — because all four readers agree about it:
+MSBuild, the release action, the bump check and the release gate every one take
+the *last*. That agreement is the point, and it is tested. What it does not fix
+is the human reading: the number at the top of the file, which is the one
+somebody will quote in a bug report, is then not the number that shipped.
+
 How far to bump follows directly from the commit kind:
 
 | The change is | Kind | Bump |
