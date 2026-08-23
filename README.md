@@ -334,8 +334,8 @@ several are thinner than they sound.
 
 There is no server of ours, no account and no telemetry, and the app touches no
 Firebase: the only outbound traffic is to `api.themoviedb.org`,
-`image.tmdb.org`, `www.omdbapi.com`, `api.github.com` — once per launch, to ask
-whether there is a newer release, and not at all when `CheckForUpdates` is
+`image.tmdb.org`, `www.omdbapi.com`, `api.github.com` — at most once a day, to
+ask whether there is a newer release, and not at all when `CheckForUpdates` is
 false — and, if you configure one, your own Jellyfin server, over HTTP for the
 library and over SSH to its machine if you configure uploading. It works fully
 offline, with metadata, ratings and the update check simply absent.
@@ -431,7 +431,7 @@ cp src/UrDatabase.App/appsettings.example.json src/UrDatabase.App/appsettings.js
 | `DownloadPosters` | `false` points the UI at TMDB's own image URLs; `true` caches each poster to disk |
 | `TmdbImageSize` | TMDB's poster width — `w185`, `w342`, `w500`, `original` |
 | `SetupCompleted` | Set by the setup screen once it has been answered, and the only thing that stops it being offered again |
-| `CheckForUpdates` | `true`, as it ships, asks GitHub once per launch whether there is a newer release and raises a banner if there is. `false` means no request is made at all, rather than one being made and its answer hidden |
+| `CheckForUpdates` | `true`, as it ships, asks GitHub at most once a day whether there is a newer release and raises a banner if there is; the answer is kept in `update-state.json` so that further launches that day cost no request, and the request that is made is conditional, which GitHub does not charge when nothing has changed. `false` means no request is made at all, rather than one being made and its answer hidden |
 | `Jellyfin` | An optional server to browse. Empty, as it ships, means the feature is off entirely — see [A Jellyfin server](#a-jellyfin-server) |
 | `JellyfinSftp` | An optional SFTP account on the machine running that server, which is what makes **Upload to Jellyfin** appear. Empty, as it ships, means no upload button anywhere — see [Sending a film the other way](#sending-a-film-the-other-way) |
 
