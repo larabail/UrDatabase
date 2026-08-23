@@ -995,14 +995,14 @@ namespace UrDatabase.Views
         /// half of the screen. Hiding it also takes its buttons out of the tab order, which were
         /// otherwise still reachable, and still clickable, behind a screen covering them.
         /// </remarks>
-        private async Task ShowDetailsAsync(MovieDetailsVm vm)
+        private async Task ShowDetailsAsync(MovieDetailsVm vm, RelatedShelf? related = null)
         {
             LibraryRoot.IsVisible = false;
 
             try
             {
                 await DetailsView.ShowAsync(
-                    vm, _dbPath, _config, LoadImdbRatingAsync, _jellyfin, _cts.Token, LoadAwardsAsync);
+                    vm, _dbPath, _config, LoadImdbRatingAsync, _jellyfin, _cts.Token, LoadAwardsAsync, related);
 
                 // A downloaded film is a row the library behind this screen does not have yet: it
                 // would still be shown as living only on the server until something reloaded it.
@@ -1052,20 +1052,41 @@ namespace UrDatabase.Views
             if (!e.GetCurrentPoint(sender as Control).Properties.IsLeftButtonPressed) return;
             if ((sender as Control)?.DataContext is not UiMovie m) return;
 
-            // A series is not a film with episodes attached: it opens a different screen, and it
-            // is never sent to TMDB, which would answer about a film of the same name.
-            if (m.IsSeries)
-            {
-                await ShowSeriesDetailsAsync(m);
-                return;
-            }
+            await OpenAsync(m);
+        }
 
-            if (m.IsRemote)
-            {
-                await ShowRemoteDetailsAsync(m);
-                return;
-            }
+        /// <summary>
+        /// Opens a card, and keeps opening one for as long as the user follows the related shelf.
+        /// </summary>
+        /// <remarks>
+        /// A loop rather than recursion. The details screen asks for the next film instead of
+        /// opening it, so following ten films is ten turns of this loop rather than ten nested
+        /// awaits each holding a view model, a cancellation source and an HTTP client alive.
+        ///
+        /// Following a film replaces the one on screen rather than stacking on it: <b>Library</b>
+        /// and Escape go back to the library from wherever you have got to, which is the one thing
+        /// they have always done. A history stack would be a second meaning for the same button.
+        /// </remarks>
+        private async Task OpenAsync(UiMovie card)
+        {
+            var next = card;
 
+            while (next is not null)
+            {
+                var current = next;
+
+                // A series is not a film with episodes attached: it opens a different screen, and
+                // it is never sent to TMDB, which would answer about a film of the same name.
+                if (current.IsSeries) await ShowSeriesDetailsAsync(current);
+                else if (current.IsRemote) await ShowRemoteDetailsAsync(current);
+                else await ShowLocalDetailsAsync(current);
+
+                next = DetailsView.TakeRequestedNext();
+            }
+        }
+
+        private async Task ShowLocalDetailsAsync(UiMovie m)
+        {
             try
             {
                 using var tmdb = new TmdbService(
@@ -1141,7 +1162,7 @@ namespace UrDatabase.Views
 
                 vm.Awards = await LoadAwardsAsync(vm.Title, vm.Year, cts.Token);
 
-                await ShowDetailsAsync(vm);
+                await ShowDetailsAsync(vm, await LoadRelatedAsync(vm, tmdb, cts.Token));
 
                 // The film may have been re-identified while the details screen was up, and the
                 // card behind it is still showing the poster that was wrong. Only when the screen
@@ -1251,7 +1272,7 @@ namespace UrDatabase.Views
                 vm.ImdbRating = await LoadImdbRatingAsync(vm.ImdbId, vm.LocalId > 0 ? vm.LocalId : null, cts.Token);
                 vm.Awards = await LoadAwardsAsync(vm.Title, vm.Year, cts.Token);
 
-                await ShowDetailsAsync(vm);
+                await ShowDetailsAsync(vm, await LoadRelatedAsync(vm, null, cts.Token));
             }
             catch (OperationCanceledException)
             {
@@ -1343,6 +1364,56 @@ namespace UrDatabase.Views
                 AppLog.Write("omdb.log", $"rating lookup failed for {imdbId}: {ex.Message}");
                 return null;
             }
+        }
+
+        /// <summary>
+        /// The shelf of films to put on next, all of them already in this library.
+        /// </summary>
+        /// <remarks>
+        /// TMDB supplies the ordering and the catalogue supplies the contents; see
+        /// <see cref="RelatedFilms"/> for why it is never the other way round. A film nothing has
+        /// identified, an install with no TMDB key and a server that cannot be reached all skip
+        /// the request and fall through to the genre shelf, which needs no network at all.
+        ///
+        /// <paramref name="tmdb"/> is borrowed from the caller when it already built one for this
+        /// film, rather than opening a second connection to fetch one list.
+        /// </remarks>
+        private async Task<RelatedShelf> LoadRelatedAsync(MovieDetailsVm vm, TmdbService? tmdb, CancellationToken ct)
+        {
+            IReadOnlyList<TmdbMatch.Candidate> recommended = Array.Empty<TmdbMatch.Candidate>();
+
+            try
+            {
+                if (vm.TmdbId is int id && id > 0 && !string.IsNullOrWhiteSpace(_config.TmdbApiKey))
+                {
+                    if (tmdb is not null)
+                    {
+                        recommended = await tmdb.GetRecommendationsAsync(id, ct);
+                    }
+                    else
+                    {
+                        using var client = new TmdbService(
+                            apiKey: _config.TmdbApiKey ?? "",
+                            posterCacheDir: _config.PosterCacheDir ?? "",
+                            imageSize: _config.TmdbImageSize ?? "w342",
+                            downloadPosters: false);
+
+                        recommended = await client.GetRecommendationsAsync(id, ct);
+                    }
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                // The shelf is an offer, not a fact. Falling through to genres is better than
+                // failing to open a film over it.
+                AppLog.Write("app.log", $"recommendations for {vm.Title} failed: {ex.Message}");
+            }
+
+            return RelatedFilms.For(recommended, _allMovies, vm);
         }
 
         /// <summary>

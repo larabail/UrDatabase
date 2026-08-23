@@ -132,6 +132,23 @@ It runs on Windows and macOS from one codebase, built with
   the first token no title could contain — so *The Italian Job* is not an
   Italian-language release and *Casablanca.mkv* claims nothing at all
   (`Services/MediaFlags`, `Services/FilenameMediaInfo`, `Services/LanguageTag`).
+- **What to put on next, and you already own it.** Where a series lists its
+  episodes, a film gets a shelf of other films — and every poster on it is one
+  already in this library, so every one of them plays. TMDB supplies the
+  ordering, from its recommendations for the film you are looking at, and the
+  catalogue supplies the contents; what is shown is the intersection. The other
+  way round would be an advertisement rather than a library.
+
+  Clicking one opens it, and its own shelf carries on from there, so a library
+  can be wandered rather than searched. Following a film replaces the one on
+  screen rather than stacking on it — **Library** and Escape go back to the
+  library from wherever you have got to, which is the one thing they have always
+  done.
+
+  With no TMDB key, or for a film nothing has identified, it falls back to films
+  sharing the most genres, and says so in its heading rather than claiming a
+  resemblance nobody computed. When there is nothing to show it hides entirely
+  and the plot takes the space back (`Services/RelatedFilms`).
 - **The Academy, under the poster.** A film that was nominated for an Oscar says
   so: wins first, marked with a star, then the nominations, with the category and
   who it was for. The panel is hidden outright for the great majority of films
@@ -1210,6 +1227,14 @@ Stated plainly, so nobody has to find out by using it:
   Play opens the local file, and badging it with the server's 4K remux would
   describe a copy nobody is about to watch — so such a film can show fewer
   badges than the same film opened from the server.
+- **The watch-next shelf needs films TMDB has identified.** It matches
+  recommendations against the catalogue on `movies.tmdb_id`, which the poster
+  loader writes for every film it can match — so a film with no poster usually
+  has no shelf either, and neither has anything the automatic match refused. The
+  genre fallback behind it needs genres, and a scanned library has none of those
+  either, so on a purely local library that has never reached TMDB the shelf is
+  simply absent. Nothing on it is ever a film you do not own, which is the one
+  guarantee it does make.
 - **A series has no awards panel.** The Academy does not give programmes Oscars,
   and the archive is searched by title, so a series is never asked about at all —
   a programme sharing a name with a film would otherwise be handed the film's

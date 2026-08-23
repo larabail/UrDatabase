@@ -89,6 +89,19 @@ namespace UrDatabase.Services
         public string BuildCreditsUrl(int tmdbId) =>
             $"{ApiBaseUrl}/movie/{tmdbId}/credits?api_key={Uri.EscapeDataString(_apiKey)}&language=en-US";
 
+        /// <summary>
+        /// Films TMDB thinks somebody who watched this one would want next.
+        /// </summary>
+        /// <remarks>
+        /// <c>/recommendations</c> rather than <c>/similar</c>. The two are easy to confuse and
+        /// answer different questions: <c>similar</c> is computed from shared genres and keywords,
+        /// so it returns a list of things in the same bucket, while <c>recommendations</c> is
+        /// derived from what people who rated this film also rated. For "what should I put on
+        /// next" the second is the question being asked.
+        /// </remarks>
+        public string BuildRecommendationsUrl(int tmdbId) =>
+            $"{ApiBaseUrl}/movie/{tmdbId}/recommendations?api_key={Uri.EscapeDataString(_apiKey)}&language=en-US&page=1";
+
         public string BuildImageUrl(string posterPath) =>
             $"{ImageBaseUrl}/{_imageSize}/{(posterPath ?? "").TrimStart('/')}";
 
@@ -113,6 +126,36 @@ namespace UrDatabase.Services
             await using var stream = await resp.Content.ReadAsStreamAsync(ct);
             var doc = await JsonSerializer.DeserializeAsync<TmdbSearchResult>(stream, _json, ct);
             return doc?.Results ?? new List<TmdbMatch.Candidate>();
+        }
+
+        /// <summary>
+        /// TMDB's recommendations for a film, in its own order — which is a relevance ranking and
+        /// is preserved rather than re-sorted. Empty for any failure at all: this fills a shelf
+        /// that is hidden when it has nothing in it, so there is nothing here worth reporting.
+        /// </summary>
+        public async Task<IReadOnlyList<TmdbMatch.Candidate>> GetRecommendationsAsync(int tmdbId, CancellationToken ct)
+        {
+            if (string.IsNullOrWhiteSpace(_apiKey) || tmdbId <= 0)
+                return Array.Empty<TmdbMatch.Candidate>();
+
+            try
+            {
+                using var resp = await GetWithRetryAsync(BuildRecommendationsUrl(tmdbId), ct);
+                if (resp is null || !resp.IsSuccessStatusCode) return Array.Empty<TmdbMatch.Candidate>();
+
+                await using var stream = await resp.Content.ReadAsStreamAsync(ct);
+                var doc = await JsonSerializer.DeserializeAsync<TmdbSearchResult>(stream, _json, ct);
+                return doc?.Results ?? new List<TmdbMatch.Candidate>();
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                AppLog.Write("posters.log", $"recommendations for {tmdbId} failed: {ex.Message}");
+                return Array.Empty<TmdbMatch.Candidate>();
+            }
         }
 
         /// <summary>

@@ -8,6 +8,7 @@ using System.Threading.Tasks;
 using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Interactivity;
+using Avalonia.Layout;
 using Avalonia.Platform.Storage;
 using UrDatabase.Models;
 using UrDatabase.Services;
@@ -103,6 +104,31 @@ namespace UrDatabase.Views
         public bool DownloadedSomething { get; private set; }
 
         /// <summary>
+        /// A film the user picked off the related shelf, to be opened once this screen closes.
+        /// </summary>
+        /// <remarks>
+        /// Requested rather than opened here, and this is the whole reason it exists. Opening the
+        /// next film from inside the click handler would call <see cref="ShowAsync"/> while the
+        /// current one is still being awaited, so ten films followed in a row would be ten nested
+        /// awaits holding ten view models alive. The caller loops instead: it reads this, opens
+        /// that film, and comes back for the next one, so following a shelf costs the same as
+        /// opening one film however far it is followed.
+        /// </remarks>
+        public UiMovie? RequestedNext { get; private set; }
+
+        /// <summary>
+        /// Reads the request and clears it, so it is answered exactly once. A plain property would
+        /// still be set after the caller had acted on it, and the next screen to close without a
+        /// request of its own would open the same film again.
+        /// </summary>
+        public UiMovie? TakeRequestedNext()
+        {
+            var next = RequestedNext;
+            RequestedNext = null;
+            return next;
+        }
+
+        /// <summary>
         /// True once a correction on this screen renamed the film. Read by the caller after
         /// <see cref="ShowAsync"/> returns, for the same reason as
         /// <see cref="DownloadedSomething"/>: the library behind it is sorted and grouped by a name
@@ -126,7 +152,8 @@ namespace UrDatabase.Views
             Func<string?, long?, CancellationToken, Task<double?>>? ratingLookup = null,
             JellyfinClient? jellyfin = null,
             CancellationToken appLifetime = default,
-            Func<string?, int?, CancellationToken, Task<OscarHonours>>? awardsLookup = null)
+            Func<string?, int?, CancellationToken, Task<OscarHonours>>? awardsLookup = null,
+            RelatedShelf? related = null)
         {
             // Leaving one film open behind another would strand its completion source and hang
             // whichever caller was awaiting it.
@@ -141,6 +168,7 @@ namespace UrDatabase.Views
             _appLifetime = appLifetime;
             DownloadedSomething = false;
             RenamedSomething = false;
+            RequestedNext = null;
             DataContext = vm;
 
             _cts?.Cancel();
@@ -148,6 +176,7 @@ namespace UrDatabase.Views
             _closed = new TaskCompletionSource();
 
             Bind(vm);
+            ShowRelated(related);
             IsVisible = true;
 
             // Focus has to land inside this screen or Escape and the arrow keys keep going to
@@ -238,6 +267,45 @@ namespace UrDatabase.Views
                 : "Metadata and artwork from TMDB. This product uses the TMDB API but is not endorsed or certified by TMDB. IMDb rating retrieved from the OMDb API; neither IMDb nor OMDb endorses this application.";
 
             UpdateFileNote();
+        }
+
+        /// <summary>
+        /// Fills the shelf of films to watch next, or hides it and gives the space back.
+        /// </summary>
+        /// <remarks>
+        /// The row heights are swapped rather than left fixed. With a shelf, the plot is capped so
+        /// the posters have somewhere to be; without one, the plot takes the star again and the
+        /// screen is exactly what it was before this existed. Leaving the plot capped either way
+        /// would reintroduce the empty band this shelf was added to fill, only higher up.
+        /// </remarks>
+        private void ShowRelated(RelatedShelf? related)
+        {
+            var shelf = related ?? RelatedShelf.Empty;
+
+            RelatedPane.IsVisible = shelf.Any;
+            RelatedList.ItemsSource = shelf.Any ? shelf.Films : null;
+            RelatedHeading.Text = shelf.Heading;
+
+            var rows = ((Grid)RelatedPane.Parent!).RowDefinitions;
+            rows[3].Height = shelf.Any ? GridLength.Auto : new GridLength(1, GridUnitType.Star);
+            rows[4].Height = shelf.Any ? new GridLength(1, GridUnitType.Star) : GridLength.Auto;
+
+            // Only capped when something is competing for the space. A film with a long plot and
+            // a shelf scrolls the plot, which is what the ScrollViewer around it was always for.
+            PlotPane.MaxHeight = shelf.Any ? 168 : double.PositiveInfinity;
+        }
+
+        /// <summary>
+        /// Asks the caller to open a film off the shelf, and leaves. See
+        /// <see cref="RequestedNext"/> for why it does not open it here.
+        /// </summary>
+        private void RelatedCard_Click(object? sender, PointerPressedEventArgs e)
+        {
+            if (!e.GetCurrentPoint(sender as Control).Properties.IsLeftButtonPressed) return;
+            if ((sender as Control)?.DataContext is not UiMovie film) return;
+
+            RequestedNext = film;
+            Close();
         }
 
         /// <summary>
