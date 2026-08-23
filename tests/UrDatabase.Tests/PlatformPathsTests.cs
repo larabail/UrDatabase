@@ -5,11 +5,21 @@ using Xunit;
 
 namespace UrDatabase.Tests
 {
+    /// <summary>
+    /// In the environment-variable collection because the install directory can now be moved by
+    /// one, and a class asserting where it is by default cannot run beside a class that is
+    /// setting it.
+    /// </summary>
+    [Collection(EnvironmentVariables.CollectionName)]
     public class PlatformPathsTests
     {
         [Fact]
         public void App_data_paths_live_under_the_user_application_data_folder()
         {
+            // Cleared rather than assumed: a developer with the variable exported would otherwise
+            // see this fail for a reason that has nothing to do with the code.
+            using var scope = new EnvironmentVariableScope(PlatformPaths.AppDataVariable);
+
             var root = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "UrDatabase");
 
             Assert.Equal(root, PlatformPaths.AppDataRoot);

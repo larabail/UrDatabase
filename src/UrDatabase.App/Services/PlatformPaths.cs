@@ -42,8 +42,81 @@ namespace UrDatabase.Services
         public const string JellyfinSftpPassphraseVariable = "URDATABASE_JELLYFIN_SFTP_PASSPHRASE";
         public const string JellyfinSftpMoviesPathVariable = "URDATABASE_JELLYFIN_SFTP_MOVIES_PATH";
 
-        public static string AppDataRoot =>
-            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), AppFolderName);
+        /// <summary>
+        /// Where the whole install lives, for anyone who needs it somewhere other than the
+        /// account's own application data: the catalogue, the poster cache, the logs and
+        /// <c>appsettings.json</c> all hang off it.
+        /// </summary>
+        /// <remarks>
+        /// It exists because until now there was no way to point the app anywhere at all, and that
+        /// left every verification run — every "launch it once and see that it paints" — opening
+        /// somebody's real library, with their catalogue and their credentials in it.
+        ///
+        /// The obvious precaution does not work, which is the whole reason a variable is needed
+        /// rather than a note telling people to be careful:
+        ///
+        /// <code>
+        /// Environment.SetEnvironmentVariable("HOME", tempDir);   // does NOT redirect this
+        /// Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+        /// </code>
+        ///
+        /// On Linux <c>GetFolderPath</c> honours <c>HOME</c> and <c>XDG_DATA_HOME</c>, so a
+        /// harness that sets them is isolated. On macOS it does not: .NET asks Foundation,
+        /// Foundation asks the operating system, and the answer is the real account's Application
+        /// Support whatever the environment says. So a harness written and checked on one platform
+        /// quietly writes to the live install on the other, which has already cost a maintainer
+        /// their API keys and their Jellyfin password — see AGENTS.md.
+        /// </remarks>
+        public const string AppDataVariable = "URDATABASE_DATA_DIR";
+
+        /// <summary>
+        /// The install directory: <see cref="AppDataVariable"/> when it names one, and the
+        /// account's own application data otherwise.
+        /// </summary>
+        /// <remarks>
+        /// Expanded through <see cref="Expand"/> like every other configured path, so
+        /// <c>~/scratch</c> and <c>%LOCALAPPDATA%\scratch</c> both work, and then resolved to an
+        /// absolute path — which is a deliberate difference from the settings in the config file.
+        /// They are read once, by a process whose working directory is wherever it was launched
+        /// from; this one is read by a harness that may well launch the app from somewhere else,
+        /// and an install directory that means a different place depending on how the app was
+        /// started is exactly the ambiguity this variable exists to remove. A macOS bundle starts
+        /// with its working directory at <c>/</c>.
+        ///
+        /// A value the operating system will not resolve at all is kept as it was rather than
+        /// discarded. Falling back to the account's own application data would be the one failure
+        /// worth avoiding here: somebody who asked for a scratch install would silently get the
+        /// real one, which is the accident this whole variable is for.
+        ///
+        /// A blank or whitespace value is ignored rather than honoured. An unset variable and one
+        /// set to nothing are the same intention, and treating the second as a path would put the
+        /// install at the filesystem root or at the working directory, neither of which anybody
+        /// asked for.
+        /// </remarks>
+        public static string AppDataRoot
+        {
+            get
+            {
+                var configured = Expand(Environment.GetEnvironmentVariable(AppDataVariable));
+                if (configured.Length > 0) return Resolve(configured);
+
+                return Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+                    AppFolderName);
+            }
+        }
+
+        private static string Resolve(string path)
+        {
+            try
+            {
+                return Path.GetFullPath(path);
+            }
+            catch (Exception)
+            {
+                return path;
+            }
+        }
 
         public static string DefaultDatabasePath => Path.Combine(AppDataRoot, "movies.db");
 
