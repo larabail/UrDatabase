@@ -779,17 +779,19 @@ namespace UrDatabase.Services
         // ---------- continue watching ----------
 
         /// <summary>
-        /// Films the server says this user is part way through, newest first.
+        /// Films and episodes the server says this user is part way through, newest first.
         /// </summary>
         /// <remarks>
         /// <c>/UserItems/Resume</c> is the server's own answer to "where was I", so the row is the
         /// same one every other Jellyfin client shows rather than something this app worked out.
-        /// Narrowed to films: the endpoint will happily return television episodes, and an app
-        /// whose filename parser has no concept of an episode would show one as an oddly titled
-        /// film.
+        /// Television is asked for alongside film because a half-watched episode is the commonest
+        /// thing to be part way through, and a row that silently left it out was this app
+        /// disagreeing with every other client in the house.
         ///
-        /// Only the position is kept. Titles, years and artwork are already cached with the
-        /// library, and a second copy of them here would be a second thing to keep true.
+        /// The position is all that is kept for a film — its title, year and artwork are already
+        /// cached with the library. An episode also brings the programme, the season and its
+        /// number, because nothing caches episodes until a series is opened and a card cannot be
+        /// drawn from an id alone.
         /// </remarks>
         public async Task<IReadOnlyList<JellyfinResumeItem>> GetResumeAsync(CancellationToken ct = default)
         {
@@ -798,7 +800,7 @@ namespace UrDatabase.Services
             var path =
                 "UserItems/Resume" +
                 $"?userId={Uri.EscapeDataString(_userId!)}" +
-                "&IncludeItemTypes=Movie&MediaTypes=Video" +
+                $"&IncludeItemTypes={JellyfinResumeItem.MovieType},{JellyfinResumeItem.EpisodeType}&MediaTypes=Video" +
                 $"&Limit={ResumeLimit.ToString(CultureInfo.InvariantCulture)}" +
                 "&Fields=UserData,RunTimeTicks" +
                 "&EnableTotalRecordCount=false";

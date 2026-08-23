@@ -38,6 +38,23 @@
                         Cursor="Hand"
                         PointerPressed="MovieCard_Click"
                         ToolTip.Tip="{Binding CardTooltip}">
+
+                <!-- The one thing a card can be told to do without opening it,
+                     and it is only offered on a card in the Continue watching
+                     row: the menu refuses to open on anything else rather than
+                     showing an empty box. A right-click because the row is the
+                     first thing on the page and a visible button there would be
+                     one click away from being pressed by accident — this takes
+                     two deliberate ones and spends no space at all.
+
+                     Nothing here is sent to the server. See
+                     MainWindow.DismissFromRow. -->
+                <StackPanel.ContextMenu>
+                    <ContextMenu Opening="CardMenu_Opening">
+                        <MenuItem Header="Remove from Continue watching"
+                                  Click="DismissFromRow_Click"/>
+                    </ContextMenu>
+                </StackPanel.ContextMenu>
                 <Grid>
                     <ctrls:PosterCard SourcePath="{Binding DisplayPosterPath}"
                                       Title="{Binding Title}"
@@ -54,6 +71,15 @@
                          clipped by the poster's own corners, which is why it
                          does not need a radius of its own.
 
+                         MinWidth is beaten down to nothing on purpose. The
+                         Fluent theme gives a ProgressBar a 200px minimum,
+                         which is wider than this 152px card: the bar was laid
+                         out at 200, centred, and drew 24px into the card on
+                         either side — so every mark in the row sat under the
+                         wrong poster, and a part-watched film put a brass rule
+                         under its neighbour. MinHeight is beaten down for the
+                         same reason: the theme's is 8.
+
                          Deliberately shown wherever the card appears and not
                          only in the Continue watching row: it is the same film
                          and the same fact. The tooltip says it in words. -->
@@ -63,13 +89,15 @@
                                  IsVisible="{Binding HasResume}"
                                  Height="3"
                                  MinHeight="3"
+                                 MinWidth="0"
+                                 Width="{StaticResource PosterWidth}"
                                  CornerRadius="0"
                                  Padding="0"
                                  BorderThickness="0"
                                  Background="{StaticResource EdgeBrush}"
                                  Foreground="{StaticResource BrassBrush}"
                                  VerticalAlignment="Bottom"
-                                 HorizontalAlignment="Stretch"/>
+                                 HorizontalAlignment="Center"/>
 
                     <!-- The hover edge. A Border of its own rather than the
                          card's, so pointing at a film lights it without
@@ -172,27 +200,41 @@
                            TextTrimming="CharacterEllipsis"
                            Margin="0,9,0,2"/>
 
-                <!-- The year, and for a series how many seasons are behind it.
-                     One binding rather than the template choosing, because
-                     what a card says about itself is a rule and rules in a
-                     view cannot be tested: see UiMovie.MetaLine.
+                <!-- The year; for a series how many seasons are behind it; and
+                     for an episode where in its programme it sits, which is
+                     the fact that makes an episode card legible at all — its
+                     own name frequently is not. One binding rather than the
+                     template choosing, because what a card says about itself
+                     is a rule and rules in a view cannot be tested: see
+                     UiMovie.MetaLine.
 
                      Beside it, for a part-watched film, how much of it is
                      left — which is the question somebody scanning the
                      Continue watching row is actually asking, and the one the
                      rule above the poster can only gesture at. In brass, so
-                     the two facts do not read as one sentence. -->
-                <StackPanel Orientation="Horizontal" Spacing="7">
-                    <TextBlock Classes="mono"
+                     the two facts do not read as one sentence.
+
+                     A Grid rather than a horizontal StackPanel: an episode's
+                     meta line is "S1E1 · In throes of increasing wonder … "
+                     and would push how-much-is-left off the side of a 152px
+                     card and over its neighbour. Here the left column trims
+                     and the brass keeps its width. The tooltip has all of it.
+                     -->
+                <Grid ColumnDefinitions="*,Auto">
+                    <TextBlock Grid.Column="0"
+                               Classes="mono"
                                FontSize="10.5"
                                Text="{Binding MetaLine}"
+                               TextTrimming="CharacterEllipsis"
                                IsVisible="{Binding MetaLine, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
-                    <TextBlock Classes="mono"
+                    <TextBlock Grid.Column="1"
+                               Classes="mono"
                                FontSize="10.5"
+                               Margin="7,0,0,0"
                                Foreground="{StaticResource BrassBrush}"
                                Text="{Binding ResumeNote}"
                                IsVisible="{Binding HasResume}"/>
-                </StackPanel>
+                </Grid>
             </StackPanel>
         </DataTemplate>
     </Window.Resources>

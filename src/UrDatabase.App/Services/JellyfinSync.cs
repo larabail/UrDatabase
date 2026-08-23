@@ -64,7 +64,18 @@ namespace UrDatabase.Services
                     // Null means the row could not be read, which is not the same as it being
                     // empty: the previous one is left exactly where it was. An empty list that the
                     // server did answer with is a real answer and does clear it.
-                    if (resume is not null) JellyfinResumeCache.Replace(conn, resume);
+                    if (resume is not null)
+                    {
+                        JellyfinResumeCache.Replace(conn, resume);
+
+                        // A dismissal only lasts as long as the position it was made at, so this
+                        // is where one expires: the server has just said where everything is, and
+                        // anything it now disagrees with is a dismissal about a viewing that has
+                        // moved on. Only ever with an answer the server actually gave — pruning
+                        // against a failed fetch would forget every dismissal the first time the
+                        // app was opened away from home.
+                        ResumeDismissalStore.Prune(conn, resume);
+                    }
 
                     return Task.FromResult(count);
                 },

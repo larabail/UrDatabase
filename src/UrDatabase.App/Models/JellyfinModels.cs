@@ -277,6 +277,17 @@ namespace UrDatabase.Models
         [JsonPropertyName("SeasonId")] public string? SeasonId { get; set; }
 
         /// <summary>
+        /// The programme an episode belongs to. Sent with an episode without having to be asked
+        /// for, which is what makes a mixed Continue watching row renderable from one request:
+        /// nothing caches episodes until a series is opened, so the row would otherwise have an
+        /// id and no way to name it.
+        /// </summary>
+        [JsonPropertyName("SeriesName")] public string? SeriesName { get; set; }
+
+        /// <summary>The season's own name — "Season 1", sometimes "Specials". Rarely useful alone.</summary>
+        [JsonPropertyName("SeasonName")] public string? SeasonName { get; set; }
+
+        /// <summary>
         /// Direct children: seasons for a series, episodes for a season. Only sent when
         /// <c>ChildCount</c> is among the requested fields, and not by every server version, which
         /// is why nothing here treats its absence as zero.
@@ -298,9 +309,14 @@ namespace UrDatabase.Models
         /// </summary>
         /// <remarks>
         /// An item with no id, or with no position in it, is not something to continue: the
-        /// endpoint is asked for films that are part-watched, but a server is entitled to include
-        /// one that has just been reset, and offering it under that heading would invite somebody
-        /// to carry on with a film they never started.
+        /// endpoint is asked for part-watched things, but a server is entitled to include one that
+        /// has just been reset, and offering it under that heading would invite somebody to carry
+        /// on with a film they never started.
+        ///
+        /// An episode carries what its card has to say as well as where it got to. Its own name is
+        /// often meaningless out of context — "In throes of increasing wonder … " names no
+        /// programme — so the series, the season and the number come across with it and the name
+        /// is the secondary line rather than the title.
         /// </remarks>
         public JellyfinResumeItem? ToResumeItem(int sortOrder)
         {
@@ -309,13 +325,25 @@ namespace UrDatabase.Models
             var position = UserData?.PlaybackPositionTicks ?? 0;
             if (position <= 0) return null;
 
+            var isEpisode = string.Equals(Type?.Trim(), JellyfinResumeItem.EpisodeType, StringComparison.OrdinalIgnoreCase);
+
             return new JellyfinResumeItem
             {
                 ItemId = Id.Trim(),
+                ItemType = isEpisode ? JellyfinResumeItem.EpisodeType : JellyfinResumeItem.MovieType,
                 PositionTicks = position,
                 RuntimeTicks = RunTimeTicks is > 0 ? RunTimeTicks : null,
                 PlayedPercentage = UserData?.PlayedPercentage,
-                SortOrder = sortOrder
+                SortOrder = sortOrder,
+
+                // Only ever filled for an episode. A film that arrived with a SeriesName — which
+                // no server sends, but a proxy or a future field could — would otherwise be given
+                // an episode's rendering on the strength of one stray string.
+                SeriesId = isEpisode ? (SeriesId ?? "").Trim() : "",
+                SeriesName = isEpisode ? (SeriesName ?? "").Trim() : "",
+                SeasonNumber = isEpisode ? ParentIndexNumber : null,
+                EpisodeNumber = isEpisode ? IndexNumber : null,
+                Name = isEpisode ? (Name ?? "").Trim() : ""
             };
         }
 

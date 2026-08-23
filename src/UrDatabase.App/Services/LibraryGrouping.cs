@@ -135,6 +135,11 @@ namespace UrDatabase.Services
         /// mixture is stated as a number. Each half is named only when it is there, so a library
         /// with no television reads precisely as it did before — which is every library this app
         /// had until now.
+        ///
+        /// Episodes are a third population, and only ever appear in the Continue watching row.
+        /// They are counted as episodes rather than folded into either of the other two: an
+        /// episode is not a programme, and a row of two films and three episodes headed "5 FILMS"
+        /// would be the same dishonesty in a smaller place.
         /// </remarks>
         public static string CountLabel(IEnumerable<UiMovie>? items)
         {
@@ -143,13 +148,26 @@ namespace UrDatabase.Services
 
             var films = materialised.Count(m => m.IsFilm);
             var series = materialised.Count(m => m.IsSeries);
+            var episodes = materialised.Count(m => m.IsEpisode);
 
-            if (series == 0) return CountLabel(films);
+            if (series == 0 && episodes == 0) return CountLabel(films);
+
+            var parts = new List<string>();
+
+            if (films > 0) parts.Add(CountLabel(films));
 
             // "SERIES" is its own plural. Spelled once rather than through a conditional that
             // would read as though one of the two branches did something.
-            var seriesLabel = $"{series.ToString(CultureInfo.InvariantCulture)} SERIES";
-            return films == 0 ? seriesLabel : $"{CountLabel(films)} · {seriesLabel}";
+            if (series > 0) parts.Add($"{series.ToString(CultureInfo.InvariantCulture)} SERIES");
+
+            if (episodes > 0)
+            {
+                parts.Add(episodes == 1
+                    ? "1 EPISODE"
+                    : $"{episodes.ToString(CultureInfo.InvariantCulture)} EPISODES");
+            }
+
+            return parts.Count == 0 ? CountLabel(0) : string.Join(" · ", parts);
         }
 
         /// <summary>
