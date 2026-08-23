@@ -189,10 +189,18 @@
             <!-- Poster and text. -->
             <Grid Margin="24,8,48,0" ColumnDefinitions="250,48,*">
 
-                <StackPanel Grid.Column="0" VerticalAlignment="Top">
+                <!-- A grid rather than a stack, for the reason the series screen's
+                     column is one: a StackPanel measures against infinite height,
+                     so a film with seven nominations asked for a 375-pixel poster
+                     and roughly 400 pixels of Academy underneath it whether the
+                     window had the room or not, and drew the remainder over the
+                     footer. The poster is pinned; the Academy takes what is left. -->
+                <Grid Grid.Column="0" RowDefinitions="Auto,*">
                     <Border x:Name="PosterPlate"
+                            Grid.Row="0"
                             Width="250"
                             Height="375"
+                            VerticalAlignment="Top"
                             CornerRadius="{StaticResource RadiusLarge}"
                             ClipToBounds="True"
                             BoxShadow="0 18 42 0 #800B0A09">
@@ -216,56 +224,62 @@
                         colour — the same rule the connection indicators follow, and for the
                         same reason.
                     -->
-                    <StackPanel x:Name="AwardsPanel"
-                                Margin="0,22,0,0"
-                                IsVisible="False">
-                        <TextBlock x:Name="AwardsHeading"
-                                   Classes="label"
-                                   Text="ACADEMY AWARDS"
-                                   LetterSpacing="1.6"
-                                   Margin="0,0,0,5"/>
-                        <Rectangle Height="1"
-                                   Fill="{StaticResource EdgeBrush}"
-                                   Margin="0,0,0,8"/>
-                        <TextBlock x:Name="AwardsSummary"
-                                   Classes="mono"
-                                   FontSize="11.5"
-                                   Foreground="{StaticResource ProseBrush}"
-                                   Margin="0,0,0,9"/>
-                        <ItemsControl x:Name="AwardsList">
-                            <ItemsControl.ItemTemplate>
-                                <DataTemplate DataType="models:AwardRow">
-                                    <Grid ColumnDefinitions="15,*" Margin="0,0,0,7"
-                                          ToolTip.Tip="{Binding Tip}">
-                                        <TextBlock Grid.Column="0"
-                                                   Classes="awardMark"
-                                                   Classes.won="{Binding Won}"
-                                                   Text="{Binding Mark}"/>
-                                        <StackPanel Grid.Column="1">
-                                            <TextBlock Classes="awardCategory"
+                    <ScrollViewer Grid.Row="1"
+                                  VerticalScrollBarVisibility="Auto"
+                                  Background="Transparent"
+                                  Padding="0,0,12,0"
+                                  Margin="0,0,0,16">
+                        <StackPanel x:Name="AwardsPanel"
+                                    Margin="0,22,0,0"
+                                    IsVisible="False">
+                            <TextBlock x:Name="AwardsHeading"
+                                       Classes="label"
+                                       Text="ACADEMY AWARDS"
+                                       LetterSpacing="1.6"
+                                       Margin="0,0,0,5"/>
+                            <Rectangle Height="1"
+                                       Fill="{StaticResource EdgeBrush}"
+                                       Margin="0,0,0,8"/>
+                            <TextBlock x:Name="AwardsSummary"
+                                       Classes="mono"
+                                       FontSize="11.5"
+                                       Foreground="{StaticResource ProseBrush}"
+                                       Margin="0,0,0,9"/>
+                            <ItemsControl x:Name="AwardsList">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate DataType="models:AwardRow">
+                                        <Grid ColumnDefinitions="15,*" Margin="0,0,0,7"
+                                              ToolTip.Tip="{Binding Tip}">
+                                            <TextBlock Grid.Column="0"
+                                                       Classes="awardMark"
                                                        Classes.won="{Binding Won}"
-                                                       Text="{Binding Category}"
-                                                       TextWrapping="Wrap"/>
-                                            <TextBlock Classes="awardDetail"
-                                                       Text="{Binding Detail}"
-                                                       IsVisible="{Binding HasDetail}"
-                                                       TextTrimming="CharacterEllipsis"/>
-                                        </StackPanel>
-                                    </Grid>
-                                </DataTemplate>
-                            </ItemsControl.ItemTemplate>
-                        </ItemsControl>
-                        <TextBlock x:Name="AwardsMore"
-                                   Classes="dim"
-                                   FontSize="11"
-                                   IsVisible="False"
-                                   Margin="15,1,0,0"/>
-                        <TextBlock x:Name="AwardsAttribution"
-                                   Classes="attribution"
-                                   Margin="0,10,0,0"
-                                   Text="Academy Awards data from the UrActor API."/>
-                    </StackPanel>
-                </StackPanel>
+                                                       Text="{Binding Mark}"/>
+                                            <StackPanel Grid.Column="1">
+                                                <TextBlock Classes="awardCategory"
+                                                           Classes.won="{Binding Won}"
+                                                           Text="{Binding Category}"
+                                                           TextWrapping="Wrap"/>
+                                                <TextBlock Classes="awardDetail"
+                                                           Text="{Binding Detail}"
+                                                           IsVisible="{Binding HasDetail}"
+                                                           TextTrimming="CharacterEllipsis"/>
+                                            </StackPanel>
+                                        </Grid>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                            <TextBlock x:Name="AwardsMore"
+                                       Classes="dim"
+                                       FontSize="11"
+                                       IsVisible="False"
+                                       Margin="15,1,0,0"/>
+                            <TextBlock x:Name="AwardsAttribution"
+                                       Classes="attribution"
+                                       Margin="0,10,0,0"
+                                       Text="Academy Awards data from the UrActor API."/>
+                        </StackPanel>
+                    </ScrollViewer>
+                </Grid>
 
                 <!-- The plot takes the space that is left and scrolls inside
                      it; the credits are pinned to the foot of the column. A
@@ -492,21 +506,32 @@
                             <Rectangle Height="1"
                                        Fill="{StaticResource EdgeBrush}"
                                        Margin="0,0,0,8"/>
-                            <ItemsControl x:Name="CrewList">
-                                <ItemsControl.ItemTemplate>
-                                    <DataTemplate DataType="models:CreditEntry">
-                                        <StackPanel Orientation="Horizontal" Margin="0,0,0,3">
-                                            <TextBlock Classes="label"
-                                                       Text="{Binding Secondary}"
-                                                       Width="62"
-                                                       IsVisible="{Binding HasSecondary}"/>
-                                            <TextBlock Classes="castName"
-                                                       Text="{Binding Primary}"
-                                                       TextWrapping="Wrap"/>
-                                        </StackPanel>
-                                    </DataTemplate>
-                                </ItemsControl.ItemTemplate>
-                            </ItemsControl>
+                            <!-- The same 120 pixels the cast beside it is held to,
+                                 so the two halves of the credits end on one line
+                                 rather than one of them running on past the other
+                                 and out through the footer. Six crew wrapping onto
+                                 two lines each is the case that overruns it, and it
+                                 scrolls rather than being cut off. -->
+                            <ScrollViewer MaxHeight="120"
+                                          VerticalScrollBarVisibility="Auto"
+                                          Background="Transparent"
+                                          Padding="0,0,12,0">
+                                <ItemsControl x:Name="CrewList">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate DataType="models:CreditEntry">
+                                            <StackPanel Orientation="Horizontal" Margin="0,0,0,3">
+                                                <TextBlock Classes="label"
+                                                           Text="{Binding Secondary}"
+                                                           Width="62"
+                                                           IsVisible="{Binding HasSecondary}"/>
+                                                <TextBlock Classes="castName"
+                                                           Text="{Binding Primary}"
+                                                           TextWrapping="Wrap"/>
+                                            </StackPanel>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </ScrollViewer>
                             <TextBlock x:Name="NoCrewText"
                                        Classes="dim"
                                        IsVisible="False"/>
