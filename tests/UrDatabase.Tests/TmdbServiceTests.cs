@@ -1,3 +1,4 @@
+using System;
 using System.Linq;
 using System.Net;
 using System.Threading;
@@ -7,8 +8,13 @@ using Xunit;
 
 namespace UrDatabase.Tests
 {
-    public class TmdbServiceTests
+    public class TmdbServiceTests : IDisposable
     {
+        // A failed recommendations lookup is logged rather than thrown.
+        private readonly TempLog _log = new();
+
+        public void Dispose() => _log.Dispose();
+
         private static TmdbService Create(FakeHttpMessageHandler handler, string apiKey = "test-key", string imageSize = "w342")
             => new(apiKey, posterCacheDir: "", imageSize: imageSize, downloadPosters: false, handler: handler);
 

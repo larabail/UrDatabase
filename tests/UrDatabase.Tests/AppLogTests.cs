@@ -15,7 +15,13 @@ namespace UrDatabase.Tests
     /// async-local rather than a plain static: with a static, another class redirecting in
     /// parallel makes them fail, and that is the mild symptom of the actual problem, which is
     /// that class writing into a temporary folder somebody else is about to delete.
+    ///
+    /// In the environment-variable collection because those same assertions read
+    /// <c>PlatformPaths.LogDirectory</c>, which <c>URDATABASE_DATA_DIR</c> moves. Two classes now
+    /// set that variable, and an assertion that reads the expected and the actual value either
+    /// side of one of them fails for a reason that has nothing to do with logging.
     /// </summary>
+    [Collection(EnvironmentVariables.CollectionName)]
     public class AppLogTests : IDisposable
     {
         private readonly string _dir;

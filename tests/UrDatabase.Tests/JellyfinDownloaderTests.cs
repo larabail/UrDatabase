@@ -27,6 +27,7 @@ namespace UrDatabase.Tests
         private const string ItemId = "cccc0000cccc0000cccc0000cccc0000";
 
         private readonly string _folder;
+        private readonly TempLog _log = new();
 
         public JellyfinDownloaderTests()
         {
@@ -36,6 +37,7 @@ namespace UrDatabase.Tests
 
         public void Dispose()
         {
+            _log.Dispose();
             try { Directory.Delete(_folder, recursive: true); } catch { }
         }
 

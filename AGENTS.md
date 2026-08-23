@@ -144,6 +144,32 @@ is a bug in the code and not a licence to run it against real data. `AppLog` was
 exactly that and now takes `AppLog.Redirect(dir)`, which returns a scope and is
 async-local so two test classes running in parallel cannot see each other's.
 
+The log is also the one case where the rule is now enforced rather than
+remembered, because remembering did not work: `AppLog.Redirect` existed, was
+documented, and twelve test classes still appended to a maintainer's real
+`jellyfin.log` on every full run — none of them a test about logging, all of
+them a test whose subject happened to call a service that logs on a failure
+path. A module initializer in the test assembly calls
+`AppLog.ForbidRealDirectory()`, and from then on a write that has not been
+redirected throws `UnredirectedLogWriteException` instead of reaching the
+filesystem. So a test that logs fails with a message telling you to redirect it,
+rather than quietly costing somebody else disk.
+
+The easy way to satisfy it is `TempLog`, in the test project: one
+`private readonly TempLog _log = new();` in the class, disposed with everything
+else. Put it on the class rather than inside the one test you know logs — the
+next test added to that class will not know.
+
+Nothing in the app arms the guard, so a shipped build logs exactly as it always
+did and still swallows every failure. Do not arm it anywhere outside a test
+assembly, and do not add a way to disarm it: a scope would only invite a test to
+switch it off around the write it could not be bothered to redirect.
+
+Note what it does not cover. It only knows about `AppLog`. A test that writes
+under the real install some other way — `File.WriteAllText` against a path built
+from `PlatformPaths.AppDataRoot`, say — is not stopped by any of this, and the
+rule above is still the only thing between it and somebody's catalogue.
+
 Running the app itself is the case where that used to be true, and it is the
 case that matters, because `dotnet run` is not optional — the step below asks
 for it, and Avalonia reports a broken binding at runtime rather than at compile

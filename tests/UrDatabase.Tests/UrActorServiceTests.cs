@@ -11,8 +11,13 @@ using Xunit;
 
 namespace UrDatabase.Tests
 {
-    public class UrActorServiceTests
+    public class UrActorServiceTests : IDisposable
     {
+        // Three tests here take a failure path, and each writes a line about it.
+        private readonly TempLog _log = new();
+
+        public void Dispose() => _log.Dispose();
+
         private const string F1Response = @"[
             { ""year"": ""2026"", ""category"": ""Best Picture"",
               ""nomination"": { ""primary"": [""F1""], ""secondary"": [""Chad Oman"", ""Brad Pitt""], ""won"": false } },
@@ -198,8 +203,10 @@ namespace UrDatabase.Tests
                 }
 
                 // And the switch is off again, so nothing after this writes to a temporary
-                // directory that is about to be deleted.
-                Assert.Equal(PlatformPaths.LogDirectory, AppLog.Directory);
+                // directory that is about to be deleted. It unwinds to this class's own log
+                // directory rather than to the real one, because the whole suite is redirected
+                // now — AppLogTests is where the restore-to-the-real-directory case is asserted.
+                Assert.Equal(Path.GetFullPath(_log.Directory), AppLog.Directory);
             }
             finally
             {

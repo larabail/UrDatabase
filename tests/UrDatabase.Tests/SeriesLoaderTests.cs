@@ -22,6 +22,7 @@ namespace UrDatabase.Tests
     {
         private readonly string _dir;
         private readonly string _dbPath;
+        private readonly TempLog _log = new();
 
         public SeriesLoaderTests()
         {
@@ -32,6 +33,7 @@ namespace UrDatabase.Tests
 
         public void Dispose()
         {
+            _log.Dispose();
             try { Directory.Delete(_dir, recursive: true); } catch { }
         }
 
