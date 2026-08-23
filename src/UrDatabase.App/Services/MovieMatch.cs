@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Data.Sqlite;
@@ -34,6 +35,28 @@ namespace UrDatabase.Services
         }
 
         /// <summary>
+        /// The name to store for a film somebody has just identified, or null when there is nothing
+        /// worth writing.
+        /// </summary>
+        /// <remarks>
+        /// A rename is refused when TMDB offered no name at all, and skipped when the catalogue
+        /// already agrees — so correcting a film whose title was right all along, which is the
+        /// ordinary case when only the poster was wrong, does not touch the title column or
+        /// pointlessly fill in <c>scan_title</c>.
+        ///
+        /// Case and spacing count as a difference. "el drama" and "El Drama" are the same film and
+        /// the same key to every matching rule in the app, but they are not equally good to read,
+        /// and taking TMDB's spelling is the point of having asked.
+        /// </remarks>
+        public static string? RenameTo(string? currentTitle, string? tmdbTitle)
+        {
+            var wanted = (tmdbTitle ?? "").Trim();
+            if (wanted.Length == 0) return null;
+
+            return string.Equals(wanted, (currentTitle ?? "").Trim(), StringComparison.Ordinal) ? null : wanted;
+        }
+
+        /// <summary>
         /// Records the film and its artwork together, because they are one answer: writing a
         /// poster without the id it came from is how the catalogue ended up holding artwork it
         /// could not explain or replace.
@@ -43,17 +66,41 @@ namespace UrDatabase.Services
         /// loader has nothing to write when TMDB has no artwork, and blanking the column in that
         /// case would throw away a poster somebody had chosen by hand.
         /// </param>
-        public static Task SaveAsync(SqliteConnection conn, long movieId, int tmdbId, string? posterPath, CancellationToken ct = default) =>
+        /// <param name="title">
+        /// What TMDB calls the film, when a person chose it. Null leaves the catalogued name
+        /// alone, which is what the automatic loader wants: it identifies films by their title in
+        /// the first place, so writing that title back would say nothing and would overwrite a
+        /// correction made by hand with a guess.
+        /// </param>
+        public static Task SaveAsync(
+            SqliteConnection conn,
+            long movieId,
+            int tmdbId,
+            string? posterPath,
+            string? title = null,
+            CancellationToken ct = default) =>
             DatabaseWriteLane.RunAsync(conn, async token =>
             {
+                var columns = new List<string> { "tmdb_id=@tmdb" };
+                if (posterPath is not null) columns.Add("poster_path=@poster");
+
+                if (title is not null)
+                {
+                    // The scanned name is preserved on the way past, and only when there is not one
+                    // already: renaming twice must keep the name the scanner actually parsed, not
+                    // the previous correction. COALESCE also backfills a row catalogued before the
+                    // column existed, whose scan_title is null but whose title is still the scan's.
+                    columns.Add("scan_title=COALESCE(scan_title, title)");
+                    columns.Add("title=@title");
+                }
+
                 using var cmd = conn.CreateCommand();
-                cmd.CommandText = posterPath is null
-                    ? "UPDATE movies SET tmdb_id=@tmdb WHERE id=@id"
-                    : "UPDATE movies SET tmdb_id=@tmdb, poster_path=@poster WHERE id=@id";
+                cmd.CommandText = $"UPDATE movies SET {string.Join(", ", columns)} WHERE id=@id";
 
                 cmd.Parameters.AddWithValue("@tmdb", tmdbId);
                 cmd.Parameters.AddWithValue("@id", movieId);
                 if (posterPath is not null) cmd.Parameters.AddWithValue("@poster", posterPath);
+                if (title is not null) cmd.Parameters.AddWithValue("@title", title);
 
                 // ConfigureAwait(false) as everywhere else on this path: the lane is entered from
                 // a UI event handler, and an uncontended lane never yields, so without this the

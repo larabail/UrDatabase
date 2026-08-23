@@ -5,6 +5,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Dapper;
+using Microsoft.Data.Sqlite;
 using UrDatabase.Services;
 using Xunit;
 
@@ -426,6 +427,70 @@ namespace UrDatabase.Tests
             Directory.CreateDirectory(dir);
             foreach (var name in names) File.WriteAllText(Path.Combine(dir, name), "x");
             return dir;
+        }
+
+        // ---------- a film renamed by a corrected TMDB match ----------
+
+        private static long CountMovies(SqliteConnection conn)
+        {
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = "SELECT COUNT(*) FROM movies";
+            return (long)cmd.ExecuteScalar()!;
+        }
+
+        /// <summary>
+        /// The hazard that made renaming impossible until now. The scanner resolves what it parses
+        /// out of a filename, so a film renamed to its real title no longer answers to the name on
+        /// disk — and the next scan, finding nothing, used to insert a second row for a film
+        /// already in the catalogue.
+        /// </summary>
+        [Fact]
+        public async Task A_renamed_film_is_not_catalogued_twice_by_the_next_scan()
+        {
+            var moviesDir = Path.Combine(_root, "movies");
+            Directory.CreateDirectory(moviesDir);
+            File.WriteAllText(Path.Combine(moviesDir, "El Drama (2026).mkv"), "x");
+
+            using var conn = Database.Open(Path.Combine(_root, "test.db"));
+            var scanner = new ScanService();
+
+            await scanner.ScanAsync(conn, new[] { moviesDir });
+            Assert.Equal(1L, CountMovies(conn));
+
+            // What "Wrong film?" does.
+            var id = conn.ExecuteScalar<long>("SELECT id FROM movies");
+            await MovieMatch.SaveAsync(conn, id, 901, "/right.jpg", "The Drama");
+            Assert.Equal("The Drama", conn.ExecuteScalar<string>("SELECT title FROM movies WHERE id=@id", new { id }));
+
+            await scanner.ScanAsync(conn, new[] { moviesDir });
+
+            Assert.Equal(1L, CountMovies(conn));
+            Assert.Equal("The Drama", conn.ExecuteScalar<string>("SELECT title FROM movies WHERE id=@id", new { id }));
+        }
+
+        /// <summary>
+        /// And a second copy of a renamed film, arriving after the rename, joins the row it belongs
+        /// to rather than starting another one — the file on disk still carries the old name.
+        /// </summary>
+        [Fact]
+        public async Task A_new_copy_of_a_renamed_film_joins_the_film_it_belongs_to()
+        {
+            var moviesDir = Path.Combine(_root, "movies");
+            Directory.CreateDirectory(moviesDir);
+            File.WriteAllText(Path.Combine(moviesDir, "El Drama (2026).mkv"), "x");
+
+            using var conn = Database.Open(Path.Combine(_root, "test.db"));
+            var scanner = new ScanService();
+
+            await scanner.ScanAsync(conn, new[] { moviesDir });
+            var id = conn.ExecuteScalar<long>("SELECT id FROM movies");
+            await MovieMatch.SaveAsync(conn, id, 901, null, "The Drama");
+
+            File.WriteAllText(Path.Combine(moviesDir, "El Drama (2026) 1080p.mkv"), "x");
+            await scanner.ScanAsync(conn, new[] { moviesDir });
+
+            Assert.Equal(1L, CountMovies(conn));
+            Assert.Equal(2L, conn.ExecuteScalar<long>("SELECT COUNT(*) FROM files WHERE movie_id=@id", new { id }));
         }
     }
 }

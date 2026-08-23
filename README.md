@@ -103,9 +103,13 @@ It runs on Windows and macOS from one codebase, built with
   the wrong TMDB record however careful the rules are. **Wrong film?** on the
   details screen searches TMDB and lists what it finds — poster, title, original
   title, year and plot — and choosing one replaces the artwork, plot, runtime,
-  genres, cast and crew, and records the choice in `movies.tmdb_id` so nothing
-  overwrites it and reopening the film does not undo it
-  (`Views/TmdbMatchWindow`, `Services/MovieMatch`).
+  genres, cast and crew, **renames the film to what TMDB calls it**, and records
+  the choice in `movies.tmdb_id` so nothing overwrites it and reopening the film
+  does not undo it. The name a film was scanned under is kept in
+  `movies.scan_title`, because the scanner matches files by the title it parses
+  out of a filename: without it, a renamed film would stop answering to the name
+  on disk and the next scan would catalogue it a second time
+  (`Views/TmdbMatchWindow`, `Services/MovieMatch`, `Services/MovieIndex`).
 - **Scan your watch folders.** The scan button walks the configured folders for
   video files — `.mkv`, `.mp4`, `.avi`, `.mov`, `.wmv`, `.m4v`, `.mpg`, `.mpeg`
   — parses a title and year out of each filename, creates or reuses a canonical
@@ -551,8 +555,10 @@ has to be added there too.
 present and out of date, so a column added to an existing table needs more than
 the script: `Database.Migrate` inspects each table and issues the
 `ALTER TABLE ... ADD COLUMN` itself. That is how a catalogue built by an older
-version gained `jellyfin_movies.cast_list` and `crew_list`, and `movies.tmdb_id`,
-which records which TMDB film each row is. Adding a column is the only migration
+version gained `jellyfin_movies.cast_list` and `crew_list`, `movies.tmdb_id`,
+which records which TMDB film each row is, and `movies.scan_title`, which keeps
+the name the scanner gave a film once its displayed title can be corrected to
+something else. Adding a column is the only migration
 shape supported, and each one is nullable with no default, so nothing is
 rewritten and no row can be lost. Losing the race to add one is tolerated rather
 than reported: several connections open the catalogue at once, and only the
@@ -728,11 +734,12 @@ Stated plainly, so nobody has to find out by using it:
   back with nothing rather than with the wrong film's artwork. The card stays
   blank until you open it and use **Wrong film?**. That is the trade: an empty
   frame invites the fix, and a confidently wrong one does not.
-- **Correcting a match does not correct the catalogue's own title.** Choosing
-  the right TMDB film replaces the poster, plot, runtime, genres and credits, but
-  the title and year on the card still come from the filename, so a film
-  catalogued as `S W A T` keeps that name in the library and in search. Renaming
-  a film by hand is not possible yet.
+- **Correcting a match does not correct the year, and there is still no way to
+  rename a film by hand.** Choosing the right TMDB film now renames it — a film
+  catalogued as `S W A T` becomes `S.W.A.T.` in the library, in search and on the
+  genre shelves — but the year on the card still comes from the filename, and a
+  film TMDB does not have cannot be renamed at all, because the name has to come
+  from a film you picked.
 - **A scanned library has no genres.** Nothing writes the `genres` column for a
   scanned film yet, so every film from a scan lands in a single
   **Uncategorised** bucket, and a freshly scanned library looks bare until

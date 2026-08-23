@@ -192,7 +192,7 @@ namespace UrDatabase.Services
                 // The id is stored beside the poster so the details screen describes the film the
                 // artwork belongs to, and so a person correcting the match has something to
                 // correct rather than a poster from nowhere.
-                await MovieMatch.SaveAsync(conn, movieId, tmdbId.Value, pathToStore, token);
+                await MovieMatch.SaveAsync(conn, movieId, tmdbId.Value, pathToStore, ct: token);
 
                 onFetched(pathToStore);
             }

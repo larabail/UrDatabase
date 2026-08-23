@@ -102,6 +102,30 @@ namespace UrDatabase.Services
         }
 
         /// <summary>
+        /// Files a movie the index already holds under a second name.
+        /// </summary>
+        /// <remarks>
+        /// A film can be catalogued under one name and known by another: correcting a wrong TMDB
+        /// match renames the row to the film's real title, while the filename it was scanned from
+        /// still says what it always said. The scanner resolves what it parses out of a filename,
+        /// so without the old name here a re-scan would fail to find the row it created and insert
+        /// a second one — the renamed film would quietly grow a duplicate.
+        ///
+        /// It does not raise <see cref="Count"/>, which counts films rather than names. Two entries
+        /// pointing at one id are one film, and a scan reports that number to the user.
+        /// </remarks>
+        public void AddAlias(long id, string? title, int? year)
+        {
+            var normalized = IndexKey(title);
+            if (normalized.Length == 0) return;
+
+            _byTitleAndYear.TryAdd(BuildKey(title, year), id);
+            _byTitle.TryAdd(normalized, id);
+
+            if (!year.HasValue) _yearlessByTitle.TryAdd(normalized, id);
+        }
+
+        /// <summary>
         /// Finds the movie a parsed filename belongs to.
         /// </summary>
         /// <param name="yearIsNewInformation">

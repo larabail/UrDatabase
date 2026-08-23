@@ -14,7 +14,25 @@ namespace UrDatabase.Models
     {
         public int TmdbId { get; init; }
 
+        /// <summary>
+        /// What the row shows as the film's name, which is never blank: a result TMDB has no title
+        /// for still has to occupy a line somebody can click.
+        /// </summary>
         public string Title { get; init; } = "";
+
+        /// <summary>
+        /// The stand-in shown when TMDB has no title at all. Not a name any film is called, which
+        /// is why <see cref="TmdbTitle"/> exists separately — renaming a catalogued film to this
+        /// would be worse than leaving the filename's guess alone.
+        /// </summary>
+        public const string UnknownTitle = "Untitled";
+
+        /// <summary>
+        /// The film's actual name according to TMDB, or null when TMDB gave neither a title nor an
+        /// original one. This is what a correction writes to the catalogue; <see cref="Title"/> is
+        /// for reading off the screen and may be <see cref="UnknownTitle"/>.
+        /// </summary>
+        public string? TmdbTitle { get; init; }
 
         /// <summary>
         /// The year, or a sentence saying there isn't one. Blank would read as a rendering fault
@@ -66,7 +84,8 @@ namespace UrDatabase.Models
             return new TmdbCandidateVm
             {
                 TmdbId = candidate.Id,
-                Title = string.IsNullOrWhiteSpace(title) ? "Untitled" : title!,
+                Title = string.IsNullOrWhiteSpace(title) ? UnknownTitle : title!,
+                TmdbTitle = string.IsNullOrWhiteSpace(title) ? null : title!.Trim(),
                 OriginalTitle = original,
                 YearLabel = candidate.Year?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "Year unknown",
                 Overview = string.IsNullOrWhiteSpace(candidate.Overview)

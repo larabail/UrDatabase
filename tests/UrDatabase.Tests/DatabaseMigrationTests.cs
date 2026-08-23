@@ -392,6 +392,7 @@ VALUES (1, '/films/Ran (1985).mkv', 1234, '2020-01-01T00:00:00.0000000', '2020-0
             Assert.True(Database.ColumnExists(conn, "files", "last_seen_scan_id"));
             Assert.True(Database.ColumnExists(conn, "files", "missing_since"));
             Assert.True(Database.ColumnExists(conn, "movies", "tmdb_id"));
+            Assert.True(Database.ColumnExists(conn, "movies", "scan_title"));
         }
 
         /// <summary>
