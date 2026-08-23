@@ -43,6 +43,20 @@ namespace UrDatabase.Views
         /// <summary>Completed when the screen is dismissed. Null while nothing is being shown.</summary>
         private TaskCompletionSource? _closed;
 
+        /// <summary>
+        /// Needed to search TMDB when the automatic match was wrong. Null in the designer and when
+        /// the screen was shown without one, which disables the correction rather than failing at
+        /// it.
+        /// </summary>
+        private AppConfig? _config;
+
+        /// <summary>
+        /// How to look up an IMDb rating for a film that has just been re-identified. Owned by the
+        /// main window, which holds the rating service and the connection it caches through; this
+        /// screen borrows it rather than building a second one that would ask OMDb again.
+        /// </summary>
+        private Func<string?, long?, CancellationToken, Task<double?>>? _ratingLookup;
+
         public MovieDetailsView()
         {
             InitializeComponent();
@@ -51,7 +65,11 @@ namespace UrDatabase.Views
         /// <summary>
         /// Shows a film and returns when the user leaves it.
         /// </summary>
-        public Task ShowAsync(MovieDetailsVm vm, string? dbPath = null)
+        public Task ShowAsync(
+            MovieDetailsVm vm,
+            string? dbPath = null,
+            AppConfig? config = null,
+            Func<string?, long?, CancellationToken, Task<double?>>? ratingLookup = null)
         {
             // Leaving one film open behind another would strand its completion source and hang
             // whichever caller was awaiting it.
@@ -59,6 +77,8 @@ namespace UrDatabase.Views
 
             Vm = vm;
             _dbPath = dbPath;
+            _config = config;
+            _ratingLookup = ratingLookup;
             DataContext = vm;
 
             _cts?.Cancel();
@@ -133,6 +153,7 @@ namespace UrDatabase.Views
             ShowMissingCredits(cast, crew, vm);
 
             LinkFileButton.IsVisible = !vm.IsRemote;
+            CorrectMatchButton.IsVisible = !vm.IsRemote;
 
             AttributionText.Text = vm.IsRemote
                 ? "Metadata and artwork supplied by your Jellyfin server. IMDb rating retrieved from the OMDb API; neither IMDb nor OMDb endorses this application."
@@ -365,5 +386,164 @@ namespace UrDatabase.Views
         /// and this control is no longer one.
         /// </summary>
         private Window? Owner() => TopLevel.GetTopLevel(this) as Window;
+
+        /// <summary>
+        /// Lets the user say which film this actually is, and rebuilds the screen from their
+        /// answer.
+        ///
+        /// TMDB is searched by title, and a title identifies nothing: the search returns its most
+        /// popular near miss rather than nothing at all, and the poster it suggested was written to
+        /// the catalogue and then never revisited, because the poster column is only ever filled
+        /// when it is empty. That made one wrong guess permanent, with no way in the app to say
+        /// otherwise.
+        /// </summary>
+        private async void CorrectMatch_Click(object? sender, RoutedEventArgs e)
+        {
+            var vm = Vm;
+            if (vm is null) return;
+
+            var owner = Owner();
+            if (owner is null) return;
+
+            if (_config is null)
+            {
+                await MessageBoxWindow.ShowAsync(owner, "UrDatabase",
+                    "This screen was opened without any settings, so it cannot search TMDB.");
+                return;
+            }
+
+            var chosen = await TmdbMatchWindow.ChooseAsync(owner, _config, vm.Title, vm.Year);
+            if (chosen is null) return;
+
+            try
+            {
+                await ApplyMatchAsync(vm, chosen);
+            }
+            catch (OperationCanceledException)
+            {
+                // The screen was dismissed, or the whole thing outran its timeout.
+            }
+            catch (Exception ex)
+            {
+                AppLog.Write("posters.log", $"could not apply tmdb match {chosen.TmdbId} to movie {vm.LocalId}: {ex}");
+                await MessageBoxWindow.ShowAsync(owner, "UrDatabase",
+                    $"Could not fetch that film from TMDB:{Environment.NewLine}{ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Replaces everything TMDB told the app about this film, and records which film it is.
+        ///
+        /// The order matters. The poster and the id are saved before the details are fetched, so a
+        /// correction survives the request failing or the screen being left under it: the right
+        /// artwork with a stale plot is recoverable, and losing the answer altogether is the thing
+        /// the user came here to stop happening.
+        /// </summary>
+        private async Task ApplyMatchAsync(MovieDetailsVm vm, TmdbCandidateVm chosen)
+        {
+            using var cts = CancellationTokenSource.CreateLinkedTokenSource(_cts?.Token ?? CancellationToken.None);
+            cts.CancelAfter(TimeSpan.FromSeconds(20));
+
+            using var tmdb = new TmdbService(
+                apiKey: _config!.TmdbApiKey ?? "",
+                posterCacheDir: _config.PosterCacheDir ?? "",
+                imageSize: _config.TmdbImageSize ?? "w342",
+                downloadPosters: _config.DownloadPosters);
+
+            var poster = await ResolvePosterAsync(tmdb, vm.LocalId, chosen, _config.DownloadPosters, cts.Token);
+
+            vm.TmdbId = chosen.TmdbId;
+            if (poster is not null) vm.PosterPath = poster;
+
+            await SaveMatchAsync(vm, chosen.TmdbId, poster, cts.Token);
+
+            // Everything below repaints a screen the user may already have left. Vm is the guard:
+            // showing another film swaps it, and Close sets it to null.
+            var details = await tmdb.GetDetailsByIdAsync(chosen.TmdbId, cts.Token);
+            if (!ReferenceEquals(Vm, vm)) return;
+
+            if (details is null)
+            {
+                // The artwork and the identification are saved, so this is a partial success and
+                // is worth saying so rather than looking like nothing happened.
+                Bind(vm);
+                LoadArtwork(cts.Token);
+
+                await MessageBoxWindow.ShowAsync(Owner(), "UrDatabase",
+                    "The poster was changed, but TMDB did not return the rest of the details. " +
+                    "Reopening the film will try again.");
+                return;
+            }
+
+            var credits = await tmdb.GetCreditsByIdAsync(details.Id, cts.Token);
+            if (!ReferenceEquals(Vm, vm)) return;
+
+            vm.Overview = details.Overview ?? "";
+            vm.Runtime = details.Runtime;
+            vm.ImdbId = details.ImdbId;
+            vm.Genres = CreditLine.Genres(details);
+            vm.BackdropUrl = string.IsNullOrWhiteSpace(details.BackdropPath) ? null : tmdb.BuildImageUrl(details.BackdropPath!);
+            vm.TopCast = CreditLine.Cast(credits);
+            vm.KeyCrew = CreditLine.Crew(credits);
+
+            // Cleared before it is asked for again: the number on screen belongs to the film the
+            // user has just said this is not, and OMDb may have nothing for the new one.
+            vm.ImdbRating = null;
+            if (_ratingLookup is not null)
+            {
+                vm.ImdbRating = await _ratingLookup(vm.ImdbId, vm.LocalId > 0 ? vm.LocalId : null, cts.Token);
+                if (!ReferenceEquals(Vm, vm)) return;
+            }
+
+            Bind(vm);
+            LoadArtwork(cts.Token);
+        }
+
+        /// <summary>
+        /// The poster to store for a chosen film: a cached file when the app downloads posters, a
+        /// TMDB URL when it does not, and null when TMDB has no artwork for this one.
+        /// </summary>
+        /// <remarks>
+        /// The cache filename carries the TMDB id as well as the movie's. The automatic loader
+        /// names its file after the movie alone and a download skips a file that already exists, so
+        /// without the id a correction would write the old, wrong poster straight back over the new
+        /// one and look like it had failed.
+        /// </remarks>
+        private static async Task<string?> ResolvePosterAsync(
+            TmdbService tmdb,
+            long movieId,
+            TmdbCandidateVm chosen,
+            bool download,
+            CancellationToken ct)
+        {
+            if (string.IsNullOrWhiteSpace(chosen.PosterPath)) return null;
+
+            var url = tmdb.BuildImageUrl(chosen.PosterPath!);
+            if (!download) return url;
+
+            // Falls back to the URL when the download fails, so the screen still shows the right
+            // poster over the network rather than keeping the wrong one from disk.
+            return await tmdb.DownloadForPublic(url, $"{movieId}-{chosen.TmdbId}.jpg", ct) ?? url;
+        }
+
+        /// <summary>
+        /// Records the choice against the movie row. Failing is reported to the log rather than to
+        /// the user, who can see the corrected screen in front of them; all they lose is that it
+        /// will have to be corrected again next time.
+        /// </summary>
+        private async Task SaveMatchAsync(MovieDetailsVm vm, int tmdbId, string? posterPath, CancellationToken ct)
+        {
+            if (string.IsNullOrWhiteSpace(_dbPath) || vm.LocalId <= 0) return;
+
+            try
+            {
+                using var conn = Database.Open(_dbPath);
+                await MovieMatch.SaveAsync(conn, vm.LocalId, tmdbId, posterPath, ct);
+            }
+            catch (Exception ex)
+            {
+                AppLog.Write("posters.log", $"could not save tmdb match {tmdbId} for movie {vm.LocalId}: {ex.Message}");
+            }
+        }
     }
 }

@@ -168,8 +168,8 @@ namespace UrDatabase.Services
                     return;
                 }
 
-                var (_, posterPath) = await _tmdb.SearchPosterAsync(title, year, token);
-                if (string.IsNullOrWhiteSpace(posterPath)) return;
+                var (tmdbId, posterPath) = await _tmdb.SearchPosterAsync(title, year, token);
+                if (tmdbId is null || string.IsNullOrWhiteSpace(posterPath)) return;
 
                 string? pathToStore;
                 var url = _tmdb.BuildImageUrlPublic(posterPath!);
@@ -188,14 +188,11 @@ namespace UrDatabase.Services
                 // by design, and every one of them is a writer; without a turn to take they queue
                 // on the SQLite write lock instead, where losing is reported as an error rather
                 // than as a wait.
-                await DatabaseWriteLane.RunAsync(conn, async laneToken =>
-                {
-                    using var cmd = conn.CreateCommand();
-                    cmd.CommandText = "UPDATE movies SET poster_path=@p WHERE id=@id";
-                    cmd.Parameters.AddWithValue("@p", pathToStore ?? (object)DBNull.Value);
-                    cmd.Parameters.AddWithValue("@id", movieId);
-                    await cmd.ExecuteNonQueryAsync(laneToken);
-                }, token);
+                //
+                // The id is stored beside the poster so the details screen describes the film the
+                // artwork belongs to, and so a person correcting the match has something to
+                // correct rather than a poster from nowhere.
+                await MovieMatch.SaveAsync(conn, movieId, tmdbId.Value, pathToStore, token);
 
                 onFetched(pathToStore);
             }

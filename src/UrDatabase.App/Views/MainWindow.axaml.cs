@@ -867,7 +867,7 @@ namespace UrDatabase.Views
 
             try
             {
-                await DetailsView.ShowAsync(vm, _dbPath);
+                await DetailsView.ShowAsync(vm, _dbPath, _config, LoadImdbRatingAsync);
             }
             finally
             {
@@ -928,7 +928,14 @@ namespace UrDatabase.Views
                 using var cts = CancellationTokenSource.CreateLinkedTokenSource(_cts.Token);
                 cts.CancelAfter(TimeSpan.FromSeconds(12));
 
-                var details = await tmdb.GetDetailsByTitleAsync(m.Title, m.Year, cts.Token);
+                // Asked by id when the catalogue knows which film this is, and only searched by
+                // title when it does not. Searching every time is what made a corrected match
+                // temporary: the answer was thrown away and the same wrong guess re-derived on the
+                // next open.
+                var storedTmdbId = ReadStoredTmdbId(m.Id);
+                var details = storedTmdbId is int knownId
+                    ? await tmdb.GetDetailsByIdAsync(knownId, cts.Token)
+                    : await tmdb.GetDetailsByTitleAsync(m.Title, m.Year, cts.Token);
 
                 List<string> cast = new();
                 List<string> crew = new();
@@ -936,18 +943,8 @@ namespace UrDatabase.Views
                 if (details?.Id is int tmdbId)
                 {
                     var credits = await tmdb.GetCreditsByIdAsync(tmdbId, cts.Token);
-                    if (credits != null)
-                    {
-                        foreach (var c in credits.Cast.Take(10))
-                        {
-                            if (!string.IsNullOrWhiteSpace(c.Name))
-                                cast.Add(string.IsNullOrWhiteSpace(c.Character) ? c.Name : $"{c.Name} ({c.Character})");
-                        }
-                        foreach (var d in credits.Crew.Where(x => string.Equals(x.Job, "Director", StringComparison.OrdinalIgnoreCase)).Take(3))
-                            crew.Add($"Director: {d.Name}");
-                        foreach (var w in credits.Crew.Where(x => x.Job != null && x.Job.Contains("Writer", StringComparison.OrdinalIgnoreCase)).Take(3))
-                            crew.Add($"Writer: {w.Name}");
-                    }
+                    cast = CreditLine.Cast(credits);
+                    crew = CreditLine.Crew(credits);
                 }
 
                 var vm = new MovieDetailsVm
@@ -955,11 +952,12 @@ namespace UrDatabase.Views
                     LocalId = m.Id,
                     Title = m.Title,
                     Year = m.Year,
+                    TmdbId = details?.Id ?? storedTmdbId,
                     PosterPath = m.PosterPath,
                     Overview = details?.Overview ?? "",
                     Runtime = details?.Runtime,
                     ImdbId = details?.ImdbId,
-                    Genres = details is null ? m.Genres ?? "" : string.Join(", ", details.Genres?.Select(g => g.Name) ?? Array.Empty<string>()),
+                    Genres = details is null ? m.Genres ?? "" : CreditLine.Genres(details),
                     BackdropUrl = string.IsNullOrWhiteSpace(details?.BackdropPath) ? null
                                   : tmdb.BuildImageUrl(details!.BackdropPath!),
                     TmdbConfigured = !string.IsNullOrWhiteSpace(_config.TmdbApiKey)
@@ -976,6 +974,10 @@ namespace UrDatabase.Views
                 vm.FileMatch = target.Kind;
 
                 await ShowDetailsAsync(vm);
+
+                // The film may have been re-identified while the details screen was up, and the
+                // card behind it is still showing the poster that was wrong.
+                m.PosterPath = vm.PosterPath;
             }
             catch (Exception ex)
             {
@@ -1063,6 +1065,27 @@ namespace UrDatabase.Views
             catch (Exception ex)
             {
                 AppLog.Write("omdb.log", $"rating lookup failed for {imdbId}: {ex.Message}");
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// Which TMDB film the catalogue says this is, or null when nothing has said yet. A
+        /// failure to read is the same answer as "nothing recorded": the film still opens, it is
+        /// just identified by title again as it always used to be.
+        /// </summary>
+        private int? ReadStoredTmdbId(long movieId)
+        {
+            if (movieId <= 0) return null;
+
+            try
+            {
+                using var conn = Database.Open(_dbPath);
+                return MovieMatch.ReadTmdbId(conn, movieId);
+            }
+            catch (Exception ex)
+            {
+                AppLog.Write("app.log", $"could not read the tmdb match for movie {movieId}: {ex.Message}");
                 return null;
             }
         }

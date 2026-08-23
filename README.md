@@ -89,9 +89,21 @@ It runs on Windows and macOS from one codebase, built with
 - **Posters fill themselves in.** Any film in the catalogue with no poster is
   looked up in the background, four at a time, through one shared connection to
   TMDB, and the result is written back to the database so the next launch is
-  instant. Posters are either referenced at their TMDB URL or downloaded into a
-  local cache directory, depending on `DownloadPosters`
-  (`Services/PosterAutoLoader`).
+  instant. A result is only accepted when its title agrees with the catalogued
+  one and its year corroborates rather than contradicts it; TMDB's search always
+  answers with something, and its answer for a short title is often a longer film
+  that contains it, so an unverified first hit would put another film's artwork on
+  the card and leave it there. Posters are either referenced at their TMDB URL or
+  downloaded into a local cache directory, depending on `DownloadPosters`
+  (`Services/PosterAutoLoader`, `Services/TmdbMatch`).
+- **Say which film it actually is.** Two films share a title, a translation
+  renames one, and a filename spells one wrongly, so some films are matched to
+  the wrong TMDB record however careful the rules are. **Wrong film?** on the
+  details screen searches TMDB and lists what it finds — poster, title, original
+  title, year and plot — and choosing one replaces the artwork, plot, runtime,
+  genres, cast and crew, and records the choice in `movies.tmdb_id` so nothing
+  overwrites it and reopening the film does not undo it
+  (`Views/TmdbMatchWindow`, `Services/MovieMatch`).
 - **Scan your watch folders.** The scan button walks the configured folders for
   video files — `.mkv`, `.mp4`, `.avi`, `.mov`, `.wmv`, `.m4v`, `.mpg`, `.mpeg`
   — parses a title and year out of each filename, creates or reuses a canonical
@@ -456,6 +468,17 @@ alone would reach new installs only, and every existing library would fail on
 break for everybody with films in it. Anything added to a table in the script
 has to be added there too.
 
+`IF NOT EXISTS` creates a missing table but says nothing about one that is
+present and out of date, so a column added to an existing table needs more than
+the script: `Database.Migrate` inspects each table and issues the
+`ALTER TABLE ... ADD COLUMN` itself. That is how a catalogue built by an older
+version gained `jellyfin_movies.cast_list` and `crew_list`, and `movies.tmdb_id`,
+which records which TMDB film each row is. Adding a column is the only migration
+shape supported, and each one is nullable with no default, so nothing is
+rewritten and no row can be lost. Losing the race to add one is tolerated rather
+than reported: several connections open the catalogue at once, and only the
+column existing afterwards matters.
+
 From there, filling the catalogue is a scan. Set `WatchFolders`, press the scan
 button, and the films appear.
 
@@ -620,6 +643,17 @@ request.
 
 Stated plainly, so nobody has to find out by using it:
 
+- **A film TMDB cannot confirm has no poster until you pick one.** The automatic
+  match refuses a result whose title or year does not corroborate the film, so a
+  title TMDB spells differently, or one the filename parser mangled, now comes
+  back with nothing rather than with the wrong film's artwork. The card stays
+  blank until you open it and use **Wrong film?**. That is the trade: an empty
+  frame invites the fix, and a confidently wrong one does not.
+- **Correcting a match does not correct the catalogue's own title.** Choosing
+  the right TMDB film replaces the poster, plot, runtime, genres and credits, but
+  the title and year on the card still come from the filename, so a film
+  catalogued as `S W A T` keeps that name in the library and in search. Renaming
+  a film by hand is not possible yet.
 - **A scanned library has no genres.** Nothing writes the `genres` column for a
   scanned film yet, so every film from a scan lands in a single
   **Uncategorised** bucket, and a freshly scanned library looks bare until

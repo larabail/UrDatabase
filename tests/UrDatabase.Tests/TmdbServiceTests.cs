@@ -76,12 +76,14 @@ namespace UrDatabase.Tests
         // ---------- JSON parsing ----------
 
         [Fact]
-        public async Task Search_parses_the_first_result()
+        public async Task Search_returns_the_result_whose_title_and_year_agree_rather_than_the_first()
         {
+            // TMDB's own order, with its most popular near miss in front. Taking that one is
+            // exactly the bug: El Drama got El Sabor del Drama's poster and kept it.
             var handler = FakeHttpMessageHandler.Json(@"{
                 ""results"": [
-                    { ""id"": 550, ""poster_path"": ""/first.jpg"" },
-                    { ""id"": 551, ""poster_path"": ""/second.jpg"" }
+                    { ""id"": 900, ""title"": ""Fight Club Confidential"", ""release_date"": ""1999-01-01"", ""poster_path"": ""/wrong.jpg"" },
+                    { ""id"": 550, ""title"": ""Fight Club"", ""release_date"": ""1999-10-15"", ""poster_path"": ""/right.jpg"" }
                 ]
             }");
             using var svc = Create(handler);
@@ -89,7 +91,53 @@ namespace UrDatabase.Tests
             var (id, poster) = await svc.SearchPosterAsync("Fight Club", 1999, CancellationToken.None);
 
             Assert.Equal(550, id);
-            Assert.Equal("/first.jpg", poster);
+            Assert.Equal("/right.jpg", poster);
+        }
+
+        [Fact]
+        public async Task Search_returns_nothing_when_no_result_is_this_film()
+        {
+            var handler = FakeHttpMessageHandler.Json(@"{
+                ""results"": [
+                    { ""id"": 900, ""title"": ""El Sabor del Drama"", ""release_date"": ""2019-01-01"", ""poster_path"": ""/wrong.jpg"" }
+                ]
+            }");
+            using var svc = Create(handler);
+
+            var (id, poster) = await svc.SearchPosterAsync("El Drama", 2026, CancellationToken.None);
+
+            Assert.Null(id);
+            Assert.Null(poster);
+        }
+
+        [Fact]
+        public async Task Every_result_is_offered_to_the_picker_including_the_ones_the_match_rules_refuse()
+        {
+            var handler = FakeHttpMessageHandler.Json(@"{
+                ""results"": [
+                    { ""id"": 900, ""title"": ""El Sabor del Drama"", ""original_title"": ""El Sabor del Drama"", ""release_date"": ""2019-01-01"", ""overview"": ""Not this one."" },
+                    { ""id"": 901, ""title"": ""The Drama"", ""original_title"": ""El Drama"", ""release_date"": ""2026-03-02"" }
+                ]
+            }");
+            using var svc = Create(handler);
+
+            var results = await svc.SearchAsync("El Drama", 2026, CancellationToken.None);
+
+            Assert.Equal(2, results.Count);
+            Assert.Equal("El Sabor del Drama", results[0].Title);
+            Assert.Equal("El Drama", results[1].OriginalTitle);
+            Assert.Equal(2026, results[1].Year);
+            Assert.Equal("Not this one.", results[0].Overview);
+        }
+
+        [Fact]
+        public async Task The_picker_gets_nothing_and_asks_nothing_without_an_api_key()
+        {
+            var handler = FakeHttpMessageHandler.Json(@"{ ""results"": [ { ""id"": 1, ""title"": ""Anything"" } ] }");
+            using var svc = Create(handler, apiKey: "");
+
+            Assert.Empty(await svc.SearchAsync("Anything", null, CancellationToken.None));
+            Assert.Equal(0, handler.CallCount);
         }
 
         [Fact]
@@ -129,7 +177,7 @@ namespace UrDatabase.Tests
         public async Task Details_parse_snake_case_fields_that_case_insensitive_matching_alone_would_miss()
         {
             var handler = FakeHttpMessageHandler.Routed(
-                ("search/movie", HttpStatusCode.OK, @"{ ""results"": [ { ""id"": 550, ""poster_path"": ""/p.jpg"" } ] }"),
+                ("search/movie", HttpStatusCode.OK, @"{ ""results"": [ { ""id"": 550, ""title"": ""Fight Club"", ""release_date"": ""1999-10-15"", ""poster_path"": ""/p.jpg"" } ] }"),
                 ("movie/550", HttpStatusCode.OK, @"{
                     ""id"": 550,
                     ""title"": ""Fight Club"",
@@ -157,7 +205,7 @@ namespace UrDatabase.Tests
         public async Task Details_parse_the_imdb_id_so_ratings_can_match_exactly()
         {
             var handler = FakeHttpMessageHandler.Routed(
-                ("search/movie", HttpStatusCode.OK, @"{ ""results"": [ { ""id"": 550 } ] }"),
+                ("search/movie", HttpStatusCode.OK, @"{ ""results"": [ { ""id"": 550, ""title"": ""Fight Club"" } ] }"),
                 ("movie/550", HttpStatusCode.OK, @"{ ""id"": 550, ""imdb_id"": ""tt0137523"" }"));
             using var svc = Create(handler);
 
@@ -170,7 +218,7 @@ namespace UrDatabase.Tests
         public async Task Details_report_no_imdb_id_when_tmdb_omits_it()
         {
             var handler = FakeHttpMessageHandler.Routed(
-                ("search/movie", HttpStatusCode.OK, @"{ ""results"": [ { ""id"": 550 } ] }"),
+                ("search/movie", HttpStatusCode.OK, @"{ ""results"": [ { ""id"": 550, ""title"": ""Untitled"" } ] }"),
                 ("movie/550", HttpStatusCode.OK, @"{ ""id"": 550, ""title"": ""Untitled"" }"));
             using var svc = Create(handler);
 
@@ -178,6 +226,33 @@ namespace UrDatabase.Tests
 
             Assert.NotNull(details);
             Assert.Null(details!.ImdbId);
+        }
+
+        [Fact]
+        public async Task Details_by_id_ask_tmdb_for_that_film_and_never_search()
+        {
+            // What a corrected match reads. Searching again would re-derive the wrong film and
+            // silently undo the correction the user had just made.
+            var handler = FakeHttpMessageHandler.Routed(
+                ("movie/901", HttpStatusCode.OK, @"{ ""id"": 901, ""title"": ""The Drama"", ""runtime"": 96 }"));
+            using var svc = Create(handler);
+
+            var details = await svc.GetDetailsByIdAsync(901, CancellationToken.None);
+
+            Assert.Equal(901, details!.Id);
+            Assert.Equal(96, details.Runtime);
+            Assert.DoesNotContain(handler.Requests, url => url.Contains("search/movie"));
+        }
+
+        [Fact]
+        public async Task Details_by_id_keep_the_requested_id_when_tmdb_omits_it()
+        {
+            var handler = FakeHttpMessageHandler.Json(@"{ ""title"": ""The Drama"" }");
+            using var svc = Create(handler);
+
+            var details = await svc.GetDetailsByIdAsync(901, CancellationToken.None);
+
+            Assert.Equal(901, details!.Id);
         }
 
         [Fact]
