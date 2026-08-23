@@ -137,6 +137,23 @@
                                      Maximum="1"
                                      VerticalAlignment="Center"
                                      IsVisible="False"/>
+                        <!-- The other direction: puts a film from this disk onto the
+                             server, which Jellyfin's own API cannot be asked to do.
+                             Shown only for a local film with a file behind it, and
+                             only when an SFTP account is configured. -->
+                        <Button x:Name="UploadButton"
+                                Classes="ghost"
+                                Height="34"
+                                Content="Upload to Jellyfin"
+                                IsVisible="False"
+                                Click="Upload_Click"/>
+                        <ProgressBar x:Name="UploadProgress"
+                                     Width="120"
+                                     Height="4"
+                                     Minimum="0"
+                                     Maximum="1"
+                                     VerticalAlignment="Center"
+                                     IsVisible="False"/>
                     </StackPanel>
 
                     <StackPanel Grid.Column="2" HorizontalAlignment="Right">

@@ -200,6 +200,16 @@ It runs on Windows and macOS from one codebase, built with
   A transfer can be stopped and resumes where it left off, and a half-finished
   film is never mistaken for a whole one
   (`Services/JellyfinDownloader`, `Services/JellyfinDownload`).
+- **Send a film the other way.** A film on this computer has an **Upload to
+  Jellyfin** button that copies it onto the server for everyone else in the
+  house, into the `Title (Year)/Title (Year).ext` layout Jellyfin's own libraries
+  use, and then asks the server to rescan so it actually appears. Optional and
+  off until configured, because Jellyfin's API has no endpoint that accepts a
+  video file at all — the transfer is SFTP, and needs an account on the machine
+  running the server. Bytes arrive under a name no scan reads as a film and take
+  the film's real name only once the last one is there, so a cancelled or dropped
+  upload leaves the server exactly as it was
+  (`Services/JellyfinUploader`, `Services/JellyfinUpload`).
 
 [Known gaps](#known-gaps) is worth reading before you judge any of the above;
 several are thinner than they sound.
@@ -216,11 +226,13 @@ several are thinner than they sound.
 | TMDB API v3 | Search, posters, plot, runtime, genres, cast and crew |
 | OMDb API | The IMDb rating, and nothing else |
 | Jellyfin API | Optional: a remote movie library, its artwork and its stream |
+| SSH.NET | Optional: the SFTP transfer that puts a film on the server's disk, which Jellyfin's API cannot do |
 
 There is no server of ours, no account and no telemetry, and the app touches no
 Firebase: the only outbound traffic is to `api.themoviedb.org`,
 `image.tmdb.org`, `www.omdbapi.com` and, if you configure one, your own Jellyfin
-server. It works fully offline, with metadata and ratings simply absent.
+server — over HTTP for the library, and over SSH to its machine if you configure
+uploading. It works fully offline, with metadata and ratings simply absent.
 
 ## Getting started
 
@@ -313,6 +325,7 @@ cp src/UrDatabase.App/appsettings.example.json src/UrDatabase.App/appsettings.js
 | `TmdbImageSize` | TMDB's poster width — `w185`, `w342`, `w500`, `original` |
 | `SetupCompleted` | Set by the setup screen once it has been answered, and the only thing that stops it being offered again |
 | `Jellyfin` | An optional server to browse. Empty, as it ships, means the feature is off entirely — see [A Jellyfin server](#a-jellyfin-server) |
+| `JellyfinSftp` | An optional SFTP account on the machine running that server, which is what makes **Upload to Jellyfin** appear. Empty, as it ships, means no upload button anywhere — see [Sending a film the other way](#sending-a-film-the-other-way) |
 
 Paths may contain environment variables and are expanded on load, so
 `%APPDATA%\UrDatabase\movies.db` works on Windows. The application data
@@ -661,6 +674,135 @@ The film then becomes exactly the case above: one card, badged **Server** and
 local file rather than the stream, and the film keeps working with the server
 switched off — which is the whole point of having fetched it.
 
+#### Sending a film the other way
+
+**Upload to Jellyfin**, on a film that lives on this computer, copies it onto the
+server so everything else in the house can watch it.
+
+It is a separate setting from the rest of Jellyfin, and off until you fill it in,
+because it needs something Jellyfin cannot provide. **Jellyfin's API has no
+endpoint that accepts a video file** — the only uploads it takes are images and
+subtitles. A film becomes a film by already being on the server's filesystem when
+the library is scanned. So this copies the file there over SFTP and then asks
+Jellyfin to look again:
+
+```jsonc
+"JellyfinSftp": {
+  "Host": "media-box",              // or "uploader@media-box:2222"
+  "Port": 2222,                     // 0 or absent means 22
+  "Username": "uploader",
+  "PrivateKeyPath": "~/.ssh/id_ed25519",
+  "PrivateKeyPassphrase": "",       // only if the key has one
+  "MoviesPath": ""                  // blank means "movies"
+}
+```
+
+| Key | What it does |
+| --- | --- |
+| `Host` | The machine running Jellyfin, not Jellyfin itself. A port or an account written into it — `uploader@media-box:2222` — is read out rather than discarded, because that is how the address gets copied out of an `ssh` command |
+| `Port` | The SSH port. An account set up only for uploads is routinely put somewhere other than 22 |
+| `Username` | The SSH account, which is rarely the same name as the Jellyfin user |
+| `PrivateKeyPath` | The **private** half of an SSH key pair — the file without the `.pub`. Expanded like every other configured path |
+| `PrivateKeyPassphrase` | Optional, for a key that has one |
+| `MoviesPath` | Where films go, **as that account sees it** |
+
+All six can come from the environment instead, which is the way to keep any of it
+out of a file:
+
+```bash
+export URDATABASE_JELLYFIN_SFTP_HOST=media-box
+export URDATABASE_JELLYFIN_SFTP_PORT=2222
+export URDATABASE_JELLYFIN_SFTP_USERNAME=uploader
+export URDATABASE_JELLYFIN_SFTP_KEY=~/.ssh/id_ed25519
+export URDATABASE_JELLYFIN_SFTP_PASSPHRASE=...
+export URDATABASE_JELLYFIN_SFTP_MOVIES_PATH=movies
+```
+
+`URDATABASE_JELLYFIN_SFTP_KEY` holds a **path**, never key material. A private
+key belongs in a file with permissions of its own, not in an environment that
+every child process inherits.
+
+**`MoviesPath` is the setting most likely to be wrong, and the reason is worth
+knowing.** An upload account is usually chrooted, so it lands in a directory that
+*is* its whole filesystem: the server's own `/tank/movies` is reached as
+`movies`, and writing `/tank/movies` would create a `tank` directory inside the
+chroot and put the film somewhere Jellyfin will never look. Blank means `movies`,
+which is the usual answer. A path starting with `/` is kept absolute, for an
+account that is not chrooted.
+
+A password is not an option. The account worth pointing this at is one that can
+do nothing but write films — no shell, chrooted, its own key — and such accounts
+are set up key-only. Offering a password field would invite a server password
+into a configuration file for no gain.
+
+**The server's host key is checked against `~/.ssh/known_hosts`, and an upload is
+refused if it does not match.** SSH.NET trusts whatever key it is handed unless
+told otherwise, which would be quietly weaker than the `sftp` command this
+replaces — that one checks the same file and hard-fails on a mismatch. The
+private key is never at risk either way, since public key authentication does not
+disclose it; what would be at risk is the film, handed to whatever answered on
+that address.
+
+Three outcomes, and they read differently because they mean different things:
+
+| What the file says | What happens |
+| --- | --- |
+| The host is listed and this is one of its keys | The upload proceeds |
+| The host is listed with a **different** key | Refused, naming both explanations — a rebuilt server, or something else answering — with the `ssh-keygen -R` line for the harmless one |
+| The host is **not listed at all** | Refused, with the two ways to add it |
+
+**An unknown host is refused rather than trusted on first use.** There is no
+prompt and nothing is remembered: a key nothing has vouched for does not get a
+film. If you have ever reached the server with `sftp` or `ssh` the entry is
+already there and nothing needs doing. If you have not:
+
+```bash
+ssh-keyscan -p 2222 media-box >> ~/.ssh/known_hosts
+# or simply connect once and accept the key
+sftp -P 2222 uploader@media-box
+```
+
+The refusal names the file, the fingerprint the server offered — in the same
+`SHA256:…` form `ssh-keygen -l` prints, so it can be compared against the server
+directly — and the command that fixes it. Both fingerprints go to `jellyfin.log`
+too, since a mismatch cannot be diagnosed without them and neither is a secret.
+
+What arrives is `movies/Title (Year)/Title (Year).ext`: one directory per film,
+named from the catalogue rather than from the local filename, which is the layout
+Jellyfin's own libraries use and what lets it identify what it finds. A film
+linked to `arrival.2016.1080p.WEB-DL.x265-GROUP.mkv` therefore arrives as
+`movies/Arrival (2016)/Arrival (2016).mkv`. Only the extension comes from the
+local file. Remote paths are built with forward slashes on every platform — using
+`Path.Combine` would produce a single file on the server literally named
+`Arrival (2016)\Arrival (2016).mkv`, which no scan would ever match.
+
+The safety properties mirror the download's. Bytes arrive under a name ending in
+`.uploading`, which is not a video extension and which a library scan running
+mid-transfer walks straight past; the file takes the film's real name only once
+the last byte is there and its size matches. A transfer that is cancelled, drops,
+or arrives short takes its partial file with it, so the server is left as it was
+rather than holding a forty-minute copy of a two-hour film. A film the server
+already has costs no transfer at all, matched without regard to its extension so
+that a library holding `Arrival (2016).mp4` is not sent an `.mkv` to sit beside
+it.
+
+Afterwards the app asks Jellyfin to rescan (`POST /Library/Refresh`), because a
+file that has appeared on the disk is not yet a film the server knows about.
+**That scan is asynchronous**, so the film appears shortly rather than instantly,
+and the app says so rather than implying otherwise. Scanning is also an
+administrative action: an ordinary Jellyfin account cannot start one, and a
+server that refuses is not a failed upload — the film is on its disk and appears
+at the next scheduled scan. The wording covers all three outcomes.
+
+SSH is spoken by [SSH.NET](https://github.com/sshnet/SSH.NET), bundled rather
+than shelled out to. The system `sftp` binary would mean parsing another
+program's output for progress, no way to cancel mid-file short of a signal, and a
+dependency Windows has only shipped since 2018. Everything above the socket talks
+to `ISftpTransport`, so the whole of it is tested against a fake filesystem and
+no test in this repository opens a connection (`Services/JellyfinUpload`,
+`Services/JellyfinUploader`, `Services/SshNetSftpTransport`,
+`Services/SftpFailure`, `Services/KnownHosts`).
+
 ### The catalogue
 
 Point `DatabasePath` anywhere and the app creates what it needs on first
@@ -969,17 +1111,38 @@ Stated plainly, so nobody has to find out by using it:
   the same suspicion as any other file it hands you.
 - **Settings covers where your films are, and nothing else.** The screen asks
   about watch folders, a Jellyfin server and the two API keys. `DatabasePath`,
-  `PosterCacheDir`, `DownloadFolder`, `DownloadPosters` and `TmdbImageSize` are
-  still file-only; they survive a save untouched, but nothing in the app edits
-  them.
+  `PosterCacheDir`, `DownloadFolder`, `JellyfinSftp`, `DownloadPosters` and
+  `TmdbImageSize` are still file-only; they survive a save untouched, but nothing
+  in the app edits them.
 - **Downloads are one at a time, from the details screen.** There is no queue,
   no way to fetch a whole genre, and leaving the film stops the transfer —
   though what it got is kept and starting again resumes from there. Nothing in
   the app deletes a download either: that is Finder's job.
-- **Nothing is uploaded.** Films go from the server to this machine and never
-  the other way. Jellyfin's API has no endpoint that accepts a video, so putting
-  a film on a server means copying it to the server's own disk by some other
-  means and rescanning the library there.
+- **Uploads are one at a time, do not resume, and need an SFTP account.** The  same shape as downloads — one film, from the details screen, stopped by leaving
+  it — with two differences. There is no resume: a stopped or dropped upload
+  removes what it had transferred and starting again sends the film from the
+  beginning, because verifying which of the bytes already on the server are the
+  right ones would mean reading them all back, and a guess there produces a
+  corrupt film rather than a slow one. And it needs something most Jellyfin
+  installs do not come with: an SSH account on the machine running the server,
+  key-only, with write access to the library. Jellyfin's own API takes images and
+  subtitles and no other kind of file, so there is no route that needs only a
+  Jellyfin login. Series are not supported either, here or anywhere else in the
+  app.
+- **An uploaded film does not appear in the app until the next Jellyfin sync.**
+  The server is asked to rescan and does so on its own schedule; this app then
+  has to be told, by **Sync Jellyfin**, before the film shows as being in both
+  places. Pressing it immediately is usually too early. Nothing polls, and
+  nothing deletes a film from the server either — that is the server's job.
+- **Host key checking reads `~/.ssh/known_hosts` and understands most of it, not
+  all of it.** Plain and hashed entries, the bracketed `[host]:port` form,
+  comma-separated patterns with wildcards and negations, several keys per host
+  and `@revoked` are all handled. `@cert-authority` is not: validating one means
+  validating a certificate, so a host vouched for only by a CA is refused with a
+  message saying exactly that rather than being reported as unknown. There is no
+  setting for the file's location and no way to trust a key from inside the app —
+  a host with no entry is refused, and adding one is a step you take with
+  `ssh-keyscan` or by connecting once with `sftp`.
 - **Windows builds are not signed.** SmartScreen warns on first run and there
   is no way around it short of a Windows code signing certificate. The macOS
   side of this closed in 0.2.1; the Windows side has not.

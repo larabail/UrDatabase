@@ -656,6 +656,50 @@ namespace UrDatabase.Tests
             Assert.DoesNotContain("not-a-real-key", error.Message);
         }
 
+        /// <summary>
+        /// The second half of an upload. A film that has appeared on the server's disk is not a
+        /// film Jellyfin knows about until something has scanned for it, and this is the only way
+        /// to ask.
+        /// </summary>
+        [Fact]
+        public async Task A_library_rescan_is_a_post_carrying_the_token_in_a_header()
+        {
+            var handler = new FakeHttpMessageHandler(request =>
+                request.RequestUri!.ToString().Contains("/Library/Refresh", StringComparison.Ordinal)
+                    ? new HttpResponseMessage(HttpStatusCode.NoContent) { Content = new StringContent("") }
+                    : Json(UsersJson));
+
+            using var client = new JellyfinClient(KeySettings(), deviceId: "device-1", handler: handler);
+
+            await client.RefreshLibraryAsync();
+
+            var refresh = handler.Requests.Single(url => url.Contains("/Library/Refresh", StringComparison.Ordinal));
+            Assert.Equal($"{ServerUrl}/Library/Refresh", refresh);
+            Assert.DoesNotContain("api_key", refresh, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("MediaBrowser", handler.RawAuthorizationHeaders[^1]!, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Scanning a library is an administrative action and a perfectly ordinary Jellyfin
+        /// account cannot do it. That is not a broken upload, so the message says what actually
+        /// happens next rather than treating it as a failure.
+        /// </summary>
+        [Fact]
+        public async Task A_server_that_will_not_rescan_says_when_the_film_will_appear_anyway()
+        {
+            var handler = new FakeHttpMessageHandler(request =>
+                request.RequestUri!.ToString().Contains("/Library/Refresh", StringComparison.Ordinal)
+                    ? new HttpResponseMessage(HttpStatusCode.Forbidden) { Content = new StringContent("") }
+                    : Json(UsersJson));
+
+            using var client = new JellyfinClient(KeySettings(), deviceId: "device-1", handler: handler);
+
+            var error = await Assert.ThrowsAsync<JellyfinException>(() => client.RefreshLibraryAsync());
+
+            Assert.Contains("administrator", error.Message, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("scheduled scan", error.Message, StringComparison.OrdinalIgnoreCase);
+        }
+
         private static HttpResponseMessage Json(string body) =>
             new(HttpStatusCode.OK) { Content = new System.Net.Http.StringContent(body, System.Text.Encoding.UTF8, "application/json") };
     }

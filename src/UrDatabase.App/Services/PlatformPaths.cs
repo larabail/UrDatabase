@@ -26,6 +26,19 @@ namespace UrDatabase.Services
         public const string JellyfinPasswordVariable = "URDATABASE_JELLYFIN_PASSWORD";
         public const string JellyfinApiKeyVariable = "URDATABASE_JELLYFIN_API_KEY";
 
+        /// <summary>
+        /// The SFTP account films are uploaded through, which is a different machine account from
+        /// the Jellyfin login above and deserves to be settable without touching a file. The key
+        /// variable holds a path, never key material: a private key belongs in a file with its own
+        /// permissions, not in an environment every child process inherits.
+        /// </summary>
+        public const string JellyfinSftpHostVariable = "URDATABASE_JELLYFIN_SFTP_HOST";
+        public const string JellyfinSftpPortVariable = "URDATABASE_JELLYFIN_SFTP_PORT";
+        public const string JellyfinSftpUsernameVariable = "URDATABASE_JELLYFIN_SFTP_USERNAME";
+        public const string JellyfinSftpKeyVariable = "URDATABASE_JELLYFIN_SFTP_KEY";
+        public const string JellyfinSftpPassphraseVariable = "URDATABASE_JELLYFIN_SFTP_PASSPHRASE";
+        public const string JellyfinSftpMoviesPathVariable = "URDATABASE_JELLYFIN_SFTP_MOVIES_PATH";
+
         public static string AppDataRoot =>
             Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), AppFolderName);
 
@@ -34,6 +47,19 @@ namespace UrDatabase.Services
         public static string DefaultPosterCacheDir => Path.Combine(AppDataRoot, "posters");
 
         public static string LogDirectory => Path.Combine(AppDataRoot, "logs");
+
+        /// <summary>
+        /// OpenSSH's record of which host keys belong to which machines, which is what says
+        /// whether the server an upload is about to go to is the one it went to last time.
+        ///
+        /// Deliberately the same file every other SSH tool on the machine uses, rather than a
+        /// private copy: the entry is usually already there from connecting by hand once, and a
+        /// second list would go stale without anybody noticing. Built from
+        /// <see cref="HomeDirectory"/> rather than from a literal <c>~</c>, which resolves to
+        /// nothing on Windows — where this app also runs, and where OpenSSH keeps the file in the
+        /// same place under the user profile.
+        /// </summary>
+        public static string KnownHostsPath => Path.Combine(HomeDirectory, ".ssh", "known_hosts");
 
         /// <summary>
         /// Where a user's movies most likely live: <c>~/Movies</c> on macOS, the Videos
