@@ -114,6 +114,11 @@ CREATE TABLE IF NOT EXISTS jellyfin_movies (
     cast_list        TEXT,
     crew_list        TEXT,
     image_tag        TEXT,
+    -- What the server measured about the file: picture size, codecs, and the audio and subtitle
+    -- languages it carries, as JSON. Read back whole, for one film, to be printed as a row of
+    -- badges — never filtered on and never joined, so a table of streams would buy nothing and
+    -- cost a join on the path that has to work with the server switched off.
+    media_info       TEXT,
     synced_at        TEXT NOT NULL
 );
 
@@ -186,6 +191,43 @@ CREATE TABLE IF NOT EXISTS jellyfin_episodes (
 );
 
 CREATE INDEX IF NOT EXISTS ix_jellyfin_episodes_series ON jellyfin_episodes(series_id);
+-- Academy Award nominations from the UrActor API, cached because the archive changes once a
+-- year, in March, and the key is limited to 60 requests a minute shared across everything this
+-- app does. Every film opened would otherwise be a request, and browsing a library would spend
+-- the allowance in under a minute.
+--
+-- Two tables rather than one. This one records that a film was looked up at all, so "asked
+-- already, the Academy never nominated it" is remembered — which is the answer for almost every
+-- film in almost every library, and the one it would be most wasteful to ask twice. The
+-- nominations table below holds the answers when there were any, and a film with a row here and
+-- none there is a film that has been asked about and has nothing.
+--
+-- Keyed on the title and the release year together, because a title alone is not a film: there
+-- are four called "A Star Is Born" and three of them were nominated.
+CREATE TABLE IF NOT EXISTS oscar_lookups (
+    title      TEXT    NOT NULL,
+    -- The film's release year, or 0 when the catalogue does not know it. Not NULL: this is half
+    -- of a primary key, and SQLite would let every unknown-year film be its own row.
+    year       INTEGER NOT NULL,
+    fetched_at TEXT    NOT NULL,
+    PRIMARY KEY (title, year)
+);
+
+CREATE TABLE IF NOT EXISTS oscar_nominations (
+    title    TEXT    NOT NULL,
+    year     INTEGER NOT NULL,
+    -- The year the ceremony was held, which is normally the year after the film came out. Kept
+    -- because it is what the API is keyed on and what a user reading "1976" would expect to see.
+    ceremony INTEGER NOT NULL,
+    category TEXT    NOT NULL,
+    -- Who or what was nominated, and the context. For Best Picture the film is the nominee and
+    -- the producers are the detail; for the craft awards it is the other way round.
+    nominee  TEXT    NOT NULL,
+    detail   TEXT,
+    won      INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE INDEX IF NOT EXISTS ix_oscar_nominations_film ON oscar_nominations(title, year);
 
 -- Where the server says the viewer had got to in each part-watched film, as of the last
 -- successful sync. What the Continue watching row is built from.

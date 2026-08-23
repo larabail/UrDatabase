@@ -78,9 +78,69 @@ namespace UrDatabase.Tests
             Assert.Equal("tag-b", newest.ImageTag);
         }
 
+        /// <summary>
+        /// The measured description of a copy is the whole reason the sync pays for an extra
+        /// field, and it has to survive being written to disk and read back with the server off.
+        /// </summary>
         [Fact]
-        public void A_film_removed_from_the_server_disappears_from_the_cache()
+        public void What_the_server_measured_survives_a_restart()
         {
+            var film = Film("a", "A Wholly Invented Film");
+            film.Media = new MediaInfo
+            {
+                Width = 3840,
+                Height = 1600,
+                VideoCodec = "hevc",
+                VideoRange = "DOVI",
+                AudioCodec = "truehd",
+                AudioChannels = 8,
+                HasAtmos = true,
+                Container = "mkv",
+                AudioLanguages = { "eng", "fra" },
+                SubtitleLanguages = { "spa" }
+            };
+
+            using (var conn = Database.Open(_dbPath))
+            {
+                JellyfinCache.Replace(conn, new[] { film });
+            }
+
+            using var reopened = Database.Open(_dbPath);
+            var media = JellyfinCache.Load(reopened).Single().Media;
+
+            Assert.NotNull(media);
+            Assert.Equal(3840, media!.Width);
+            Assert.Equal("DOVI", media.VideoRange);
+            Assert.Equal(8, media.AudioChannels);
+            Assert.True(media.HasAtmos);
+            Assert.Equal(new[] { "eng", "fra" }, media.AudioLanguages);
+            Assert.Equal(new[] { "spa" }, media.SubtitleLanguages);
+        }
+
+        [Fact]
+        public void A_film_the_server_measured_nothing_about_stores_nothing()
+        {
+            using var conn = Database.Open(_dbPath);
+
+            JellyfinCache.Replace(conn, new[] { Film("a", "A Wholly Invented Film") });
+
+            Assert.Null(JellyfinCache.Load(conn).Single().Media);
+        }
+
+        /// <summary>
+        /// A column written by a version whose shape has since changed must cost the film its
+        /// badges, not its row.
+        /// </summary>
+        [Fact]
+        public void Unreadable_media_info_costs_the_badges_and_nothing_else()
+        {
+            Assert.Null(JellyfinCache.DeserialiseMedia("{ not json"));
+            Assert.Null(JellyfinCache.DeserialiseMedia(""));
+            Assert.Null(JellyfinCache.DeserialiseMedia(null));
+        }
+
+        [Fact]
+        public void A_film_removed_from_the_server_disappears_from_the_cache()        {
             using var conn = Database.Open(_dbPath);
 
             JellyfinCache.Replace(conn, new[] { Film("a", "A Wholly Invented Film"), Film("b", "Another Made Up Picture") });

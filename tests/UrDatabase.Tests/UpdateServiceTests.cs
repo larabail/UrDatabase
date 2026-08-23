@@ -1,3 +1,5 @@
+using System;
+using System.IO;
 using System.Linq;
 using System.Net;
 using System.Threading.Tasks;
@@ -6,8 +8,27 @@ using Xunit;
 
 namespace UrDatabase.Tests
 {
-    public class UpdateServiceTests
+    public class UpdateServiceTests : IDisposable
     {
+        private readonly string _logDir;
+        private readonly IDisposable _log;
+
+        public UpdateServiceTests()
+        {
+            _logDir = Path.Combine(Path.GetTempPath(), "urdb-update-service-" + Guid.NewGuid().ToString("N"));
+
+            // Half of these tests provoke a failure on purpose — a rate limit, a captive portal
+            // answering HTML, a truncated body — and every one of those paths logs. The real log
+            // belongs to whoever ran the suite.
+            _log = AppLog.Redirect(_logDir);
+        }
+
+        public void Dispose()
+        {
+            _log.Dispose();
+            try { Directory.Delete(_logDir, recursive: true); } catch { }
+        }
+
         private const string TwoReleases = @"[
             {
                 ""tag_name"": ""v0.11.0"",

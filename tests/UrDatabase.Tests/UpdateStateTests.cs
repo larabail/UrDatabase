@@ -9,16 +9,30 @@ namespace UrDatabase.Tests
     {
         private readonly string _dir;
         private readonly string _path;
+        private readonly string _logDir;
+        private readonly IDisposable _log;
 
         public UpdateStateTests()
         {
-            _dir = Path.Combine(Path.GetTempPath(), "urdb-update-state-" + Guid.NewGuid().ToString("N"));
+            var root = Path.Combine(Path.GetTempPath(), "urdb-update-state-" + Guid.NewGuid().ToString("N"));
+
+            // Deliberately a sibling of the directory under test rather than a child of it: one of
+            // these tests asserts that saving creates its own folder, so that folder must not
+            // already exist.
+            _dir = Path.Combine(root, "state");
             _path = Path.Combine(_dir, UpdateState.FileName);
+            _logDir = Path.Combine(root, "logs");
+
+            // Saving logs when it cannot write. No test here means to fail that way, but one that
+            // starts appending to somebody's real log the day it regresses is the accident
+            // AGENTS.md forbids, so the switch is thrown rather than relied upon.
+            _log = AppLog.Redirect(_logDir);
         }
 
         public void Dispose()
         {
-            try { Directory.Delete(_dir, recursive: true); } catch { }
+            _log.Dispose();
+            try { Directory.Delete(Path.GetDirectoryName(_dir)!, recursive: true); } catch { }
         }
 
         [Fact]

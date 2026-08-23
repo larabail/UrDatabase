@@ -12,15 +12,21 @@ namespace UrDatabase.Tests
     public class UpdateDownloaderTests : IDisposable
     {
         private readonly string _dir;
+        private readonly IDisposable _log;
 
         public UpdateDownloaderTests()
         {
             _dir = Path.Combine(Path.GetTempPath(), "urdb-update-" + Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(_dir);
+
+            // Every failure this class deliberately provokes — a 404, a short body, a cancelled
+            // transfer — logs on its way out, and the real log belongs to whoever ran the suite.
+            _log = AppLog.Redirect(Path.Combine(_dir, "logs"));
         }
 
         public void Dispose()
         {
+            _log.Dispose();
             try { Directory.Delete(_dir, recursive: true); } catch { }
         }
 

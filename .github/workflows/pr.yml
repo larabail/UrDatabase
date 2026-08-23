@@ -204,6 +204,7 @@ jobs:
           # without live metadata, and the package action says so in the log.
           tmdb-api-key: ${{ secrets.TMDB_API_KEY }}
           omdb-api-key: ${{ secrets.OMDB_API_KEY }}
+          uractor-api-key: ${{ secrets.URACTOR_API_KEY }}
           # Signed here too, and for the same reason the job exists at all: an
           # ad-hoc signed Mac build is killed by the kernel on launch, so
           # without this the macOS half of "builds a reviewer can actually run"

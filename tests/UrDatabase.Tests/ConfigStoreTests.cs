@@ -28,6 +28,7 @@ namespace UrDatabase.Tests
             _environment = new EnvironmentVariableScope(
                 PlatformPaths.TmdbApiKeyVariable,
                 PlatformPaths.OmdbApiKeyVariable,
+                PlatformPaths.UrActorApiKeyVariable,
                 PlatformPaths.JellyfinUrlVariable,
                 PlatformPaths.JellyfinUsernameVariable,
                 PlatformPaths.JellyfinPasswordVariable,
@@ -53,6 +54,7 @@ namespace UrDatabase.Tests
             {
                 WatchFolders = new[] { _dir },
                 TmdbApiKey = "typed-by-the-user",
+                UrActorApiKey = "uractor-typed-by-the-user",
                 DownloadPosters = true,
                 TmdbImageSize = "w500",
                 SetupCompleted = true,
@@ -70,6 +72,11 @@ namespace UrDatabase.Tests
 
             Assert.Equal(new[] { _dir }, reloaded.WatchFolders);
             Assert.Equal("typed-by-the-user", reloaded.TmdbApiKey);
+
+            // Every key AppConfig carries has to be in the written document. Serialize lists the
+            // fields explicitly, so a key added to the config and forgotten here is silently
+            // wiped the first time the user saves anything from the setup screen.
+            Assert.Equal("uractor-typed-by-the-user", reloaded.UrActorApiKey);
             Assert.True(reloaded.DownloadPosters);
             Assert.Equal("w500", reloaded.TmdbImageSize);
             Assert.True(reloaded.SetupCompleted);

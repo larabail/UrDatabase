@@ -1,6 +1,7 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:models="clr-namespace:UrDatabase.Models"
+             xmlns:ctrls="clr-namespace:UrDatabase.Controls"
              x:Class="UrDatabase.Views.MovieDetailsView">
 
     <!--
@@ -179,21 +180,83 @@
             <!-- Poster and text. -->
             <Grid Margin="24,8,48,0" ColumnDefinitions="250,48,*">
 
-                <Border Grid.Column="0"
-                        x:Name="PosterPlate"
-                        Width="250"
-                        Height="375"
-                        VerticalAlignment="Top"
-                        CornerRadius="{StaticResource RadiusLarge}"
-                        ClipToBounds="True"
-                        BoxShadow="0 18 42 0 #800B0A09">
-                    <Grid>
-                        <Image x:Name="PosterImage" Stretch="UniformToFill"/>
-                        <Border CornerRadius="{StaticResource RadiusLarge}"
-                                BorderBrush="{StaticResource EdgeBrush}"
-                                BorderThickness="1"/>
-                    </Grid>
-                </Border>
+                <StackPanel Grid.Column="0" VerticalAlignment="Top">
+                    <Border x:Name="PosterPlate"
+                            Width="250"
+                            Height="375"
+                            CornerRadius="{StaticResource RadiusLarge}"
+                            ClipToBounds="True"
+                            BoxShadow="0 18 42 0 #800B0A09">
+                        <Grid>
+                            <Image x:Name="PosterImage" Stretch="UniformToFill"/>
+                            <Border CornerRadius="{StaticResource RadiusLarge}"
+                                    BorderBrush="{StaticResource EdgeBrush}"
+                                    BorderThickness="1"/>
+                        </Grid>
+                    </Border>
+
+                    <!--
+                        The Academy, under the poster, in the column that was otherwise 375
+                        pixels of picture over 400 of nothing.
+
+                        Hidden outright for the great majority of films, which were never
+                        nominated for anything. An empty "ACADEMY AWARDS" heading would be the
+                        app telling every user that something failed to load.
+
+                        Wins and nominations are told apart by a glyph and by weight, not by
+                        colour — the same rule the connection indicators follow, and for the
+                        same reason.
+                    -->
+                    <StackPanel x:Name="AwardsPanel"
+                                Margin="0,22,0,0"
+                                IsVisible="False">
+                        <TextBlock x:Name="AwardsHeading"
+                                   Classes="label"
+                                   Text="ACADEMY AWARDS"
+                                   LetterSpacing="1.6"
+                                   Margin="0,0,0,5"/>
+                        <Rectangle Height="1"
+                                   Fill="{StaticResource EdgeBrush}"
+                                   Margin="0,0,0,8"/>
+                        <TextBlock x:Name="AwardsSummary"
+                                   Classes="mono"
+                                   FontSize="11.5"
+                                   Foreground="{StaticResource ProseBrush}"
+                                   Margin="0,0,0,9"/>
+                        <ItemsControl x:Name="AwardsList">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate DataType="models:AwardRow">
+                                    <Grid ColumnDefinitions="15,*" Margin="0,0,0,7"
+                                          ToolTip.Tip="{Binding Tip}">
+                                        <TextBlock Grid.Column="0"
+                                                   Classes="awardMark"
+                                                   Classes.won="{Binding Won}"
+                                                   Text="{Binding Mark}"/>
+                                        <StackPanel Grid.Column="1">
+                                            <TextBlock Classes="awardCategory"
+                                                       Classes.won="{Binding Won}"
+                                                       Text="{Binding Category}"
+                                                       TextWrapping="Wrap"/>
+                                            <TextBlock Classes="awardDetail"
+                                                       Text="{Binding Detail}"
+                                                       IsVisible="{Binding HasDetail}"
+                                                       TextTrimming="CharacterEllipsis"/>
+                                        </StackPanel>
+                                    </Grid>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                        <TextBlock x:Name="AwardsMore"
+                                   Classes="dim"
+                                   FontSize="11"
+                                   IsVisible="False"
+                                   Margin="15,1,0,0"/>
+                        <TextBlock x:Name="AwardsAttribution"
+                                   Classes="attribution"
+                                   Margin="0,10,0,0"
+                                   Text="Academy Awards data from the UrActor API."/>
+                    </StackPanel>
+                </StackPanel>
 
                 <!-- The plot takes the space that is left and scrolls inside
                      it; the credits are pinned to the foot of the column. A
@@ -201,7 +264,7 @@
                      long one and leaves a quarter of the window dead under the
                      credits on a short one, which is the worst of both. -->
                 <Grid Grid.Column="2"
-                      RowDefinitions="Auto,Auto,Auto,*,Auto">
+                      RowDefinitions="Auto,Auto,Auto,*,Auto,Auto">
 
                     <TextBlock Grid.Row="0"
                                x:Name="TitleText"
@@ -213,36 +276,68 @@
                                TextTrimming="CharacterEllipsis"
                                Margin="0,0,0,12"/>
 
-                    <!-- Each number under its own source's name. See DetailFacts
-                         for why this is built rather than laid out by hand. -->
-                    <ItemsControl Grid.Row="1"
-                                  x:Name="FactsList"
-                                  Margin="0,0,0,16">
-                        <ItemsControl.ItemsPanel>
-                            <ItemsPanelTemplate>
-                                <StackPanel Orientation="Horizontal"/>
-                            </ItemsPanelTemplate>
-                        </ItemsControl.ItemsPanel>
-                        <ItemsControl.ItemTemplate>
-                            <DataTemplate DataType="models:DetailFact">
-                                <StackPanel Orientation="Horizontal">
-                                    <StackPanel Margin="0,0,16,0">
-                                        <TextBlock Classes="label"
-                                                   Text="{Binding Label}"
-                                                   Margin="0,0,0,3"/>
-                                        <TextBlock Classes="factValue"
-                                                   Classes.imdb="{Binding IsImdb}"
-                                                   Classes.server="{Binding IsServer}"
-                                                   Text="{Binding Value}"/>
+                    <!-- Each number under its own source's name, then what is known about the
+                         copy itself as badges beside them. One row, because they answer one
+                         question between them — is this the film I want, in the form I want it.
+
+                         A WrapPanel rather than a StackPanel: a server film with eight audio
+                         languages produces a long row, and the alternative to wrapping is
+                         pushing the ratings off the side of the window. -->
+                    <WrapPanel Grid.Row="1" Margin="0,0,0,16">
+                        <ItemsControl x:Name="FactsList">
+                            <ItemsControl.ItemsPanel>
+                                <ItemsPanelTemplate>
+                                    <StackPanel Orientation="Horizontal"/>
+                                </ItemsPanelTemplate>
+                            </ItemsControl.ItemsPanel>
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate DataType="models:DetailFact">
+                                    <StackPanel Orientation="Horizontal">
+                                        <StackPanel Margin="0,0,16,0">
+                                            <TextBlock Classes="label"
+                                                       Text="{Binding Label}"
+                                                       Margin="0,0,0,3"/>
+                                            <TextBlock Classes="factValue"
+                                                       Classes.imdb="{Binding IsImdb}"
+                                                       Classes.server="{Binding IsServer}"
+                                                       Text="{Binding Value}"/>
+                                        </StackPanel>
+                                        <Rectangle Width="1"
+                                                   Fill="{StaticResource EdgeBrush}"
+                                                   Margin="0,0,16,0"
+                                                   IsVisible="{Binding ShowSeparator}"/>
                                     </StackPanel>
-                                    <Rectangle Width="1"
-                                               Fill="{StaticResource EdgeBrush}"
-                                               Margin="0,0,16,0"
-                                               IsVisible="{Binding ShowSeparator}"/>
-                                </StackPanel>
-                            </DataTemplate>
-                        </ItemsControl.ItemTemplate>
-                    </ItemsControl>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+
+                        <!-- Bottom-aligned so the chips sit on the same line as the fact values
+                             above their labels, not floating halfway up the row. -->
+                        <ItemsControl x:Name="FlagsList" VerticalAlignment="Bottom">
+                            <ItemsControl.ItemsPanel>
+                                <ItemsPanelTemplate>
+                                    <WrapPanel/>
+                                </ItemsPanelTemplate>
+                            </ItemsControl.ItemsPanel>
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate DataType="models:MediaFlag">
+                                    <StackPanel Orientation="Horizontal">
+                                        <TextBlock Classes="label"
+                                                   Text="{Binding GroupLabel}"
+                                                   IsVisible="{Binding HasGroupLabel}"
+                                                   VerticalAlignment="Center"
+                                                   Margin="6,0,7,5"/>
+                                        <Border Classes="flag"
+                                                Classes.lang="{Binding IsLanguage}"
+                                                Classes.sub="{Binding IsSubtitle}"
+                                                ToolTip.Tip="{Binding Tip}">
+                                            <TextBlock Classes="flagText" Text="{Binding Text}"/>
+                                        </Border>
+                                    </StackPanel>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </WrapPanel>
 
                     <TextBlock Grid.Row="2"
                                x:Name="GenresText"
@@ -253,7 +348,8 @@
                                TextWrapping="Wrap"
                                Margin="0,0,0,12"/>
 
-                    <Border Grid.Row="3"
+                    <Border x:Name="PlotPane"
+                            Grid.Row="3"
                             BorderBrush="{StaticResource EdgeBrush}"
                             BorderThickness="0,0,0,1"
                             Padding="0,0,0,12">
@@ -270,7 +366,74 @@
                         </ScrollViewer>
                     </Border>
 
-                    <Grid Grid.Row="4"
+                    <!--
+                        What to put on next, and the answer is always something
+                        already owned. This row is where a series lists its
+                        episodes; a film has no episodes, and what it had
+                        instead was several hundred pixels of backdrop nobody
+                        was reading.
+
+                        Every poster here is a film in this library, so every
+                        one of them plays. A shelf of things TMDB recommends
+                        that the user does not own would be an advertisement
+                        rather than a library, which is why the recommendation
+                        supplies only the ordering — see RelatedFilms.
+
+                        Hidden entirely when it is empty, and the plot takes the
+                        space back. A heading over an empty row is the app
+                        reporting a failure it did not have.
+                    -->
+                    <StackPanel x:Name="RelatedPane"
+                                Grid.Row="4"
+                                Margin="0,16,0,0"
+                                VerticalAlignment="Center"
+                                IsVisible="False">
+                        <TextBlock x:Name="RelatedHeading"
+                                   Classes="label"
+                                   LetterSpacing="1.6"
+                                   Margin="0,0,0,5"/>
+                        <Rectangle Height="1"
+                                   Fill="{StaticResource EdgeBrush}"
+                                   Margin="0,0,0,10"/>
+                        <ScrollViewer Classes="shelf" Padding="0,0,0,4">
+                            <ItemsControl x:Name="RelatedList">
+                                <ItemsControl.ItemsPanel>
+                                    <ItemsPanelTemplate>
+                                        <StackPanel Orientation="Horizontal"/>
+                                    </ItemsPanelTemplate>
+                                </ItemsControl.ItemsPanel>
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate DataType="models:UiMovie">
+                                        <!-- The library's own card, at the library's own size and
+                                             with no caption under it. Deliberately identical: a
+                                             film is recognised by its poster here exactly as it is
+                                             two clicks away, and the title it would carry
+                                             underneath is already printed on the plate of any film
+                                             whose artwork has not arrived yet. -->
+                                        <StackPanel Classes="card"
+                                                    Width="152"
+                                                    Margin="0,0,14,0"
+                                                    Background="Transparent"
+                                                    Cursor="Hand"
+                                                    PointerPressed="RelatedCard_Click"
+                                                    ToolTip.Tip="{Binding Title}">
+                                            <Grid>
+                                                <ctrls:PosterCard SourcePath="{Binding DisplayPosterPath}"
+                                                                  Title="{Binding Title}"
+                                                                  Year="{Binding Year}"/>
+                                                <Border Classes="ring"
+                                                        CornerRadius="{StaticResource PosterRadius}"
+                                                        BorderThickness="1"
+                                                        BorderBrush="Transparent"/>
+                                            </Grid>
+                                        </StackPanel>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </ScrollViewer>
+                    </StackPanel>
+
+                    <Grid Grid.Row="5"
                           ColumnDefinitions="*,48,260"
                           Margin="0,24,0,24">
 

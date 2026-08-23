@@ -54,6 +54,15 @@ inputs:
       as above.
     required: false
     default: ''
+  uractor-api-key:
+    description: >
+      The UrActor key to compile in, for the Academy Award nominations under
+      the poster. Empty for the same reasons as above, and unlike the two keys
+      above an empty one is barely noticeable -- most films were never
+      nominated for anything, so the panel is already hidden on nearly every
+      film in a library.
+    required: false
+    default: ''
   macos-certificate-p12-base64:
     description: >
       The `Developer ID Application` certificate and its private key, as a
@@ -127,6 +136,7 @@ runs:
         OUTPUT: ${{ inputs.output }}
         TMDB_API_KEY: ${{ inputs.tmdb-api-key }}
         OMDB_API_KEY: ${{ inputs.omdb-api-key }}
+        URACTOR_API_KEY: ${{ inputs.uractor-api-key }}
         MACOS_CERT_P12_BASE64: ${{ inputs.macos-certificate-p12-base64 }}
         MACOS_CERT_PASSWORD: ${{ inputs.macos-certificate-password }}
         ASC_KEY_ID: ${{ inputs.app-store-connect-key-id }}
@@ -175,7 +185,7 @@ runs:
           # cannot disagree, including on a branch where the props file does
           # not exist yet.
           #
-          # The two API keys are compiled in so that an official build works
+          # The three API keys are compiled in so that an official build works
           # the moment it is opened, with no signing up and no configuration
           # file to write. They are passed as MSBuild properties rather than
           # left in the repository, which keeps them out of git history and
@@ -184,7 +194,7 @@ runs:
           # shipped binaries and anybody can read them back out of a download.
           # See docs/releases.md.
           #
-          # Both are quoted, so an empty one expands to `-p:TmdbApiKey=` --
+          # All are quoted, so an empty one expands to `-p:TmdbApiKey=` --
           # a property explicitly set to nothing, which is exactly what a fork
           # should build with -- rather than dropping the argument and letting
           # a stale default apply.
@@ -199,6 +209,7 @@ runs:
             -p:Version="$VERSION" \
             -p:TmdbApiKey="$TMDB_API_KEY" \
             -p:OmdbApiKey="$OMDB_API_KEY" \
+            -p:UrActorApiKey="$URACTOR_API_KEY" \
             -p:ContinuousIntegrationBuild=true \
             --output "$PUBLISH"
 

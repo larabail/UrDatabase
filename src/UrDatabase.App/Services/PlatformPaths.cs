@@ -17,6 +17,9 @@ namespace UrDatabase.Services
         /// <summary>Environment variable consulted when the config file has no OMDb key.</summary>
         public const string OmdbApiKeyVariable = "URDATABASE_OMDB_API_KEY";
 
+        /// <summary>Environment variable consulted when the config file has no UrActor key.</summary>
+        public const string UrActorApiKeyVariable = "URDATABASE_URACTOR_API_KEY";
+
         /// <summary>
         /// Jellyfin connection settings, for anyone who would rather not write a server address
         /// or a password into a file. Consulted only when the matching config field is blank.

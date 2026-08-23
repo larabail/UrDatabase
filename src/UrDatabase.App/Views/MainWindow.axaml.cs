@@ -92,6 +92,12 @@ namespace UrDatabase.Views
         /// <summary>Rebuilt whenever the configuration changes; never null once the window exists.</summary>
         private ImdbRatingService _ratings = null!;
 
+        /// <summary>
+        /// Academy Award nominations, cached in the catalogue. Rebuilt with the configuration for
+        /// the same reason as the rating service, and idle until a film is opened.
+        /// </summary>
+        private OscarsService _awards = null!;
+
         /// <summary>Rebuilt with the configuration, because the catalogue can move. Never null once the window exists.</summary>
         private LibraryLoader _library = null!;
 
@@ -156,7 +162,7 @@ namespace UrDatabase.Views
 
             // Runs after the poster drain in OnClosing, and has to: cancelling this first would
             // cut short the very fetches the drain is there to let finish.
-            Closed += (_, __) => { _cts.Cancel(); _searchLoop.Dispose(); _posterLoader?.Dispose(); _ratings.Dispose(); _jellyfin?.Dispose(); };
+            Closed += (_, __) => { _cts.Cancel(); _searchLoop.Dispose(); _posterLoader?.Dispose(); _ratings.Dispose(); _awards.Dispose(); _jellyfin?.Dispose(); };
 
             DataContext = this;
 
@@ -262,6 +268,9 @@ namespace UrDatabase.Views
             // at all when no OMDb key is available.
             _ratings?.Dispose();
             _ratings = new ImdbRatingService(new OmdbService(_config.OmdbApiKey), ownsLookup: true);
+
+            _awards?.Dispose();
+            _awards = new OscarsService(new UrActorService(_config.UrActorApiKey), ownsLookup: true);
 
             // Nothing is constructed, and no database is touched, when no server is configured.
             _jellyfin?.Dispose();
@@ -1229,13 +1238,14 @@ namespace UrDatabase.Views
         /// half of the screen. Hiding it also takes its buttons out of the tab order, which were
         /// otherwise still reachable, and still clickable, behind a screen covering them.
         /// </remarks>
-        private async Task ShowDetailsAsync(MovieDetailsVm vm)
+        private async Task ShowDetailsAsync(MovieDetailsVm vm, RelatedShelf? related = null)
         {
             LibraryRoot.IsVisible = false;
 
             try
             {
-                await DetailsView.ShowAsync(vm, _dbPath, _config, LoadImdbRatingAsync, _jellyfin, _cts.Token);
+                await DetailsView.ShowAsync(
+                    vm, _dbPath, _config, LoadImdbRatingAsync, _jellyfin, _cts.Token, LoadAwardsAsync, related);
 
                 // A downloaded film is a row the library behind this screen does not have yet: it
                 // would still be shown as living only on the server until something reloaded it.
@@ -1285,20 +1295,41 @@ namespace UrDatabase.Views
             if (!e.GetCurrentPoint(sender as Control).Properties.IsLeftButtonPressed) return;
             if ((sender as Control)?.DataContext is not UiMovie m) return;
 
-            // A series is not a film with episodes attached: it opens a different screen, and it
-            // is never sent to TMDB, which would answer about a film of the same name.
-            if (m.IsSeries)
-            {
-                await ShowSeriesDetailsAsync(m);
-                return;
-            }
+            await OpenAsync(m);
+        }
 
-            if (m.IsRemote)
-            {
-                await ShowRemoteDetailsAsync(m);
-                return;
-            }
+        /// <summary>
+        /// Opens a card, and keeps opening one for as long as the user follows the related shelf.
+        /// </summary>
+        /// <remarks>
+        /// A loop rather than recursion. The details screen asks for the next film instead of
+        /// opening it, so following ten films is ten turns of this loop rather than ten nested
+        /// awaits each holding a view model, a cancellation source and an HTTP client alive.
+        ///
+        /// Following a film replaces the one on screen rather than stacking on it: <b>Library</b>
+        /// and Escape go back to the library from wherever you have got to, which is the one thing
+        /// they have always done. A history stack would be a second meaning for the same button.
+        /// </remarks>
+        private async Task OpenAsync(UiMovie card)
+        {
+            var next = card;
 
+            while (next is not null)
+            {
+                var current = next;
+
+                // A series is not a film with episodes attached: it opens a different screen, and
+                // it is never sent to TMDB, which would answer about a film of the same name.
+                if (current.IsSeries) await ShowSeriesDetailsAsync(current);
+                else if (current.IsRemote) await ShowRemoteDetailsAsync(current);
+                else await ShowLocalDetailsAsync(current);
+
+                next = DetailsView.TakeRequestedNext();
+            }
+        }
+
+        private async Task ShowLocalDetailsAsync(UiMovie m)
+        {
             try
             {
                 using var tmdb = new TmdbService(
@@ -1367,7 +1398,14 @@ namespace UrDatabase.Views
                 vm.FilePath = target.FilePath;
                 vm.FileMatch = target.Kind;
 
-                await ShowDetailsAsync(vm);
+                // Read from the file Play would open, so the badges describe the copy the user is
+                // about to watch. A filename is a claim rather than a measurement and the screen
+                // says so; it is still the only thing a scanned film has.
+                vm.Media = LocalMedia.Describe(target.FilePath);
+
+                vm.Awards = await LoadAwardsAsync(vm.Title, vm.Year, cts.Token);
+
+                await ShowDetailsAsync(vm, await LoadRelatedAsync(vm, tmdb, cts.Token));
 
                 // The film may have been re-identified while the details screen was up, and the
                 // card behind it is still showing the poster that was wrong. Only when the screen
@@ -1448,7 +1486,12 @@ namespace UrDatabase.Views
                     // it. Nothing used to ask for them, so every film from a server showed an
                     // empty list as though it genuinely had none.
                     TopCast = film.Cast.ToList(),
-                    KeyCrew = film.Crew.ToList()
+                    KeyCrew = film.Crew.ToList(),
+
+                    // Measured by the server rather than read off a filename — the one path in
+                    // this app where the resolution and the languages are facts about the file
+                    // instead of a claim somebody typed into its name.
+                    Media = film.Media
                 };
 
                 using var cts = CancellationTokenSource.CreateLinkedTokenSource(_cts.Token);
@@ -1470,8 +1513,9 @@ namespace UrDatabase.Views
                 // one — a film whose copy has gone still has a row that owns the rating — and to
                 // nothing at all for a film that only ever came from the server.
                 vm.ImdbRating = await LoadImdbRatingAsync(vm.ImdbId, vm.LocalId > 0 ? vm.LocalId : null, cts.Token);
+                vm.Awards = await LoadAwardsAsync(vm.Title, vm.Year, cts.Token);
 
-                await ShowDetailsAsync(vm);
+                await ShowDetailsAsync(vm, await LoadRelatedAsync(vm, null, cts.Token));
             }
             catch (OperationCanceledException)
             {
@@ -1519,6 +1563,10 @@ namespace UrDatabase.Views
                 // not the community number beside it. No local movie row owns it.
                 vm.ImdbRating = await LoadImdbRatingAsync(vm.ImdbId, null, cts.Token);
 
+                // Deliberately no awards lookup. The archive holds Academy Awards, a programme
+                // has never won one, and it is searched by title — so a series called "Fargo"
+                // would be handed the 1996 film's Oscars. Emmys are a different body with a
+                // different API and are not what this key buys.
                 LibraryRoot.IsVisible = false;
 
                 try
@@ -1558,6 +1606,82 @@ namespace UrDatabase.Views
             {
                 AppLog.Write("omdb.log", $"rating lookup failed for {imdbId}: {ex.Message}");
                 return null;
+            }
+        }
+
+        /// <summary>
+        /// The shelf of films to put on next, all of them already in this library.
+        /// </summary>
+        /// <remarks>
+        /// TMDB supplies the ordering and the catalogue supplies the contents; see
+        /// <see cref="RelatedFilms"/> for why it is never the other way round. A film nothing has
+        /// identified, an install with no TMDB key and a server that cannot be reached all skip
+        /// the request and fall through to the genre shelf, which needs no network at all.
+        ///
+        /// <paramref name="tmdb"/> is borrowed from the caller when it already built one for this
+        /// film, rather than opening a second connection to fetch one list.
+        /// </remarks>
+        private async Task<RelatedShelf> LoadRelatedAsync(MovieDetailsVm vm, TmdbService? tmdb, CancellationToken ct)
+        {
+            IReadOnlyList<TmdbMatch.Candidate> recommended = Array.Empty<TmdbMatch.Candidate>();
+
+            try
+            {
+                if (vm.TmdbId is int id && id > 0 && !string.IsNullOrWhiteSpace(_config.TmdbApiKey))
+                {
+                    if (tmdb is not null)
+                    {
+                        recommended = await tmdb.GetRecommendationsAsync(id, ct);
+                    }
+                    else
+                    {
+                        using var client = new TmdbService(
+                            apiKey: _config.TmdbApiKey ?? "",
+                            posterCacheDir: _config.PosterCacheDir ?? "",
+                            imageSize: _config.TmdbImageSize ?? "w342",
+                            downloadPosters: false);
+
+                        recommended = await client.GetRecommendationsAsync(id, ct);
+                    }
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                // The shelf is an offer, not a fact. Falling through to genres is better than
+                // failing to open a film over it.
+                AppLog.Write("app.log", $"recommendations for {vm.Title} failed: {ex.Message}");
+            }
+
+            return RelatedFilms.For(recommended, _allMovies, vm);
+        }
+
+        /// <summary>
+        /// Academy Award nominations from the UrActor API, matched on the title and the release
+        /// year and cached in the catalogue. Entirely optional in the same way the IMDb rating is:
+        /// no key, no network or a title the Academy spells differently all mean no awards, never
+        /// another film's.
+        /// </summary>
+        private async Task<OscarHonours> LoadAwardsAsync(string? title, int? year, CancellationToken ct)
+        {
+            if (string.IsNullOrWhiteSpace(title) || !_awards.IsConfigured) return OscarHonours.None;
+
+            try
+            {
+                using var conn = Database.Open(_dbPath);
+                return await _awards.GetAsync(conn, title, year, ct);
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                AppLog.Write("oscars.log", $"awards lookup failed for {title}: {ex.Message}");
+                return OscarHonours.None;
             }
         }
 
