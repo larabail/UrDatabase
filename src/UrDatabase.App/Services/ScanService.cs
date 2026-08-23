@@ -125,7 +125,25 @@ namespace UrDatabase.Services
                 // arbitrary, so everything it had not reached yet looks exactly like everything
                 // that is gone, and it has no way to tell those apart.
                 if (status == ScanStatus.Completed)
+                {
                     counts.Missing = await MarkMissingAsync(conn, files, walked, unreadable, DateTimeOffset.UtcNow);
+
+                    // A rename sweeps as it happens, and this is the safety net for the debris a
+                    // rename never saw: a row left by an older build, or by one on a branch,
+                    // pointed at the same catalogue and scanning it without knowing to look for
+                    // the alias. The scan is where it belongs — it is the only thing that reads
+                    // the whole catalogue, and the only thing that ever created such a row.
+                    //
+                    // After the walk rather than before it, because a row this scan has just
+                    // inserted and linked a file to is not debris, and looking first would judge
+                    // it before it had its file.
+                    //
+                    // And not at all when a file failed to record. That failure is exactly the
+                    // shape that makes an ordinary row look like debris — the movie row is
+                    // committed and the file that was to be attached to it is not — so a scan
+                    // that hit one has no business concluding anything about an empty row.
+                    if (counts.Failed == 0) await SweepDiscardedNamesAsync(conn);
+                }
             }
             catch (Exception)
             {
@@ -412,6 +430,38 @@ WHERE id = @id;
             foreach (var row in gone) row.MissingSince = stamp;
 
             return gone.Count;
+        }
+
+        /// <summary>
+        /// Clears out any row that is only another row's discarded name, through the write lane
+        /// and in its own transaction.
+        /// </summary>
+        /// <remarks>
+        /// Best effort, and not counted in the result. A scan's job is to reconcile the catalogue
+        /// with the disk, which it has already done by the time this runs; failing the whole scan
+        /// over a tidy-up would turn a library that is now correct into an error message. The next
+        /// completed scan tries again.
+        ///
+        /// Its own lane turn rather than one of the walk's, for the same reason the walk takes one
+        /// per batch: a sweep is a short write and has no business holding the lane open across
+        /// anything else.
+        /// </remarks>
+        private static async Task SweepDiscardedNamesAsync(SqliteConnection conn)
+        {
+            try
+            {
+                await DatabaseWriteLane.RunAsync(
+                    conn,
+                    token => DiscardedNames.SweepAsync(conn, tx: null, token),
+                    CancellationToken.None);
+            }
+            catch (Exception ex)
+            {
+                // Swallowed, but not silently. A sweep that fails every time is a bug that would
+                // otherwise leave no trace anywhere, because its whole job is to change nothing
+                // visible when there is nothing to clear up.
+                AppLog.Write("scan.log", $"could not sweep discarded names: {ex.Message}");
+            }
         }
 
         /// <summary>

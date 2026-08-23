@@ -21,6 +21,13 @@ namespace UrDatabase.Services
         /// </summary>
         public string OmdbApiKey { get; set; } = "";
 
+        /// <summary>
+        /// Optional UrActor key for Academy Award nominations. Resolved the same way as the other
+        /// two. Left blank the details screen simply shows no awards, which is also what it shows
+        /// for the great majority of films that never received any.
+        /// </summary>
+        public string UrActorApiKey { get; set; } = "";
+
         public string PosterCacheDir { get; set; } = PlatformPaths.DefaultPosterCacheDir;
 
         /// <summary>
@@ -332,6 +339,11 @@ namespace UrDatabase.Services
                 config.OmdbApiKey,
                 Environment.GetEnvironmentVariable(PlatformPaths.OmdbApiKeyVariable),
                 BuildKeys.Omdb);
+
+            config.UrActorApiKey = ResolveKey(
+                config.UrActorApiKey,
+                Environment.GetEnvironmentVariable(PlatformPaths.UrActorApiKeyVariable),
+                BuildKeys.UrActor);
 
             config.Jellyfin ??= new JellyfinSettings();
             config.Jellyfin.Normalize();
