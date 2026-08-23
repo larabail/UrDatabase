@@ -106,6 +106,28 @@ namespace UrDatabase.Models
         public string? StreamUrl { get; set; }
 
         /// <summary>
+        /// Where the server says this film was left, in ticks. Zero for one that is not
+        /// part-watched, which is nearly every film.
+        /// </summary>
+        /// <remarks>
+        /// What <b>Continue watching</b> seeks to. Taken from the card the library already built
+        /// rather than fetched again, so the details screen and the shelf behind it can never
+        /// disagree about where you were.
+        /// </remarks>
+        public long ResumePositionTicks { get; set; }
+
+        /// <summary>How much is left, exactly as the card says it: <c>"42 MIN LEFT"</c>.</summary>
+        public string? ResumeNote { get; set; }
+
+        /// <summary>
+        /// True when there is a position worth returning to. A second is the floor, for the same
+        /// reason it is in the row: a player that was opened and shut reports a position before
+        /// anybody watched anything.
+        /// </summary>
+        public bool HasResumePosition =>
+            ResumePositionTicks >= Services.PlaybackPosition.MinimumMeaningfulTicks;
+
+        /// <summary>
         /// Jellyfin's own community rating, shown under Jellyfin's name and nobody else's. It is a
         /// different measurement, of a different population, from the IMDb rating above, and this
         /// repository has already shipped one bug from labelling one service's number as another's.

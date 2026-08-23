@@ -361,7 +361,14 @@ namespace UrDatabase.Views
         {
             if (Vm is null) return;
 
-            FileNote.Text = PlayPrompts.FileNote(Vm);
+            var canSeek = MediaPlayerLauncher.CanResumeHere();
+
+            FileNote.Text = PlayPrompts.FileNote(Vm, canSeek);
+
+            // The label and the offset are two readings of one rule, so a film that will resume
+            // says so and a film that cannot never claims it. See PlayPrompts.CanResume.
+            PlayBtn.Content = PlayPrompts.PlayButtonLabel(Vm, canSeek);
+            StartAgainButton.IsVisible = PlayPrompts.CanResume(Vm, canSeek);
         }
 
         private async void LoadArtwork(CancellationToken ct)
@@ -396,7 +403,15 @@ namespace UrDatabase.Views
 
         private void Back_Click(object? sender, RoutedEventArgs e) => Close();
 
-        private async void PlayBtn_Click(object? sender, RoutedEventArgs e)
+        private async void PlayBtn_Click(object? sender, RoutedEventArgs e) => await PlayAsync(fromTheStart: false);
+
+        /// <summary>
+        /// Watches it again from the beginning. Only ever reachable on a film the primary button
+        /// is offering to resume, so it is never a second way to do the same thing.
+        /// </summary>
+        private async void StartAgain_Click(object? sender, RoutedEventArgs e) => await PlayAsync(fromTheStart: true);
+
+        private async Task PlayAsync(bool fromTheStart)
         {
             if (Vm is null) return;
 
@@ -413,7 +428,7 @@ namespace UrDatabase.Views
 
             if (Vm.IsRemote)
             {
-                await PlayFromServerAsync();
+                await PlayFromServerAsync(fromTheStart);
                 return;
             }
 
@@ -460,7 +475,7 @@ namespace UrDatabase.Views
         /// player is not always installed — so each gets a sentence that says what to do about it,
         /// rather than an exception message.
         /// </summary>
-        private async Task PlayFromServerAsync()
+        private async Task PlayFromServerAsync(bool fromTheStart = false)
         {
             if (Vm is null) return;
 
@@ -497,7 +512,13 @@ namespace UrDatabase.Views
                 // would be a socket opened for nothing.
                 var canReport = PlaybackTracking.CanReport(_jellyfin, Vm.RemoteId);
 
-                var launch = MediaPlayerLauncher.Play(Vm.StreamUrl, withProgressReporting: canReport);
+                // Asked of the same rule that labelled the button, so what happens is what it
+                // said: zero whenever it read "Play", and zero when somebody chose to start over.
+                var startAt = fromTheStart
+                    ? 0
+                    : PlayPrompts.ResumeFrom(Vm, MediaPlayerLauncher.CanResumeHere());
+
+                var launch = MediaPlayerLauncher.Play(Vm.StreamUrl, withProgressReporting: canReport, startAtTicks: startAt);
 
                 // Not awaited: it lasts as long as the film, and the viewer is going back to the
                 // library. Given the app's lifetime rather than this screen's, so leaving the film
