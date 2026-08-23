@@ -140,5 +140,99 @@ namespace UrDatabase.Tests
             Assert.Equal("The wrong film.", details!.Overview);
             Assert.EndsWith("/wrong.jpg", ReadPoster(reopened, id));
         }
+
+        // ---------- renaming the film to what it turned out to be ----------
+
+        private static string? ReadTitle(SqliteConnection conn, long id)
+        {
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = "SELECT title FROM movies WHERE id=@id";
+            cmd.Parameters.AddWithValue("@id", id);
+            return cmd.ExecuteScalar() as string;
+        }
+
+        private static string? ReadScanTitle(SqliteConnection conn, long id)
+        {
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = "SELECT scan_title FROM movies WHERE id=@id";
+            cmd.Parameters.AddWithValue("@id", id);
+            var value = cmd.ExecuteScalar();
+            return value is null or DBNull ? null : Convert.ToString(value);
+        }
+
+        [Fact]
+        public void The_name_offered_is_the_one_tmdb_gave_unless_there_is_nothing_to_change()
+        {
+            Assert.Equal("The Drama", MovieMatch.RenameTo("El Drama", "The Drama"));
+
+            // Nothing to write: the catalogue already agrees.
+            Assert.Null(MovieMatch.RenameTo("The Drama", "The Drama"));
+            Assert.Null(MovieMatch.RenameTo("The Drama", "  The Drama  "));
+
+            // Nothing to write it from.
+            Assert.Null(MovieMatch.RenameTo("El Drama", null));
+            Assert.Null(MovieMatch.RenameTo("El Drama", "   "));
+
+            // Capitalisation is worth fixing: same key to every rule in the app, better to read.
+            Assert.Equal("El Drama", MovieMatch.RenameTo("el drama", "El Drama"));
+        }
+
+        [Fact]
+        public async Task Correcting_a_match_renames_the_film_and_remembers_what_the_scan_called_it()
+        {
+            using var conn = Database.Open(_dbPath);
+            var id = InsertMovie(conn, "El Drama", 2026);
+
+            await MovieMatch.SaveAsync(conn, id, 901, "/right.jpg", "The Drama");
+
+            Assert.Equal("The Drama", ReadTitle(conn, id));
+            Assert.Equal("El Drama", ReadScanTitle(conn, id));
+        }
+
+        [Fact]
+        public async Task Renaming_twice_keeps_the_name_the_scanner_actually_parsed()
+        {
+            using var conn = Database.Open(_dbPath);
+            var id = InsertMovie(conn, "El Drama", 2026);
+
+            await MovieMatch.SaveAsync(conn, id, 900, null, "Something Else");
+            await MovieMatch.SaveAsync(conn, id, 901, null, "The Drama");
+
+            Assert.Equal("The Drama", ReadTitle(conn, id));
+
+            // Not "Something Else". The scanner matches what it parses from the filename, and that
+            // has been "El Drama" throughout.
+            Assert.Equal("El Drama", ReadScanTitle(conn, id));
+        }
+
+        [Fact]
+        public async Task A_correction_that_does_not_rename_leaves_the_title_and_the_scan_name_alone()
+        {
+            using var conn = Database.Open(_dbPath);
+            var id = InsertMovie(conn, "El Drama", 2026);
+
+            // The ordinary case: only the poster was wrong.
+            await MovieMatch.SaveAsync(conn, id, 901, "/right.jpg");
+
+            Assert.Equal("El Drama", ReadTitle(conn, id));
+            Assert.Null(ReadScanTitle(conn, id));
+        }
+
+        /// <summary>
+        /// The automatic loader identifies films by their title in the first place, so writing that
+        /// title back would say nothing — and would overwrite a name somebody had corrected by hand
+        /// with the guess they had just corrected.
+        /// </summary>
+        [Fact]
+        public async Task The_automatic_loader_never_renames_a_film()
+        {
+            using var conn = Database.Open(_dbPath);
+            var id = InsertMovie(conn, "El Drama", 2026);
+
+            await MovieMatch.SaveAsync(conn, id, 901, "/poster.jpg", "The Drama");
+            await MovieMatch.SaveAsync(conn, id, 901, "/poster.jpg");
+
+            Assert.Equal("The Drama", ReadTitle(conn, id));
+        }
     }
 }

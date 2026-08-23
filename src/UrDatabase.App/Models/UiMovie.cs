@@ -15,6 +15,18 @@ namespace UrDatabase.Models
         public string? Genres { get; set; }
 
         /// <summary>
+        /// Which TMDB film this is, when either source has said so: <c>movies.tmdb_id</c> for a
+        /// local film, and the server's own provider id for one of its.
+        ///
+        /// It is what lets the same film from both places be recognised as one. A title cannot do
+        /// that job — a library names a file <em>El Drama</em> while the server calls the same film
+        /// <em>The Drama</em>, and the two normalise to different keys, so the wall showed it twice.
+        /// Null whenever nothing has identified the film, which is why matching on the title stays
+        /// as the fallback rather than being replaced.
+        /// </summary>
+        public int? TmdbId { get; set; }
+
+        /// <summary>
         /// The word for a film that plays with the house network down, on the badge and on the
         /// control in the source row. Those two have to say the same thing: the row is what
         /// explains the badge, and a filter called "On this computer" beside a badge called
@@ -149,6 +161,12 @@ namespace UrDatabase.Models
             RemotePosterPath = server.DisplayPosterPath;
 
             if (string.IsNullOrWhiteSpace(Genres)) Genres = server.Genres;
+
+            // A film the server has identified and the catalogue has not. Taking the id here is
+            // what lets a fold that had to be made on the title hold on identity next time, and it
+            // only ever fills a blank — a local answer, including a corrected one, is never
+            // overwritten by the server's.
+            TmdbId ??= server.TmdbId;
         }
 
         public IEnumerable<string> GenresList =>

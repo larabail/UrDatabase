@@ -82,6 +82,15 @@ namespace UrDatabase.Views
         /// </summary>
         public bool DownloadedSomething { get; private set; }
 
+        /// <summary>
+        /// True once a correction on this screen renamed the film. Read by the caller after
+        /// <see cref="ShowAsync"/> returns, for the same reason as
+        /// <see cref="DownloadedSomething"/>: the library behind it is sorted and grouped by a name
+        /// that has just changed, so the card is in the wrong place under the wrong text until
+        /// something reloads it.
+        /// </summary>
+        public bool RenamedSomething { get; private set; }
+
         public MovieDetailsView()
         {
             InitializeComponent();
@@ -107,6 +116,7 @@ namespace UrDatabase.Views
             _ratingLookup = ratingLookup;
             _jellyfin = jellyfin;
             DownloadedSomething = false;
+            RenamedSomething = false;
             DataContext = vm;
 
             _cts?.Cancel();
@@ -756,7 +766,18 @@ namespace UrDatabase.Views
             vm.TmdbId = chosen.TmdbId;
             if (poster is not null) vm.PosterPath = poster;
 
-            await SaveMatchAsync(vm, chosen.TmdbId, poster, cts.Token);
+            // The film is called what the person just said it is. Leaving the filename's guess on
+            // the card after they have identified the film is the app disagreeing with an answer it
+            // asked for — and it is the name the library, the search box and the genre shelves all
+            // show, so the correction has to reach it rather than stopping at the artwork.
+            var renamed = MovieMatch.RenameTo(vm.Title, chosen.TmdbTitle);
+            if (renamed is not null)
+            {
+                vm.Title = renamed;
+                RenamedSomething = true;
+            }
+
+            await SaveMatchAsync(vm, chosen.TmdbId, poster, renamed, cts.Token);
 
             // Everything below repaints a screen the user may already have left. Vm is the guard:
             // showing another film swaps it, and Close sets it to null.
@@ -832,14 +853,14 @@ namespace UrDatabase.Views
         /// the user, who can see the corrected screen in front of them; all they lose is that it
         /// will have to be corrected again next time.
         /// </summary>
-        private async Task SaveMatchAsync(MovieDetailsVm vm, int tmdbId, string? posterPath, CancellationToken ct)
+        private async Task SaveMatchAsync(MovieDetailsVm vm, int tmdbId, string? posterPath, string? title, CancellationToken ct)
         {
             if (string.IsNullOrWhiteSpace(_dbPath) || vm.LocalId <= 0) return;
 
             try
             {
                 using var conn = Database.Open(_dbPath);
-                await MovieMatch.SaveAsync(conn, vm.LocalId, tmdbId, posterPath, ct);
+                await MovieMatch.SaveAsync(conn, vm.LocalId, tmdbId, posterPath, title, ct);
             }
             catch (Exception ex)
             {
