@@ -104,6 +104,43 @@ The same goes for your own data: `movies.db`, poster caches and absolute paths
 to your film folders are yours and are not repository content. `.gitignore`
 covers the obvious cases; check `git status` before you stage.
 
+### Never let a test or a harness write to the real app data directory
+
+`~/Library/Application Support/UrDatabase` on macOS, `%APPDATA%\UrDatabase` on
+Windows, is somebody's install. It holds their catalogue, their poster cache,
+and an `appsettings.json` carrying their Jellyfin password and their TMDB and
+OMDb keys. Nothing under `tests/`, and no throwaway script written to verify a
+change, may read or write it. Point every test at a temporary directory you
+created and will delete, and pass the path in explicitly rather than relying on
+a default.
+
+This is not hypothetical. A verification harness overwrote a maintainer's
+`appsettings.json` and inserted invented rows into their `movies.db`. The rows
+were recoverable and the credentials were not: the Jellyfin username and
+password, and both API keys, were simply gone, and no amount of care afterwards
+could reconstruct them. It had happened once already with a different script
+before anybody noticed the pattern.
+
+The specific trap, because it defeats the obvious precaution:
+
+```csharp
+Environment.SetEnvironmentVariable("HOME", tempDir);   // does NOT redirect this
+Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+```
+
+On Linux `GetFolderPath` honours `HOME` and `XDG_DATA_HOME`, so a harness that
+sets them looks isolated and is. On macOS it does not: .NET asks Foundation,
+Foundation asks the OS, and the OS answers with the real account's Application
+Support no matter what the environment says. A harness written and checked on
+one platform will therefore quietly write to the live install on the other.
+
+So isolation has to be asserted, not assumed. Take the directory as a parameter,
+fail loudly when it is missing, and check that the path you were handed is
+actually under the temporary root before writing a byte. `AppConfig`,
+`ConfigStore` and `Database` all accept an explicit path for exactly this
+reason — use it. If a piece of code offers no way to be pointed elsewhere, that
+is a bug in the code and not a licence to run it against real data.
+
 ## Commit convention
 
 Conventional Commits, with a body that explains the reasoning.
