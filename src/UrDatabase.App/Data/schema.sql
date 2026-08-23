@@ -229,13 +229,19 @@ CREATE TABLE IF NOT EXISTS oscar_nominations (
 
 CREATE INDEX IF NOT EXISTS ix_oscar_nominations_film ON oscar_nominations(title, year);
 
--- Where the server says the viewer had got to in each part-watched film, as of the last
--- successful sync. What the Continue watching row is built from.
+-- Where the server says the viewer had got to in each part-watched film and episode, as of the
+-- last successful sync. What the Continue watching row is built from.
 --
--- Positions only, deliberately: the title, year and artwork are already in jellyfin_movies, and a
--- second copy of them here would give the row its own idea of what a film is called. An entry
--- whose item_id names nothing in that table — a television episode, a film in a library this app
--- was never pointed at — simply has no card to land on and is dropped when the row is built.
+-- A film is a position and nothing else: its title, year and artwork are already in
+-- jellyfin_movies, and a second copy of them here would give the row its own idea of what a film
+-- is called. An entry whose item_id names nothing in that table — a film in a library this app was
+-- never pointed at — has no card to land on and is dropped when the row is built.
+--
+-- An episode has to carry more, because nothing caches episodes until a series is opened: there is
+-- no first copy of its name for this to be a second copy of. It brings the programme, the season,
+-- the number and its own title, which is what a card has to say. None of it can go stale, because
+-- the whole table is replaced by each sync and so always says exactly what the server last said.
+-- Its artwork is still not here — that is the series card's poster, found through series_id.
 --
 -- Replaced wholesale by each sync, and only after the server has answered, so a sync attempted
 -- away from home leaves the previous row intact rather than emptying it.
@@ -251,7 +257,36 @@ CREATE TABLE IF NOT EXISTS jellyfin_resume (
     played_percentage REAL,
     -- The server's ordering, most recently watched first, kept because it is a real answer.
     sort_order        INTEGER NOT NULL,
+    -- 'Movie' or 'Episode', in Jellyfin's own vocabulary. Without it the row would have to look
+    -- every id up in both caches, or guess — and a wrong guess renders an episode as a film with
+    -- an inexplicable name. Added by Database.Migrate as well, so an existing library gets it.
+    item_type         TEXT,
+    -- The four things an episode card says, and null on a film.
+    series_id         TEXT,
+    series_name       TEXT,
+    season_number     INTEGER,
+    episode_number    INTEGER,
+    name              TEXT,
     synced_at         TEXT NOT NULL
+);
+
+-- Items the owner has taken out of their own Continue watching row. Local, and deliberately: it is
+-- this app's opinion about this app's first shelf, and nothing here is ever sent to the server.
+-- Marking something unplayed on Jellyfin would change it for every client in the house, which is a
+-- different act with a different blast radius.
+--
+-- A table of its own rather than a column on jellyfin_resume, because that one is deleted and
+-- rewritten by every sync: a dismissal stored there would evaporate the next time the server was
+-- asked anything.
+--
+-- position_ticks is what the dismissal was about, and what makes it expire. The item comes back
+-- the moment the server reports a different position for it, on the reasoning that somebody who
+-- has watched more of a thing has plainly not abandoned it. That also keeps this table from
+-- growing into a blacklist nobody can see: a stale row is pruned by the next sync.
+CREATE TABLE IF NOT EXISTS jellyfin_resume_dismissals (
+    item_id        TEXT PRIMARY KEY,
+    position_ticks INTEGER NOT NULL,
+    dismissed_at   TEXT NOT NULL
 );
 
 -- Full text search over the catalogue, kept in sync with movies by triggers.

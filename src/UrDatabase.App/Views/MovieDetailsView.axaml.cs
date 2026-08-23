@@ -495,7 +495,7 @@ namespace UrDatabase.Views
                 // The interface is only asked for when there is somewhere for it to report to. A
                 // port and a password for a film with no id on it, or with no server behind it,
                 // would be a socket opened for nothing.
-                var canReport = _jellyfin is not null && !string.IsNullOrWhiteSpace(Vm.RemoteId);
+                var canReport = PlaybackTracking.CanReport(_jellyfin, Vm.RemoteId);
 
                 var launch = MediaPlayerLauncher.Play(Vm.StreamUrl, withProgressReporting: canReport);
 

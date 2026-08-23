@@ -58,9 +58,9 @@ namespace UrDatabase.Models
         public string SeriesBadge => SeriesTag;
 
         /// <summary>
-        /// Whether this is a film or a television series. Defaults to <see cref="MediaKind.Film"/>
-        /// so every row read out of the <c>movies</c> table is right without the query saying so —
-        /// nothing on this machine is catalogued as television.
+        /// Whether this is a film, a television series, or one episode of one. Defaults to
+        /// <see cref="MediaKind.Film"/> so every row read out of the <c>movies</c> table is right
+        /// without the query saying so — nothing on this machine is catalogued as television.
         /// </summary>
         public MediaKind Kind { get; set; } = MediaKind.Film;
 
@@ -72,6 +72,11 @@ namespace UrDatabase.Models
         /// </summary>
         public bool IsSeries => Kind == MediaKind.Series;
 
+        /// <summary>
+        /// True when this card is one episode. Only ever true in the Continue watching row.
+        /// </summary>
+        public bool IsEpisode => Kind == MediaKind.Episode;
+
         public bool IsFilm => Kind == MediaKind.Film;
 
         /// <summary>
@@ -82,6 +87,11 @@ namespace UrDatabase.Models
         /// "will this play away from home", and for television the answer is on the card already —
         /// nothing local is ever a series, so the mark would appear on every single one of them
         /// and say nothing that the series badge beside it did not.
+        ///
+        /// An episode does carry it. It only ever appears in the Continue watching row, beside
+        /// films of which some play offline and some do not, and there the badge is the one thing
+        /// that separates them — while the series badge would be a lie, because an episode is not
+        /// a programme.
         /// </remarks>
         public bool ShowServerBadge => IsOnServer && !IsSeries;
 
@@ -92,14 +102,68 @@ namespace UrDatabase.Models
         public int? EpisodeCount { get; set; }
 
         /// <summary>
-        /// The line under the title on a card: the year, and for a series how many seasons are
-        /// behind it.
+        /// The programme an episode card belongs to, so clicking it can open the show. Null on
+        /// anything that is not an episode.
         /// </summary>
         /// <remarks>
-        /// One property rather than the view choosing between two, because the choice is a rule
+        /// Kept apart from <see cref="RemoteId"/>, which on an episode card is the episode's own
+        /// id — the one that streams, and the one a playback report is about. Folding the two
+        /// would mean either playing a series or reporting progress against a programme.
+        /// </remarks>
+        public string? SeriesId { get; set; }
+
+        /// <summary>Which season an episode is in, when the server numbered it.</summary>
+        public int? SeasonNumber { get; set; }
+
+        /// <summary>Its number within that season, on the same terms.</summary>
+        public int? EpisodeNumber { get; set; }
+
+        /// <summary>
+        /// The episode's own name. Secondary on the card, because on its own it identifies
+        /// nothing: a real one from this library is "In throes of increasing wonder … ", which
+        /// names no programme, no season and no place in it.
+        /// </summary>
+        public string? EpisodeTitle { get; set; }
+
+        /// <summary>
+        /// Where an episode sits in its programme: <c>"S1E1"</c>, or <c>"E1"</c> when the server
+        /// numbered the episode and not the season, or empty when it numbered neither.
+        /// </summary>
+        /// <remarks>
+        /// The same shape the series screen uses, deliberately, so the two places an episode is
+        /// named agree. Not zero-padded here: <c>S01E01</c> is right in a list of twenty-four rows
+        /// where the numbers have to line up, and merely loud on a single card.
+        /// </remarks>
+        public string EpisodeLabel
+        {
+            get
+            {
+                if (!IsEpisode) return "";
+
+                var season = SeasonNumber is int s ? $"S{s.ToString(CultureInfo.InvariantCulture)}" : "";
+                var episode = EpisodeNumber is int e ? $"E{e.ToString(CultureInfo.InvariantCulture)}" : "";
+
+                return season + episode;
+            }
+        }
+
+        /// <summary>
+        /// The line under the title on a card: the year, for a series how many seasons are behind
+        /// it, and for an episode where in its programme it is.
+        /// </summary>
+        /// <remarks>
+        /// One property rather than the view choosing between three, because the choice is a rule
         /// about what a card means and rules in a view cannot be tested. A series showing nothing
         /// but a year is the failure mode this exists to prevent: it would read as a film with an
-        /// odd date, which is precisely the objection to putting the two on one shelf.
+        /// odd date, which is precisely the objection to putting the two on one shelf. An episode
+        /// showing nothing but its own name is the same failure again and worse, because the name
+        /// is frequently meaningless without the programme.
+        ///
+        /// An episode's own name is deliberately not here beside the number. There is room on a
+        /// 152px card for "S1E1" and how much is left, and nothing else: with the name in as well
+        /// the line rendered as "S1E1 · In …", which is a truncation that costs the space and
+        /// says nothing. It is on <see cref="CardTooltip"/> in full instead, and on the series
+        /// screen the card opens.
         ///
         /// Empty rather than null for a film with no year, so the view has one thing to test.
         /// </remarks>
@@ -108,6 +172,14 @@ namespace UrDatabase.Models
             get
             {
                 var year = Year is int value ? value.ToString(CultureInfo.InvariantCulture) : "";
+
+                if (IsEpisode)
+                {
+                    // The name only when the server numbered nothing at all, which is the one case
+                    // where it is the only thing that distinguishes this card from its siblings.
+                    var label = EpisodeLabel;
+                    return label.Length > 0 ? label : (EpisodeTitle ?? "").Trim();
+                }
 
                 if (!IsSeries) return year;
 
@@ -209,9 +281,16 @@ namespace UrDatabase.Models
         /// Television is keyed separately from film. Jellyfin does not reuse an id between the
         /// two, so this buys nothing today; it is here so that the day something does — a second
         /// server, an import, a fixture — a series and a film cannot silently become one card.
+        /// An episode is keyed separately again, for the same reason and one more: an episode card
+        /// and its programme's card can be on screen at once, with the row above the shelves.
         /// </summary>
         public string Key => Source == MovieSource.Jellyfin
-            ? IsSeries ? $"jellyfin:series:{RemoteId}" : $"jellyfin:{RemoteId}"
+            ? Kind switch
+            {
+                MediaKind.Series => $"jellyfin:series:{RemoteId}",
+                MediaKind.Episode => $"jellyfin:episode:{RemoteId}",
+                _ => $"jellyfin:{RemoteId}"
+            }
             : $"local:{Id.ToString(CultureInfo.InvariantCulture)}";
 
         private string? _posterPath;
@@ -316,12 +395,39 @@ namespace UrDatabase.Models
         public double ResumePercent => (_resumeFraction ?? 0) * 100d;
 
         /// <summary>
-        /// What hovering the card says. The title, and how far through it is when that is known —
-        /// a 3px rule along the bottom of a poster is legible at a glance and says nothing to
-        /// somebody meeting it for the first time, and this is where it explains itself.
+        /// What hovering the card says. The title, where an episode sits in its programme and what
+        /// that episode is called, and how far through it is when that is known — a 3px rule along
+        /// the bottom of a poster is legible at a glance and says nothing to somebody meeting it
+        /// for the first time, and this is where it explains itself.
         /// </summary>
-        public string CardTooltip =>
-            string.IsNullOrWhiteSpace(_resumeNote) ? Title : $"{Title} — {_resumeNote}";
+        /// <remarks>
+        /// The only place an episode's own name is readable in full. The card has room for the
+        /// number and how much is left and nothing else, which is the right trade at 152 pixels
+        /// wide, and this is where the rest of it lives.
+        /// </remarks>
+        public string CardTooltip
+        {
+            get
+            {
+                var parts = new List<string> { Title };
+
+                if (IsEpisode)
+                {
+                    var label = EpisodeLabel;
+                    var name = (EpisodeTitle ?? "").Trim();
+
+                    var episode = label.Length > 0 && name.Length > 0 ? $"{label} · {name}"
+                                : label.Length > 0 ? label
+                                : name;
+
+                    if (episode.Length > 0) parts.Add(episode);
+                }
+
+                if (!string.IsNullOrWhiteSpace(_resumeNote)) parts.Add(_resumeNote!);
+
+                return string.Join(" — ", parts);
+            }
+        }
 
         /// <summary>
         /// Records that the server holds this film too, folding its copy into this card.

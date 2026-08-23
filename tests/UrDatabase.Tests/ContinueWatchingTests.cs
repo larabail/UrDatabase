@@ -256,13 +256,14 @@ namespace UrDatabase.Tests
         }
 
         [Fact]
-        public void An_entry_the_movie_library_does_not_hold_is_dropped_rather_than_invented()
+        public void An_entry_the_library_does_not_hold_is_dropped_rather_than_invented()
         {
-            // A television episode, or a film in a library this app was never pointed at. There is
-            // no card for it and this app has no way to render one.
+            // A film in a library this app was never pointed at, or one removed upstream since
+            // the row was cached. There is no card for it and nothing here can render one. The
+            // television version of the same rule is in ResumeRowTelevisionTests.
             var library = new[] { Server("item1", "The Drama") };
 
-            Assert.Empty(ResumeRow.Build(library, new[] { Entry("episode-99", 1500) }));
+            Assert.Empty(ResumeRow.Build(library, new[] { Entry("missing-99", 1500) }));
         }
 
         [Fact]
@@ -629,7 +630,7 @@ namespace UrDatabase.Tests
             """;
 
         [Fact]
-        public async Task The_resume_list_asks_for_films_and_for_the_position()
+        public async Task The_resume_list_asks_for_films_and_television_and_for_the_position()
         {
             var handler = FakeHttpMessageHandler.Routed(
                 ("Users/AuthenticateByName", HttpStatusCode.OK, AuthJson),
@@ -641,9 +642,9 @@ namespace UrDatabase.Tests
 
             var request = handler.Requests.Single(r => r.Contains("UserItems/Resume", StringComparison.Ordinal));
 
-            // Without the type filter the endpoint returns television episodes, which this app's
-            // filename parser has no concept of and would show as oddly titled films.
-            Assert.Contains("IncludeItemTypes=Movie", request, StringComparison.Ordinal);
+            // Both kinds, because a half-watched episode is the commonest thing to be part way
+            // through and every other client in the house shows it.
+            Assert.Contains("IncludeItemTypes=Movie,Episode", request, StringComparison.Ordinal);
             Assert.Contains("Fields=UserData", request, StringComparison.Ordinal);
             Assert.Contains("userId=22222222222222222222222222222222", request, StringComparison.Ordinal);
 
