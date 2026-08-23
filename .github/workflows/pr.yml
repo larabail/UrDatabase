@@ -299,6 +299,15 @@ jobs:
   # The rule and every message it prints live in `tool/check_version_bump.py`,
   # with its own tests, because a check that blocks merges needs to be arguable
   # with on a laptop rather than only by pushing commits at CI.
+  #
+  # What this cannot do is make the race impossible. It reports the state at
+  # the moment it ran, and GitHub does not re-run an open pull request's checks
+  # when something else lands on `main`, so two branches carrying the same
+  # version can still both be green and merge seconds apart -- and branch
+  # protection does not catch that either, because merging `main` into a branch
+  # that already holds the identical version resolves cleanly with no conflict
+  # to notice. Only a merge queue closes it. This narrows the window to the gap
+  # between the check running and the merge button being pressed.
   version:
     name: Version
     # `workflow_dispatch` has no pull request, so there is no base to compare
@@ -328,6 +337,7 @@ jobs:
 
       - name: Check the version bump
         env:
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
@@ -343,19 +353,30 @@ jobs:
           echo 'Changed files:'
           sed 's/^/  /' changed.txt
 
-          # The version, though, is compared against the tip of main, because
-          # that is what the tag has to clear. A branch that bumps 0.1.0 to
-          # 0.1.1 while main has already reached 0.2.0 passes a merge-base
-          # comparison and then publishes nothing, since v0.1.1 was tagged
-          # weeks ago.
+          # The version, though, is compared against main as it is at this
+          # moment, because that is what the tag has to clear -- and neither
+          # the merge base nor `pull_request.base.sha` is that. Both are
+          # snapshots of where main was when this branch last diverged or when
+          # this event was raised, and main keeps moving afterwards. Two pull
+          # requests that both took 0.4.1 while main sat at 0.4.0 both cleared
+          # their own recorded base; the second to merge found v0.4.1 already
+          # tagged and published nothing at all.
           #
-          # `|| true`: main not having the file at all is an ordinary answer
-          # here, not an error. The check reads an absent file as "main states
-          # no version yet".
-          git show "$BASE_SHA:Directory.Build.props" > base.props 2>/dev/null || true
+          # Fetched explicitly rather than trusting the remote-tracking ref the
+          # checkout left behind, which is only as fresh as the checkout, and
+          # written as an explicit refspec so this does not depend on how the
+          # checkout configured the remote. `set -e` makes a failure here stop
+          # the job: a check that could not find main must not carry on and
+          # pass.
+          git fetch --no-tags --force origin \
+            "+refs/heads/$BASE_REF:refs/remotes/origin/$BASE_REF"
 
+          # An absent Directory.Build.props on main is still an ordinary answer
+          # -- "main states no version yet" -- and the check reads it that way.
+          # A base ref it cannot resolve is not, and fails loudly rather than
+          # passing everything.
           python3 tool/check_version_bump.py \
-            --base-props base.props \
+            --base-ref "refs/remotes/origin/$BASE_REF" \
             --head-props Directory.Build.props \
             --changed changed.txt
 

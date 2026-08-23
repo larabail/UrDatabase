@@ -69,6 +69,17 @@ them with:
 python3 -m unittest discover -s tool -p "test_*.py"
 ```
 
+"Currently on `main`" is meant literally: the check fetches the base branch and
+reads it at the moment it runs, rather than using the base commit the pull
+request event recorded when the branch opened. Those drift apart as soon as
+anything else merges, and it is the live one the tag has to clear.
+
+It still cannot make the collision impossible. A check reports the state it ran
+in, and GitHub does not re-run an open pull request's checks when something
+lands on `main`, so two branches carrying the same version can both be green
+and merge seconds apart — the first takes the tag and the second publishes
+nothing. Only a merge queue would close that gap.
+
 ### Why not moving the version does nothing
 
 `release.yml` refuses to publish over an existing tag. That is what makes it
