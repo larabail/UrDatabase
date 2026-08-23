@@ -131,8 +131,12 @@ It runs on Windows and macOS from one codebase, built with
   does not undo it. The name a film was scanned under is kept in
   `movies.scan_title`, because the scanner matches files by the title it parses
   out of a filename: without it, a renamed film would stop answering to the name
-  on disk and the next scan would catalogue it a second time
-  (`Views/TmdbMatchWindow`, `Services/MovieMatch`, `Services/MovieIndex`).
+  on disk and the next scan would catalogue it a second time. Where that has
+  already happened — an older build, or one on a branch, scanning the same
+  catalogue without knowing to look for the alias — the leftover row is cleared
+  out, both as the rename happens and on the next completed scan
+  (`Views/TmdbMatchWindow`, `Services/MovieMatch`, `Services/MovieIndex`,
+  `Services/DiscardedNames`).
 - **Scan your watch folders.** The scan button walks the configured folders for
   video files — `.mkv`, `.mp4`, `.avi`, `.mov`, `.wmv`, `.m4v`, `.mpg`, `.mpeg`
   — parses a title and year out of each filename, creates or reuses a canonical
@@ -625,6 +629,47 @@ a film the catalogue holds no file for at all — a row restored from an older
 library — is left alone, because only a mark a scan actually wrote is evidence
 that something went away.
 
+#### The row a rename can leave behind
+
+There is one row with no file that *is* removed rather than left, and it is the
+narrowest case in the app. Correcting a film's match renames the row and keeps
+the scanned name in `movies.scan_title` so the next scan finds the film it
+already has. That works from the build that introduced it onwards — and a
+catalogue is a file on disk that older builds, and builds on other branches, go
+on opening. Anything scanning it without knowing to look for the alias
+catalogues the film a second time under the name on disk, and because a scan
+leaves an existing `files.movie_id` alone, that second row never gets a file.
+What is left is a blank card that cannot be opened, played, matched or removed,
+sitting next to the film it duplicates.
+
+A row is cleared out only when every one of these is true. The name has to match
+on the scanner's own key, so case, accents, punctuation and `&` are not
+differences, and the years have to agree, so a remake is safe. Exactly one row
+may claim that name as one it discarded — two claimants is an ambiguity, and an
+ambiguity means doing nothing. That row has to be the older of the two, because
+the duplicate is created by a scan that ran *after* the rename. It has to be the
+one holding the file, since the whole mechanism is that the file stayed put. And
+it has to carry a TMDB id, because a correction is the only thing that discards
+a name and it writes both together. The row being removed, meanwhile, has to
+hold nothing at all: no file, no TMDB id, no artwork, no genres, and no former
+name of its own.
+
+Each of those costs a row staying and would otherwise cost a film. The
+conditions on the row being removed are asked twice — once to find it, and again
+as part of the delete — because the catalogue has more than one writer and a
+file linked in between must save it.
+
+The sweep runs as the rename happens and again after any completed scan, so
+debris that no rename ever saw is still found. A scan that failed to record a
+file does not sweep at all: that failure leaves a committed row with no file,
+which is exactly what debris looks like (`Services/DiscardedNames`).
+
+This is the one place the app deletes a `movies` row, and the reason it is
+allowed to is that the row is worth nothing: the film it names is right beside
+it, holding the file, the identification and the artwork. Contrast the section
+above, where the row is the only record the film ever existed and is kept
+however long it stays missing.
+
 #### Playing a server film
 
 Films are streamed by default, and Jellyfin direct-plays most of them as
@@ -1079,7 +1124,14 @@ Stated plainly, so nobody has to find out by using it:
   every film on it until it is plugged back in and rescanned, and a film that
   degraded to a server film degrades on the strength of the *cached* server
   library, so a server you have never synced on this machine cannot rescue
-  anything.
+  anything. The one row that *is* deleted is the empty duplicate a rename can
+  leave behind, which is a different thing and worth nothing — see
+  [The row a rename can leave behind](#the-row-a-rename-can-leave-behind).
+- **Nothing else in the app edits the catalogue.** There is no way to delete a
+  film, merge two of them, or correct a year by hand. The sweep above is
+  deliberately narrow — it will not touch a duplicate that has a file, a poster
+  or a TMDB id, which is exactly the duplicate you would most want to merge —
+  so two rows for one film, arrived at any other way, stay two rows.
 - **A film that has left the library cannot be pointed at a new file from
   inside the app.** **Link File…** is on the details screen, and a film with no
   copy here either has no card to open or opens as a server film, which does not
