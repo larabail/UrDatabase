@@ -264,8 +264,13 @@ It runs on Windows and macOS from one codebase, built with
   order — most recently watched first — each card carrying a brass rule along
   the bottom of the poster showing how far in you are and a line saying how much
   is left. An episode is titled with its programme and marked `S1E1`, under the
-  programme's own poster, so it reads as a sibling of the films beside it;
-  clicking it opens that programme at that season. It is the server's own
+  programme's own poster, so it reads as a sibling of the films beside it — one
+  episode per programme, the one you were last watching, so a series you dip in
+  and out of does not fill the row on its own;
+  **clicking it carries on watching it**, from where the server says you got to.
+  That is the one card in this app that plays rather than opening a screen, so
+  the status line says what it just did and the right-click menu offers the
+  programme instead. It is the server's own
   answer, so a film started on the television carries on here. Cached like the
   library, so it is on screen the instant the window opens and stays there with
   the server switched off; an empty row is not shown at all. Opening a
@@ -661,8 +666,12 @@ the moment Play is pressed rather than being held on every row in the list. An
 episode played this way reports its position back exactly as a film does, so it
 appears in Continue watching here and on every other client — see
 [Reporting playback back to the server](#reporting-playback-back-to-the-server).
-An episode you are part way through is in the Continue watching row above the
-genres, and clicking that card brings you back here, at the season it is in.
+From this list an episode starts at the beginning, because picking one out of a
+season is asking to watch it rather than to carry on with it. Carrying on is
+what the **Continue watching** row above the genres is for: an episode you are
+part way through is there, and clicking that card resumes it. Its right-click
+menu has **Open programme…**, which comes back to this screen at the season that
+episode is in.
 
 Seasons and episodes are **not** fetched by a sync. A library of two hundred
 programmes is several thousand episodes, and pulling them all would turn a sync
@@ -848,10 +857,36 @@ exactly what the server last said. The card is titled with the **programme** and
 marked `S1E1`, under the programme's own poster, because an episode's own name
 identifies nothing — a real one here is "In throes of increasing wonder … ",
 which names no show, no season and no place in it. The full name is in the
-tooltip and on the series screen. Clicking an episode card opens its programme
-at that season rather than playing on the spot: every card in this app opens a
-screen, and the first row on the page is the last place to make a single click
-start a stream.
+tooltip and on the series screen.
+
+**Clicking an episode card plays it, from where you were.** It is the only card
+in this app that starts a stream rather than opening a screen, and that is
+deliberate: it is what the row is for and what every other Jellyfin client does.
+The position the card carries is handed to the player, by the same
+`--start-time` a film resumed from its details screen uses — see
+[Picking a film up where you left it](#picking-a-film-up-where-you-left-it) for
+how that works and what IINA cannot do with it.
+
+What that costs is that the first row on the page can be played by accident, so
+two things soften it: the status line names what started and says whether it
+genuinely resumed — it will not claim a seek on a player that cannot make one —
+and the right-click menu carries **Open programme…**, which opens the series
+screen at the season that episode is in. Playing goes through the same
+`StreamPlayback` door the series screen uses, so an episode started here reports
+its position back exactly as one started there does, and neither entry point can
+start an episode without following it.
+
+A **film** in the row opens its details screen, as every other card in the app
+does, and its button there says **Continue watching**.
+
+**One episode per programme**, and it is the newest. Somebody who dips in and out
+of a series is part way through several of its episodes at once, and showing all
+of them would fill the row with one show — the same poster and the same title
+repeated, with `S1E1` and `S1E2` the only thing telling two cards apart. The one
+kept is the first the server listed, which is the episode you were last actually
+watching, because that list is ordered most recently watched first. Dismiss it
+and the next episode of that programme takes its place. Films are not folded
+that way: two half-watched films are two different things to carry on with.
 
 An episode resolves through its programme's card, which is what supplies the
 poster, so filtering the library to **Films** takes the episodes out of the row
@@ -1481,11 +1516,16 @@ Stated plainly, so nobody has to find out by using it:
 - **Playback position is shared with the server through VLC, and only VLC.** A
   film or an episode streamed through VLC now reports where it got to, so it
   resumes and is marked watched on every device — but three cases still do not.
-  **IINA reports nothing, and cannot resume**: it is mpv underneath and exposes a
-  JSON IPC socket rather than an HTTP interface, which is a different protocol
+  **IINA reports nothing, and cannot resume**: it is mpv underneath and exposes
+  a JSON IPC socket rather than an HTTP interface, which is a different protocol
   over a different transport, so an IINA user plays films exactly as before, sees
   **Play** rather than **Continue watching**, and contributes nothing to Continue
-  watching. **A downloaded film reports nothing and does not resume**, because it
+  watching. It cannot be told where to begin either — the argument that would do
+  it is forwarded by `iina-cli` rather than by the application binary this app
+  launches — so an episode played from the Continue watching row starts at the
+  beginning and has to be seeked. Guessing at an argument is not a cosmetic risk:
+  a player that refuses one does not play the film at all. **A downloaded film
+  reports nothing and does not resume**, because it
   is opened with the system's default opener, which is not necessarily VLC, takes
   a path and nothing else, and may well be away from the server anyway — the
   position is simply not recorded, rather than queued for later delivery. And

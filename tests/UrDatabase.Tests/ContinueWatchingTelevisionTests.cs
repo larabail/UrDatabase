@@ -136,20 +136,104 @@ namespace UrDatabase.Tests
         [Fact]
         public void A_mixed_row_keeps_the_order_the_server_gave_it()
         {
+            // Two programmes rather than two episodes of one, because only one episode of a
+            // programme is ever in the row — see below.
             var show = Series();
+            var other = Series("series-2", "The Other Programme");
             var film = Film("film-1", "The Drama");
 
             var row = ResumeRow.Build(
-                new[] { film, show },
+                new[] { film, show, other },
                 new[]
                 {
                     Episode(sortOrder: 0),
                     FilmEntry("film-1", sortOrder: 1),
-                    Episode("episode-2", season: 1, number: 2, name: "Après le Déluge", sortOrder: 2)
+                    Episode("episode-2", seriesId: "series-2", season: 4, number: 7, name: "Après le Déluge", sortOrder: 2)
                 });
 
-            Assert.Equal(new[] { ShowTitle, "The Drama", ShowTitle }, row.Select(c => c.Title).ToArray());
-            Assert.Equal(new[] { "S1E1", "", "S1E2" }, row.Select(c => c.EpisodeLabel).ToArray());
+            Assert.Equal(
+                new[] { ShowTitle, "The Drama", "The Other Programme" },
+                row.Select(c => c.Title).ToArray());
+
+            Assert.Equal(new[] { "S1E1", "", "S4E7" }, row.Select(c => c.EpisodeLabel).ToArray());
+        }
+
+        [Fact]
+        public void Only_one_episode_of_a_programme_is_in_the_row_and_it_is_the_newest()
+        {
+            // Somebody who dips in and out of a series is part way through several of its
+            // episodes at once. All of them in the row is one show repeated across the shelf under
+            // a single poster, with S1E1 and S1E2 the only difference between two identical cards.
+            // The server lists most recently watched first, so the first is the one to keep.
+            var show = Series();
+
+            var row = ResumeRow.Build(
+                new[] { show },
+                new[]
+                {
+                    Episode("episode-2", season: 1, number: 2, name: "Après le Déluge", sortOrder: 0),
+                    Episode("episode-1", season: 1, number: 1, sortOrder: 1),
+                    Episode("episode-9", season: 2, number: 3, name: "Like Angels Put in Hell by God", sortOrder: 2)
+                });
+
+            var card = Assert.Single(row);
+
+            Assert.Equal("S1E2", card.EpisodeLabel);
+            Assert.Equal("episode-2", card.RemoteId);
+        }
+
+        [Fact]
+        public void Each_programme_still_gets_its_own_card()
+        {
+            // The rule is one per programme, not one in total: two shows on the go are two things
+            // to carry on with.
+            var row = ResumeRow.Build(
+                new[] { Series(), Series("series-2", "The Other Programme") },
+                new[]
+                {
+                    Episode(sortOrder: 0),
+                    Episode("episode-7", seriesId: "series-2", season: 2, number: 1, sortOrder: 1)
+                });
+
+            Assert.Equal(new[] { ShowTitle, "The Other Programme" }, row.Select(c => c.Title).ToArray());
+        }
+
+        [Fact]
+        public void Two_part_watched_films_are_both_kept()
+        {
+            // Films are not folded the way episodes are. Neither stands in for the other.
+            var one = Film("film-1", "The Drama");
+            var two = Film("film-2", "The Western", 1971);
+
+            var row = ResumeRow.Build(
+                new[] { one, two },
+                new[] { FilmEntry("film-1", sortOrder: 0), FilmEntry("film-2", sortOrder: 1) });
+
+            Assert.Equal(new[] { "The Drama", "The Western" }, row.Select(c => c.Title).ToArray());
+        }
+
+        [Fact]
+        public void Dismissing_the_newest_episode_brings_the_one_behind_it_forward()
+        {
+            // The two rules compose in the order that makes sense: what the owner has dismissed is
+            // not in the row at all, so the programme's place goes to the next episode they are
+            // part way through rather than being left empty.
+            var show = Series();
+
+            var entries = new[]
+            {
+                Episode("episode-2", season: 1, number: 2, name: "Après le Déluge", sortOrder: 0),
+                Episode("episode-1", season: 1, number: 1, sortOrder: 1)
+            };
+
+            var row = ResumeRow.Build(
+                new[] { show },
+                entries,
+                new[] { new ResumeDismissal("episode-2", entries[0].PositionTicks) });
+
+            var card = Assert.Single(row);
+
+            Assert.Equal("S1E1", card.EpisodeLabel);
         }
 
         [Fact]
@@ -158,11 +242,18 @@ namespace UrDatabase.Tests
             var show = Series();
             var film = Film("film-1", "The Drama");
 
-            var row = ResumeRow.Build(
-                new[] { film, show },
-                new[] { FilmEntry("film-1"), Episode(sortOrder: 1), Episode("episode-2", number: 2, sortOrder: 2) });
+            var other = Series("series-2", "The Other Programme");
 
-            var shelf = LibraryGrouping.BuildShelves(new[] { film, show }, Array.Empty<string>(), row)[0];
+            var row = ResumeRow.Build(
+                new[] { film, show, other },
+                new[]
+                {
+                    FilmEntry("film-1"),
+                    Episode(sortOrder: 1),
+                    Episode("episode-2", seriesId: "series-2", number: 2, sortOrder: 2)
+                });
+
+            var shelf = LibraryGrouping.BuildShelves(new[] { film, show, other }, Array.Empty<string>(), row)[0];
 
             // "3 FILMS" over two episodes and a film is exactly the dishonesty the count label
             // exists to prevent.

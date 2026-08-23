@@ -180,6 +180,42 @@ namespace UrDatabase.Services
         }
 
         /// <summary>
+        /// What the status line says when a card in the Continue watching row is clicked.
+        /// </summary>
+        /// <remarks>
+        /// Clicking that row is the one place in this app where a single click starts a stream
+        /// rather than opening a screen, so it has to say what it just did. Silence would leave
+        /// somebody who clicked by accident with a player opening over their library and nothing
+        /// on screen explaining why.
+        ///
+        /// It says "resuming" only when that is true, on the same terms as
+        /// <see cref="PlayButtonLabel"/>: there has to be a position worth returning to, and the
+        /// player on this machine has to be one that can be told to open there. On IINA it is
+        /// honest about starting again rather than promising a seek that will not happen.
+        /// </remarks>
+        /// <param name="playerCanSeek">
+        /// Whether the installed player takes an offset — <see cref="MediaPlayerLauncher.CanResumeHere"/>.
+        /// Passed in rather than asked here so this stays a rule about words and not a question
+        /// about the filesystem.
+        /// </param>
+        public static string PlayingFromTheRow(UiMovie card, bool playerCanSeek)
+        {
+            if (card is null) throw new ArgumentNullException(nameof(card));
+
+            var title = string.IsNullOrWhiteSpace(card.Title) ? "this" : card.Title;
+
+            var what = card.IsEpisode && card.EpisodeLabel.Length > 0
+                ? $"\u201c{title}\u201d {card.EpisodeLabel}"
+                : $"\u201c{title}\u201d";
+
+            var resuming = playerCanSeek && card.ResumePositionTicks >= PlaybackPosition.MinimumMeaningfulTicks;
+
+            return resuming
+                ? $"Resuming {what} where you left off."
+                : $"Playing {what} from the beginning.";
+        }
+
+        /// <summary>
         /// What to say when there is nothing to open. Names the way out rather than only the
         /// problem.
         /// </summary>

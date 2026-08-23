@@ -313,15 +313,17 @@ namespace UrDatabase.Views
                 // stream URL is only valid with a token, and the token comes from a sign-in.
                 await _jellyfin.ConnectAsync(deadline.Token);
 
-                var launch = MediaPlayerLauncher.Play(
-                    _jellyfin.BuildStreamUrl(episode.ItemId),
-                    withProgressReporting: PlaybackTracking.CanReport(_jellyfin, episode.ItemId));
-
-                // Not awaited: it lasts as long as the episode, and the viewer is going back to
-                // the list. Given the window's lifetime rather than this screen's, so leaving the
-                // programme does not stop the reporting — and so closing the app does, with a
-                // last word.
-                _ = PlaybackTracking.Follow(launch, _jellyfin, episode.ItemId, _appLifetime);
+                // The same door the Continue watching row plays through, so neither can start an
+                // episode without following it. Not awaited: it lasts as long as the episode, and
+                // the viewer is going back to the list. Given the window's lifetime rather than
+                // this screen's, so leaving the programme does not stop the reporting — and so
+                // closing the app does, with a last word.
+                //
+                // From the beginning, deliberately: this list is where somebody picks an episode
+                // out of a season, and picking one is asking to watch it rather than to carry on
+                // with it. Carrying on is what the row above the genres is for, and it passes the
+                // position.
+                _ = StreamPlayback.Start(_jellyfin, episode.ItemId, startTicks: 0, appLifetime: _appLifetime);
             }
             catch (OperationCanceledException)
             {

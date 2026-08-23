@@ -47,6 +47,17 @@ namespace UrDatabase.Services
         /// A programme never takes a mark from an episode of it. "Half way through" is a fact
         /// about one episode, and a rule under a series poster would be claiming something about
         /// a hundred hours of television on the strength of twenty minutes.
+        ///
+        /// One episode per programme, and no more. Somebody who dips in and out of a series is
+        /// part way through several of its episodes at once, and a row that showed them all would
+        /// be one show repeated across the shelf under a single poster, with S1E1 and S1E2 the
+        /// only difference between two identical cards — which is both useless and the loudest
+        /// thing on the page. The one kept is the first the server listed, and that is exactly the
+        /// right one: the resume list is ordered most recently watched first, so it is the episode
+        /// you were last actually watching.
+        ///
+        /// Films are not folded that way. Two half-watched films are two different things to carry
+        /// on with, and neither stands in for the other.
         /// </remarks>
         /// <param name="dismissals">
         /// What the owner has taken out of the row. Applied before anything else, so a dismissed
@@ -87,10 +98,16 @@ namespace UrDatabase.Services
             var row = new List<UiMovie>();
             var used = new HashSet<string>(StringComparer.Ordinal);
 
+            // One episode per programme, and it is the first the server listed — see the remarks
+            // on Build. Films are not in this set: two films are two things to carry on with.
+            var programmes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
             var showing = ResumeDismissals.Apply(resume, dismissals);
 
             foreach (var entry in showing.Where(Qualifies).OrderBy(e => e.SortOrder))
             {
+                if (entry.IsEpisode && !programmes.Add((entry.SeriesId ?? "").Trim())) continue;
+
                 var card = entry.IsEpisode
                     ? BuildEpisodeCard(entry, seriesByRemoteId)
                     : byRemoteId.TryGetValue(entry.ItemId.Trim(), out var film) ? film : null;
@@ -108,7 +125,8 @@ namespace UrDatabase.Services
                     entry.RuntimeTicks,
                     entry.PlayedPercentage);
 
-                // The seek target, kept exact. Everything above is for drawing and reading.
+                // The seek target, kept exact. Everything above is for drawing and reading, and
+                // it is what a player is given when this card is clicked in the row.
                 card.ResumePositionTicks = entry.PositionTicks;
 
                 row.Add(card);

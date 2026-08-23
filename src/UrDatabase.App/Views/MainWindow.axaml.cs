@@ -1366,6 +1366,18 @@ namespace UrDatabase.Views
 
             if (!e.GetCurrentPoint(sender as Control).Properties.IsLeftButtonPressed) return;
 
+            // An episode only ever appears in the Continue watching row, and clicking it carries
+            // on watching it. That makes it the one card in this app that starts a stream rather
+            // than opening a screen — deliberately, because that is what the row is for and what
+            // every other client in the house does. What it costs is that the first row on the
+            // page can be played by accident, so the status line says what just happened and the
+            // right-click menu still offers the programme.
+            if (m.IsEpisode)
+            {
+                await ResumeEpisodeAsync(m);
+                return;
+            }
+
             await OpenAsync(m);
         }
 
@@ -1389,12 +1401,9 @@ namespace UrDatabase.Views
             {
                 var current = next;
 
-                // An episode only ever appears in the Continue watching row, and it opens its
-                // programme rather than playing on the spot. Every other card in this app opens a
-                // screen and everything is played from one, so a card that started a stream on a
-                // single click — in the first row on the page, under the cursor as the window
-                // opens — would be the one exception and the easiest thing here to hit by
-                // accident.
+                // An episode opens its programme, which is what the right-click menu on a card
+                // in the Continue watching row asks for. Clicking such a card plays it instead —
+                // see MovieCard_Click.
                 if (current.IsEpisode) await ShowEpisodesProgrammeAsync(current);
 
                 // A series is not a film with episodes attached: it opens a different screen, and
@@ -1701,10 +1710,105 @@ namespace UrDatabase.Views
         /// shelf offers the same dismissal, which is right — it is the same film and the same
         /// fact — and the four hundred cards that are in no row at all show no menu rather than an
         /// empty box.
+        ///
+        /// The programme item is shown only on an episode, because it is the only card that has a
+        /// programme. Set here rather than bound: a context menu is a popup outside this window's
+        /// visual tree, and a binding across that boundary is a thing to debug rather than a thing
+        /// to read.
         /// </remarks>
         private void CardMenu_Opening(object? sender, CancelEventArgs e)
         {
-            if (_cardMenuTarget is not { HasResume: true }) e.Cancel = true;
+            var card = _cardMenuTarget;
+
+            if (card is not { HasResume: true })
+            {
+                e.Cancel = true;
+                return;
+            }
+
+            if (sender is not ContextMenu menu) return;
+
+            foreach (var item in menu.Items.OfType<MenuItem>())
+            {
+                if (string.Equals(item.Name, OpenProgrammeItemName, StringComparison.Ordinal))
+                    item.IsVisible = card.IsEpisode;
+            }
+        }
+
+        /// <summary>
+        /// The menu item that opens an episode's programme. Matched by name rather than by index,
+        /// so adding another item cannot silently start hiding the wrong one.
+        /// </summary>
+        private const string OpenProgrammeItemName = "OpenProgrammeItem";
+
+        private async void OpenProgramme_Click(object? sender, RoutedEventArgs e)
+        {
+            if (_cardMenuTarget is not { IsEpisode: true } episode) return;
+
+            await ShowEpisodesProgrammeAsync(episode);
+        }
+
+        /// <summary>
+        /// Carries on watching an episode from the Continue watching row: the stream, in a player,
+        /// from where the server says it was left.
+        /// </summary>
+        /// <remarks>
+        /// It goes through <see cref="StreamPlayback"/> rather than launching a player itself, and
+        /// that is the point of that class existing. Playing and following are two calls, and this
+        /// is the second entry point into playback for an episode — a copy of the wiring here that
+        /// forgot the second call would give a viewer an episode that plays perfectly and reports
+        /// nothing, which is precisely the bug television already had once.
+        ///
+        /// Every failure is shown rather than logged and swallowed. This row is the first thing on
+        /// the page and the likeliest thing to be clicked on a laptop away from home, so "the
+        /// server is not there" has to arrive as a sentence and not as a click that did nothing.
+        /// </remarks>
+        private async Task ResumeEpisodeAsync(UiMovie card)
+        {
+            if (card.RemoteId is not { Length: > 0 } itemId) return;
+
+            if (_jellyfin is null)
+            {
+                await MessageBoxWindow.ShowAsync(this, "UrDatabase", "No Jellyfin server is configured.");
+                return;
+            }
+
+            try
+            {
+                using var deadline = CancellationTokenSource.CreateLinkedTokenSource(_cts.Token);
+                deadline.CancelAfter(TimeSpan.FromSeconds(12));
+
+                // A stream URL is only valid with a token, and the token comes from a sign-in.
+                await _jellyfin.ConnectAsync(deadline.Token);
+
+                // Not awaited: it lasts as long as the episode does. Given the window's lifetime
+                // rather than this click's, so browsing on does not stop the reporting — and so
+                // closing the app does, with a last word.
+                _ = StreamPlayback.Start(_jellyfin, itemId, card.ResumePositionTicks, _cts.Token);
+
+                SetStatus(PlayPrompts.PlayingFromTheRow(card, MediaPlayerLauncher.CanResumeHere()));
+            }
+            catch (OperationCanceledException)
+            {
+                // The window is closing.
+            }
+            catch (MediaPlayerNotFoundException ex)
+            {
+                await MessageBoxWindow.ShowAsync(this, "UrDatabase", ex.Message);
+            }
+            catch (JellyfinException ex)
+            {
+                await MessageBoxWindow.ShowAsync(
+                    this,
+                    "UrDatabase",
+                    $"{ex.Message} This episode will play again once the server is back.");
+            }
+            catch (Exception ex)
+            {
+                // Deliberately not the URL, which contains an access token.
+                AppLog.Write("jellyfin.log", $"playback failed: {JellyfinClient.Redact(ex.Message)}");
+                await MessageBoxWindow.ShowAsync(this, "UrDatabase", $"Could not start playback:{Environment.NewLine}{ex.Message}");
+            }
         }
 
         private void DismissFromRow_Click(object? sender, RoutedEventArgs e) => DismissFromRow(_cardMenuTarget);
