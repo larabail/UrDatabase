@@ -41,6 +41,9 @@ namespace UrDatabase.Models
 
         public string OmdbApiKey { get; set; } = "";
 
+        /// <summary>UrActor, for the Academy Award nominations under the poster.</summary>
+        public string UrActorApiKey { get; set; } = "";
+
         /// <summary>
         /// Prefills the screen from the user's own configuration file. Takes the raw config
         /// rather than the resolved one so that a key coming from the environment, or compiled
@@ -65,7 +68,8 @@ namespace UrDatabase.Models
                 ApiKey = jellyfin.ApiKey ?? "",
                 LibraryName = jellyfin.LibraryName ?? "",
                 TmdbApiKey = config.TmdbApiKey ?? "",
-                OmdbApiKey = config.OmdbApiKey ?? ""
+                OmdbApiKey = config.OmdbApiKey ?? "",
+                UrActorApiKey = config.UrActorApiKey ?? ""
             };
 
             foreach (var folder in folders) choices.Folders.Add(folder);
@@ -163,10 +167,16 @@ namespace UrDatabase.Models
                 TmdbImageSize = source.TmdbImageSize,
 
                 // Carried rather than asked about. This screen has no field for the SFTP account
-                // uploading needs, and the file is rewritten whole, so anything not copied across
-                // here is deleted the first time somebody presses Save — silently, and long after
-                // they configured it.
+                // uploading needs, nor for the update check, and the file is rewritten whole, so
+                // anything not copied across here is deleted the first time somebody presses Save —
+                // silently, and long after they configured it.
                 JellyfinSftp = source.JellyfinSftp ?? new JellyfinSftpSettings(),
+
+                // Worse than an ordinary lost setting, because there is no control for it anywhere:
+                // editing the file is the only way to turn the update check off, so defaulting it
+                // back to true here would undo the one place the choice was ever expressed, and
+                // start contacting GitHub from an install deliberately kept off the network.
+                CheckForUpdates = source.CheckForUpdates,
 
                 // An unticked source is stored as nothing at all rather than left behind, so that
                 // turning Jellyfin off in this screen really does stop the app contacting it.
@@ -175,6 +185,7 @@ namespace UrDatabase.Models
 
                 TmdbApiKey = (TmdbApiKey ?? "").Trim(),
                 OmdbApiKey = (OmdbApiKey ?? "").Trim(),
+                UrActorApiKey = (UrActorApiKey ?? "").Trim(),
 
                 SetupCompleted = true
             };

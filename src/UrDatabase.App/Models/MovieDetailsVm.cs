@@ -143,5 +143,21 @@ namespace UrDatabase.Models
         /// is the wrong sentence for by far the commonest case: nothing was ever asked.
         /// </remarks>
         public bool TmdbConfigured { get; set; }
+
+        /// <summary>
+        /// What is known about the copy itself — picture size, codecs, audio and subtitle
+        /// languages. Measured by the server for a Jellyfin film and read off the filename for a
+        /// scanned one, which is a claim rather than a measurement; <c>MediaFlags</c> knows the
+        /// difference and says so in the tooltip. Null for a film nothing has described.
+        /// </summary>
+        public MediaInfo? Media { get; set; }
+
+        /// <summary>
+        /// What the Academy made of the film. Empty for the great majority of films, for an
+        /// install with no UrActor key, and whenever the archive could not be reached — the screen
+        /// shows nothing in all three cases rather than distinguishing between them, because
+        /// "no awards" is the truthful reading of all three from the user's side.
+        /// </summary>
+        public OscarHonours Awards { get; set; } = OscarHonours.None;
     }
 }

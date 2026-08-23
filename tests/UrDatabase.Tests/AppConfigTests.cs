@@ -177,6 +177,15 @@ namespace UrDatabase.Tests
         }
 
         [Fact]
+        public void The_update_check_is_on_unless_a_file_says_otherwise()
+        {
+            // On by default because an app that cannot update itself and never says it is out of
+            // date leaves people on a build whose bugs are already fixed. Off is a real answer.
+            Assert.True(AppConfig.Load(WriteConfig(@"{ ""WatchFolders"": [] }")).CheckForUpdates);
+            Assert.False(AppConfig.Load(WriteConfig(@"{ ""CheckForUpdates"": false }")).CheckForUpdates);
+        }
+
+        [Fact]
         public void Watch_folders_are_expanded_and_blank_entries_dropped()
         {
             var path = WriteConfig(@"{ ""WatchFolders"": [ ""%USERPROFILE%\\Movies"", """" ] }");

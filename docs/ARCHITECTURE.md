@@ -56,9 +56,10 @@ Avalonia replaces WPF. The differences that mattered during the port:
 | `JellyfinDiagnostics` | Names which of five connection failures happened, and what to try about it. |
 | `JellyfinUploader` / `ISftpTransport` | Copies a film onto the Jellyfin server's disk over SFTP, then asks the server to rescan. Everything above the socket talks to the interface, so the whole of it is tested against a fake filesystem; `SshNetSftpTransport` is the only implementation that opens a connection. |
 | `KnownHosts` | Reads OpenSSH's `known_hosts` and decides whether the key a server offered is the one it offered last time. Pure, so the file's awkward corners — the bracketed `[host]:port` form, hashed entries, `@revoked` — are testable without a server. |
-| `PlatformPaths` | Every filesystem location, resolved per platform. Expands `%APPDATA%` and `~`. |
+| `PlatformPaths` | Every filesystem location, resolved per platform. Expands `%APPDATA%` and `~`. `URDATABASE_DATA_DIR` moves the whole install, which is the only way to launch the app without opening the real one. |
 | `Database` | Opens the SQLite database, applies `Data/schema.sql` idempotently, and migrates an existing library. The schema script is all `CREATE ... IF NOT EXISTS`, so it cannot add a column to a table somebody already has — `Migrate` does that. |
 | `ScanService` | Walks watch folders and upserts the `files` table, skipping unreadable directories. A completed scan stamps `files.missing_since` on every row it did not find under a folder it actually walked. |
+| `DiscardedNames` | Finds and removes a catalogue row that is only another row's discarded name and holds nothing of its own — the empty duplicate a rename can leave behind. |
 | `MissingFilms` | What the library does about a film whose every file a scan could not find: leave it alone, keep it as a server film, or take it out of the library. Pure. |
 | `SeriesLoader` | Fetches one series' seasons and episodes when it is opened rather than during a sync, caches them, and falls back to the cache when the server cannot be reached. |
 | `SeriesGrouping` | Turns a server's seasons and episodes into the list the series screen shows: episodes filed under the right season even when the server numbered neither, and specials last. Pure. |
@@ -69,7 +70,12 @@ Avalonia replaces WPF. The differences that mattered during the port:
 | `PosterAutoLoader` | Fills in missing posters in the background. |
 | `ImageLoader` | Loads posters and backdrops from a URL or local file into an Avalonia bitmap. |
 | `MovieFileMatcher` | Matches a catalogue entry to a file on disk. |
-| `FileLauncher` | Opens a movie in the default player, per platform. |
+| `FileLauncher` | Opens a movie in the default player, per platform, and a web address in the default browser — only `http` and `https`, because every URL it is given comes out of an API response. |
+| `AppVersion` | Which version is running, and which of two versions is newer. The same rules `web/downloads/releases.js` applies to the same tags, so the app and the downloads page cannot disagree about one release. |
+| `UpdateFeed` | Turns GitHub's list of releases into the newest one carrying a build for this machine. Pure, including which runtime identifier this computer wants. |
+| `UpdateService` | The one request behind that: the releases API, once per launch, every failure answered as "no update". |
+| `UpdateDownloader` | Fetches a release asset into the downloads folder through a `.part` file. Does not install it; nothing here can. |
+| `UpdatePrompt` / `UpdateState` | What the banner says, whether it appears at all, and the one version a user has dismissed. |
 | `BuildKeys` | Reads API keys compiled in at build time. |
 | `AppLog` | Best-effort diagnostics under the app data folder. |
 
@@ -156,12 +162,15 @@ writes to `AppContext.BaseDirectory` under any circumstance.
 The app runs with no file at all, falling back to platform defaults.
 
 API keys resolve most specific first: the loaded `appsettings.json`, then the
-`URDATABASE_TMDB_API_KEY` / `URDATABASE_OMDB_API_KEY` environment variables, then whatever was
-compiled in at build time. Compiled-in keys default to empty, so a local build needs no secrets.
+`URDATABASE_TMDB_API_KEY`, `URDATABASE_OMDB_API_KEY` and `URDATABASE_URACTOR_API_KEY`
+environment variables, then whatever was compiled in at build time. Compiled-in keys default to
+empty, so a local build needs no secrets.
 
 ## Attribution
 
 TMDB's API terms require attribution, shown in the main window footer and the details window:
 *"This product uses the TMDB API but is not endorsed or certified by TMDB."* OMDb is credited as
 the source of the IMDb rating. Neither IMDb nor OMDb endorses this application, and IMDb's logo
-and wordmark are not used.
+and wordmark are not used. UrActor is credited under the awards list as the source of the
+Academy Award nominations; the Academy does not endorse this application either, and no Oscar
+statuette, logo or wordmark is used.

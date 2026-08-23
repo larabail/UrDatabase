@@ -61,6 +61,7 @@ namespace UrDatabase.Views
             LibraryBox.Text = _choices.LibraryName;
             TmdbKeyBox.Text = _choices.TmdbApiKey;
             OmdbKeyBox.Text = _choices.OmdbApiKey;
+            UrActorKeyBox.Text = _choices.UrActorApiKey;
 
             if (!firstRun)
             {
@@ -135,6 +136,7 @@ namespace UrDatabase.Views
             _choices.LibraryName = LibraryBox.Text ?? "";
             _choices.TmdbApiKey = TmdbKeyBox.Text ?? "";
             _choices.OmdbApiKey = OmdbKeyBox.Text ?? "";
+            _choices.UrActorApiKey = UrActorKeyBox.Text ?? "";
 
             LocalPanel.IsEnabled = _choices.UseLocalFolders;
             JellyfinPanel.IsEnabled = _choices.UseJellyfin;

@@ -289,6 +289,7 @@ covered here.
 | --- | --- | --- |
 | `TMDB_API_KEY` | `pr.yml` test builds, `release.yml` | Set |
 | `OMDB_API_KEY` | `pr.yml` test builds, `release.yml` | Set |
+| `URACTOR_API_KEY` | `pr.yml` test builds, `release.yml` | Optional; absent means no awards |
 | `MACOS_DEVELOPER_ID_CERT_P12_BASE64` | macOS signing, both workflows | **Missing — see below** |
 | `MACOS_DEVELOPER_ID_CERT_PASSWORD` | macOS signing, both workflows | **Missing — see below** |
 | `APP_STORE_CONNECT_KEY_ID` | notarization, `release.yml` | **Missing — see below** |
@@ -304,16 +305,17 @@ would be a step that fails for a reason nobody could act on.
 
 ### The five signing secrets are actually secret
 
-Unlike the two API keys below, these are not published in any build and must
+Unlike the API keys below, these are not published in any build and must
 never be. The certificate's private key and the App Store Connect key can each
 be used to sign software as this developer, which is a different and much larger
 thing than reading somebody's film metadata. They are used only on the macOS
 runner, imported into a keychain created for that one run and deleted
 afterwards whether the run succeeded or not.
 
-### The two API keys are not secret once shipped
+### The metadata API keys are not secret once shipped
 
-`TMDB_API_KEY` and `OMDB_API_KEY` are compiled into the published binaries so
+`TMDB_API_KEY`, `OMDB_API_KEY` and `URACTOR_API_KEY` are compiled into the
+published binaries so
 that an official download works the moment it is opened, with no account to
 create and no configuration file to write. **They can be extracted from any
 shipped build by anybody who wants them.** That is inherent to the approach and
@@ -328,13 +330,13 @@ until it is replaced.
 Consequences worth knowing:
 
 - Pull requests **from forks cannot read secrets**. An outside contributor's
-  test builds are produced with both keys empty and start with no metadata,
-  posters or ratings. That is expected, it is not a failure, and nothing in the
+  test builds are produced with every key empty and start with no metadata,
+  posters, ratings or awards. That is expected, it is not a failure, and nothing in the
   pipeline treats it as one. The build log says so, and so does the pull
   request's job summary.
-- `dotnet test` is **never** given the keys. The test suite drives the TMDB and
-  OMDb clients through fake HTTP handlers, so it must keep passing with both
-  unset — that is what proves the fakes are actually in the path. Please do not
+- `dotnet test` is **never** given the keys. The test suite drives the TMDB,
+  OMDb and UrActor clients through fake HTTP handlers, so it must keep passing
+  with all of them unset — that is what proves the fakes are actually in the path. Please do not
   "fix" this by adding them.
 - Everything in this repository and in its workflow logs is world-readable. The
   keys are passed to MSBuild from `env:`, never interpolated into a `run:` line.

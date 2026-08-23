@@ -352,6 +352,94 @@
         <Setter Property="FontSize" Value="13"/>
     </Style>
 
+    <!--
+        The media badges beside those numbers: 4K, HDR10, HEVC, ATMOS 5.1, EN.
+
+        A chip rather than another labelled column, because there are up to a
+        dozen of them and a dozen columns would push the ratings off the window.
+        They are also a different kind of statement from the facts they sit
+        beside — a rating is a measurement of the film, and these describe the
+        particular copy of it on this disk.
+
+        Deliberately colourless. Brass is spent on the focus ring, the primary
+        action, running progress and the IMDb rating, and a row of gold chips
+        would leave the accent meaning nothing at all. The border does the work.
+    -->
+    <Style Selector="Border.flag">
+        <Setter Property="Background" Value="{DynamicResource FeltBrush}"/>
+        <Setter Property="BorderBrush" Value="{DynamicResource EdgeBrush}"/>
+        <Setter Property="BorderThickness" Value="1"/>
+        <Setter Property="CornerRadius" Value="{DynamicResource RadiusSmall}"/>
+        <Setter Property="Padding" Value="7,3"/>
+        <Setter Property="Margin" Value="0,0,6,5"/>
+    </Style>
+
+    <Style Selector="Border.flag TextBlock.flagText">
+        <Setter Property="FontFamily" Value="{DynamicResource MonoFont}"/>
+        <Setter Property="FontSize" Value="10.5"/>
+        <Setter Property="LetterSpacing" Value="0.6"/>
+        <Setter Property="Foreground" Value="{DynamicResource ProseBrush}"/>
+    </Style>
+
+    <!--
+        Languages read quieter than the picture and sound chips, and subtitles
+        quieter still, so the row has an order to it rather than being twelve
+        identical rectangles. A subtitle chip is outlined only — the difference
+        between hearing a film in a language and reading it in one is worth a
+        glance, and it is carried by fill and weight rather than by hue.
+    -->
+    <Style Selector="Border.flag.lang TextBlock.flagText">
+        <Setter Property="Foreground" Value="{DynamicResource DimBrush}"/>
+    </Style>
+
+    <Style Selector="Border.flag.sub">
+        <Setter Property="Background" Value="Transparent"/>
+    </Style>
+
+    <Style Selector="Border.flag.sub TextBlock.flagText">
+        <Setter Property="Foreground" Value="{DynamicResource DimBrush}"/>
+    </Style>
+
+    <!-- ============================================================== -->
+    <!--  the awards list under the poster                              -->
+    <!-- ============================================================== -->
+
+    <!--
+        A win and a nomination are told apart three ways — a star against a
+        middle dot, bone against dim, and the category set in the display serif
+        for a win — and by colour not at all. The rule the connection
+        indicators already follow: a difference carried only by hue is no
+        difference to about one man in twelve.
+    -->
+    <Style Selector="TextBlock.awardMark">
+        <Setter Property="FontSize" Value="11"/>
+        <Setter Property="Foreground" Value="{DynamicResource DimBrush}"/>
+        <Setter Property="VerticalAlignment" Value="Top"/>
+        <Setter Property="Margin" Value="0,1,0,0"/>
+    </Style>
+
+    <Style Selector="TextBlock.awardMark.won">
+        <Setter Property="Foreground" Value="{DynamicResource BoneBrush}"/>
+        <Setter Property="FontSize" Value="12"/>
+    </Style>
+
+    <Style Selector="TextBlock.awardCategory">
+        <Setter Property="FontSize" Value="11.5"/>
+        <Setter Property="LineHeight" Value="15"/>
+        <Setter Property="Foreground" Value="{DynamicResource ProseBrush}"/>
+    </Style>
+
+    <Style Selector="TextBlock.awardCategory.won">
+        <Setter Property="Foreground" Value="{DynamicResource BoneBrush}"/>
+    </Style>
+
+    <Style Selector="TextBlock.awardDetail">
+        <Setter Property="FontFamily" Value="{DynamicResource MonoFont}"/>
+        <Setter Property="FontSize" Value="10"/>
+        <Setter Property="LineHeight" Value="14"/>
+        <Setter Property="Foreground" Value="{DynamicResource DimBrush}"/>
+    </Style>
+
     <!-- ============================================================== -->
     <!--  scrolling                                                     -->
     <!-- ============================================================== -->

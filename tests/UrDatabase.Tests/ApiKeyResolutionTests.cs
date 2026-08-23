@@ -21,7 +21,8 @@ namespace UrDatabase.Tests
             Directory.CreateDirectory(_dir);
             _environment = new EnvironmentVariableScope(
                 PlatformPaths.TmdbApiKeyVariable,
-                PlatformPaths.OmdbApiKeyVariable);
+                PlatformPaths.OmdbApiKeyVariable,
+                PlatformPaths.UrActorApiKeyVariable);
         }
 
         public void Dispose()
@@ -99,6 +100,21 @@ namespace UrDatabase.Tests
             // Guards the contributor experience: `dotnet build` with no keys must stay valid.
             Assert.Equal("", BuildKeys.Read(typeof(AppConfig).Assembly, BuildKeys.TmdbMetadataName));
             Assert.Equal("", BuildKeys.Read(typeof(AppConfig).Assembly, BuildKeys.OmdbMetadataName));
+            Assert.Equal("", BuildKeys.Read(typeof(AppConfig).Assembly, BuildKeys.UrActorMetadataName));
+        }
+
+        [Fact]
+        public void The_uractor_key_follows_the_same_chain_as_the_other_two()
+        {
+            Environment.SetEnvironmentVariable(PlatformPaths.UrActorApiKeyVariable, "uractor-environment");
+
+            var fromFile = Path.Combine(_dir, "from-file.json");
+            File.WriteAllText(fromFile, @"{ ""UrActorApiKey"": ""uractor-file"" }");
+            Assert.Equal("uractor-file", AppConfig.Load(fromFile).UrActorApiKey);
+
+            var blank = Path.Combine(_dir, "blank.json");
+            File.WriteAllText(blank, @"{ ""UrActorApiKey"": """" }");
+            Assert.Equal("uractor-environment", AppConfig.Load(blank).UrActorApiKey);
         }
 
         [Fact]
@@ -117,6 +133,7 @@ namespace UrDatabase.Tests
 
             Assert.Equal("", config.TmdbApiKey);
             Assert.Equal("", config.OmdbApiKey);
+            Assert.Equal("", config.UrActorApiKey);
             Assert.False(string.IsNullOrWhiteSpace(config.DatabasePath));
         }
     }

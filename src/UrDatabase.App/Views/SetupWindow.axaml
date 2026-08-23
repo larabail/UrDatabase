@@ -295,6 +295,21 @@
                             </StackPanel>
                         </Grid>
 
+                        <!-- Third, and on its own row rather than crammed into the pair above,
+                             because it buys the least: no posters and no plot without the first
+                             two, against a list of awards most films never had. -->
+                        <StackPanel Margin="0,12,0,0">
+                            <TextBlock Classes="label" Text="URACTOR API KEY" Margin="0,0,0,5"/>
+                            <TextBox x:Name="UrActorKeyBox"
+                                     Classes="field mono"
+                                     PasswordChar="•"
+                                     TextChanged="Text_Changed"/>
+                            <TextBlock Classes="dim"
+                                       FontSize="11"
+                                       Margin="0,5,0,0"
+                                       Text="Academy Award nominations, shown under the poster. Free from developer.uractor.com."/>
+                        </StackPanel>
+
                         <TextBlock Classes="dim"
                                    Margin="0,12,0,0"
                                    Text="Keys are written to this machine's settings file only. A Jellyfin library needs neither: the server describes its own films."/>
