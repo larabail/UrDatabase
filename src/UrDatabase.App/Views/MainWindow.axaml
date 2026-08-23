@@ -39,7 +39,7 @@
                         PointerPressed="MovieCard_Click"
                         ToolTip.Tip="{Binding Title}">
                 <Grid>
-                    <ctrls:PosterCard SourcePath="{Binding PosterPath}"
+                    <ctrls:PosterCard SourcePath="{Binding DisplayPosterPath}"
                                       Title="{Binding Title}"
                                       Year="{Binding Year}"/>
 
@@ -51,26 +51,56 @@
                             BorderThickness="1"
                             BorderBrush="Transparent"/>
 
-                    <!-- Says which films are not on this machine. Without it a
-                         server film looks identical to a local one right up
-                         until the network is gone. Filled rather than
-                         outlined, because the question it answers — will this
-                         play on a train — has to be answerable from six feet
-                         away without reading. -->
-                    <Border Background="{StaticResource AwayBrush}"
-                            CornerRadius="{StaticResource RadiusSmall}"
-                            Padding="6,2"
-                            Margin="0,8,8,0"
-                            HorizontalAlignment="Right"
-                            VerticalAlignment="Top"
-                            IsVisible="{Binding IsRemote}">
-                        <TextBlock Text="{Binding SourceLabel}"
-                                   Foreground="{StaticResource RoomBrush}"
-                                   FontFamily="{StaticResource MonoFont}"
-                                   FontSize="9.5"
-                                   FontWeight="SemiBold"
-                                   LetterSpacing="1"/>
-                    </Border>
+                    <!-- Where the film is. A film the server holds and this
+                         machine also holds is one card with both badges, so
+                         the pair reads as one fact each: the server has it,
+                         and it plays on a train.
+
+                         Nothing at all on a film that is only here, which is
+                         most of a local library — a badge on every card would
+                         be a wall of badges saying what the absence of the
+                         server badge already says. -->
+                    <StackPanel Orientation="Horizontal"
+                                Spacing="4"
+                                Margin="0,8,8,0"
+                                HorizontalAlignment="Right"
+                                VerticalAlignment="Top">
+
+                        <!-- Filled, because the question it answers — will
+                             this play when the laptop is away from home — has
+                             to be answerable from six feet away without
+                             reading. -->
+                        <Border Background="{StaticResource AwayBrush}"
+                                CornerRadius="{StaticResource RadiusSmall}"
+                                Padding="6,2"
+                                IsVisible="{Binding IsOnServer}">
+                            <TextBlock Text="{Binding ServerBadge}"
+                                       Foreground="{StaticResource RoomBrush}"
+                                       FontFamily="{StaticResource MonoFont}"
+                                       FontSize="9.5"
+                                       FontWeight="SemiBold"
+                                       LetterSpacing="1"/>
+                        </Border>
+
+                        <!-- Unfilled, and never on its own: it only ever
+                             appears beside the badge above, qualifying it.
+                             Spending a second solid colour here would put two
+                             competing marks on one poster and cost the away
+                             colour the one thing it means. -->
+                        <Border Background="{StaticResource RoomBrush}"
+                                BorderBrush="{StaticResource EdgeBrush}"
+                                BorderThickness="1"
+                                CornerRadius="{StaticResource RadiusSmall}"
+                                Padding="6,2"
+                                IsVisible="{Binding IsInBothPlaces}">
+                            <TextBlock Text="{Binding OfflineBadge}"
+                                       Foreground="{StaticResource BoneBrush}"
+                                       FontFamily="{StaticResource MonoFont}"
+                                       FontSize="9.5"
+                                       FontWeight="SemiBold"
+                                       LetterSpacing="1"/>
+                        </Border>
+                    </StackPanel>
                 </Grid>
 
                 <!-- Exactly two lines, always, as a fixed height rather than a

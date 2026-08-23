@@ -446,7 +446,7 @@ namespace UrDatabase.Views
         /// </summary>
         /// <remarks>
         /// The counts come from the whole library rather than the filtered view, or selecting
-        /// "On this computer" would leave the server's own control reading zero and there would
+        /// "Offline" would leave the server's own control reading zero and there would
         /// be nothing to say how to get back.
         /// </remarks>
         private void BuildSources()
@@ -524,9 +524,13 @@ namespace UrDatabase.Views
 
             foreach (var m in movies)
             {
-                // A server film is already described by the server, artwork included. Sending it
-                // to TMDB would ask for an answer the app already has, and would make a Jellyfin
-                // library depend on a TMDB key it has no reason to need.
+                // A film that is only on the server is already described by the server, artwork
+                // included. Sending it to TMDB would ask for an answer the app already has, and
+                // would make a Jellyfin library depend on a TMDB key it has no reason to need.
+                //
+                // A film that is in both places is not skipped: it is showing the server's poster
+                // only until the catalogue on this machine has one of its own, and that copy is
+                // the one that still has a poster with the server switched off.
                 if (m.IsRemote) continue;
                 if (!string.IsNullOrWhiteSpace(m.PosterPath)) continue;
 
@@ -953,17 +957,29 @@ namespace UrDatabase.Views
                     Title = m.Title,
                     Year = m.Year,
                     TmdbId = details?.Id ?? storedTmdbId,
-                    PosterPath = m.PosterPath,
+
+                    // The server's artwork when the catalogue has none of its own, which is what
+                    // the card is already showing.
+                    PosterPath = m.DisplayPosterPath,
                     Overview = details?.Overview ?? "",
                     Runtime = details?.Runtime,
                     ImdbId = details?.ImdbId,
                     Genres = details is null ? m.Genres ?? "" : CreditLine.Genres(details),
                     BackdropUrl = string.IsNullOrWhiteSpace(details?.BackdropPath) ? null
                                   : tmdb.BuildImageUrl(details!.BackdropPath!),
-                    TmdbConfigured = !string.IsNullOrWhiteSpace(_config.TmdbApiKey)
+                    TmdbConfigured = !string.IsNullOrWhiteSpace(_config.TmdbApiKey),
+
+                    // Opened from disk, and the server has a copy too. Said on the facts row, in
+                    // place of the badge the card carries.
+                    IsOnServer = m.IsOnServer
                 };
                 vm.TopCast = cast;
                 vm.KeyCrew = crew;
+
+                // Anything TMDB did not answer, and the server can. Before the IMDb lookup below,
+                // because the id it is keyed on may be one of the gaps the server just filled.
+                if (m.IsOnServer) FillFromServer(vm, m.RemoteId);
+
                 vm.ImdbRating = await LoadImdbRatingAsync(vm.ImdbId, m.Id, cts.Token);
 
                 // Both halves of the merge matter here: main's play-target resolution decides
@@ -976,13 +992,33 @@ namespace UrDatabase.Views
                 await ShowDetailsAsync(vm);
 
                 // The film may have been re-identified while the details screen was up, and the
-                // card behind it is still showing the poster that was wrong.
-                m.PosterPath = vm.PosterPath;
+                // card behind it is still showing the poster that was wrong. Only when the screen
+                // actually changed it: the poster handed to it may have been the server's, and
+                // writing that into the local column would leave the card claiming artwork this
+                // machine does not have and stop the loader ever fetching any.
+                if (!string.Equals(vm.PosterPath, m.DisplayPosterPath, StringComparison.Ordinal))
+                    m.PosterPath = vm.PosterPath;
             }
             catch (Exception ex)
             {
                 await MessageBoxWindow.ShowAsync(this, "UrDatabase", $"Could not load details:{Environment.NewLine}{ex.Message}");
             }
+        }
+
+        /// <summary>
+        /// Lets the server describe a film this machine also has, wherever nothing else could.
+        /// </summary>
+        /// <remarks>
+        /// A film in both places is one card, opened as a local film. Without this the fold would
+        /// have cost the user the server's description of it — the only description there is on an
+        /// install with no TMDB key, which is a supported install.
+        /// </remarks>
+        private void FillFromServer(MovieDetailsVm vm, string? remoteId)
+        {
+            if (string.IsNullOrWhiteSpace(remoteId)) return;
+            if (!_remoteById.TryGetValue(remoteId, out var film)) return;
+
+            ServerDetails.FillGaps(vm, film, id => _jellyfin?.BuildBackdropUrl(id));
         }
 
         /// <summary>

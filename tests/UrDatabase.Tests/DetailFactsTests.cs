@@ -105,6 +105,20 @@ namespace UrDatabase.Tests
         }
 
         /// <summary>
+        /// The card for a film in both places carries two badges. A details screen that mentioned
+        /// neither would be the one place the app went quiet about it.
+        /// </summary>
+        [Fact]
+        public void A_film_in_both_places_says_so_in_the_words_the_wall_uses()
+        {
+            var facts = DetailFacts.For(new MovieDetailsVm { Year = 1999, IsRemote = false, IsOnServer = true });
+
+            var where = Assert.Single(facts, f => f.Label == "WHERE");
+            Assert.Equal("Offline and on the server", where.Value);
+            Assert.Equal(DetailFactKind.Server, where.Kind);
+        }
+
+        /// <summary>
         /// Which fact is last depends on which ones the film has, and a hairline hanging off the
         /// end of the row is the giveaway that nobody checked.
         /// </summary>

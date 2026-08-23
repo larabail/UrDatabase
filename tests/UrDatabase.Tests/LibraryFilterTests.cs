@@ -22,6 +22,10 @@ namespace UrDatabase.Tests
         private static UiMovie Remote(string remoteId, string title) =>
             new() { Title = title, Source = MovieSource.Jellyfin, RemoteId = remoteId };
 
+        /// <summary>A film this machine has that the server has a copy of too: one card, both places.</summary>
+        private static UiMovie InBothPlaces(long id, string remoteId, string title) =>
+            new() { Id = id, Title = title, RemoteId = remoteId };
+
         private static readonly UiMovie[] Mixed =
         {
             Local(1, "Toy Story 5"),
@@ -43,7 +47,7 @@ namespace UrDatabase.Tests
             var local = LibraryFilter.Apply(Mixed, LibrarySource.ThisComputer);
 
             Assert.Equal(new[] { "Toy Story 5", "El Drama" }, local.Select(m => m.Title));
-            Assert.All(local, m => Assert.False(m.IsRemote));
+            Assert.All(local, m => Assert.True(m.IsOnThisComputer));
         }
 
         [Fact]
@@ -52,7 +56,24 @@ namespace UrDatabase.Tests
             var remote = LibraryFilter.Apply(Mixed, LibrarySource.Server);
 
             Assert.Equal(3, remote.Count);
-            Assert.All(remote, m => Assert.True(m.IsRemote));
+            Assert.All(remote, m => Assert.True(m.IsOnServer));
+        }
+
+        /// <summary>
+        /// A film in both places is one film, and it is genuinely at both. Leaving it out of
+        /// either list would make that list a lie: filter to the server and the film the server
+        /// holds would be missing, filter to Offline and a film that plays on a train would be.
+        /// </summary>
+        [Fact]
+        public void A_film_in_both_places_answers_to_both_controls()
+        {
+            var library = new[] { InBothPlaces(1, "a", "Toy Story 5"), Remote("b", "Ran") };
+
+            Assert.Single(LibraryFilter.Apply(library, LibrarySource.ThisComputer));
+            Assert.Equal(2, LibraryFilter.Apply(library, LibrarySource.Server).Count);
+
+            // And still one film in the library, not two.
+            Assert.Equal(2, LibraryFilter.Count(library, LibrarySource.Everywhere));
         }
 
         /// <summary>
@@ -82,6 +103,22 @@ namespace UrDatabase.Tests
             Assert.Empty(LibraryFilter.Available(null));
         }
 
+        /// <summary>
+        /// What a fully synced library looks like now that a film in both places is one card.
+        /// Three controls that each select every film are worse than no row: they invite a click
+        /// that appears to do nothing.
+        /// </summary>
+        [Fact]
+        public void The_row_is_not_offered_when_every_film_is_in_both_places()
+        {
+            var library = new[] { InBothPlaces(1, "a", "Toy Story 5"), InBothPlaces(2, "b", "El Drama") };
+
+            Assert.Empty(LibraryFilter.Available(library));
+
+            // One film that is only on the server is enough to make the choice real again.
+            Assert.Equal(3, LibraryFilter.Available(library.Append(Remote("c", "Ran")).ToArray()).Count);
+        }
+
         [Fact]
         public void The_row_leads_with_everywhere()
         {
@@ -95,12 +132,19 @@ namespace UrDatabase.Tests
             Assert.Equal(0, LibraryFilter.Count(null, LibrarySource.Everywhere));
         }
 
+        /// <summary>
+        /// The control is named after what it promises rather than after a place, because a film
+        /// can be here and on the server at once — and it has to say the same word as the badge
+        /// on those films, or the row stops explaining the wall.
+        /// </summary>
         [Fact]
         public void Every_source_has_a_name_fit_to_put_on_a_control()
         {
             Assert.Equal("Everywhere", LibraryFilter.Label(LibrarySource.Everywhere));
-            Assert.Equal("On this computer", LibraryFilter.Label(LibrarySource.ThisComputer));
+            Assert.Equal("Offline", LibraryFilter.Label(LibrarySource.ThisComputer));
             Assert.Equal("On the server", LibraryFilter.Label(LibrarySource.Server));
+
+            Assert.Equal(UiMovie.OfflineTag, LibraryFilter.Label(LibrarySource.ThisComputer));
         }
 
         /// <summary>
