@@ -1561,6 +1561,11 @@ namespace UrDatabase.Views
                     DownloadFolder = _config.DownloadFolder,
                     DatabasePath = _config.DatabasePath,
 
+                    // Taken off the card rather than looked up again, so the button and the shelf
+                    // it was clicked from can never disagree about where this film was left.
+                    ResumePositionTicks = m.ResumePositionTicks,
+                    ResumeNote = m.ResumeNote,
+
                     // The server has described its own cast and crew since the sync that cached
                     // it. Nothing used to ask for them, so every film from a server showed an
                     // empty list as though it genuinely had none.
