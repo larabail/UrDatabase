@@ -55,6 +55,14 @@ It runs on Windows and macOS from one codebase, built with
   literally instead of being read as search operators, and the word you are
   still typing matches by prefix (`Services/FtsQuery`). Films from a Jellyfin
   server are matched alongside them, on title and genre.
+
+  The query runs off the interface thread, and only once the box has been quiet
+  for 200ms, so typing stays smooth on a library of any size. A search you have
+  moved on from is cancelled, and its results are refused even if it finishes
+  after the one that replaced it — what you end up looking at is always the last
+  thing you typed, never the last query to come back
+  (`Services/SearchCoordinator`, `Services/LibraryLoader`,
+  `Services/MovieRepository`).
 - **It says why something is missing.** A local film's plot, cast and crew come
   from TMDB, so an install with no TMDB key has none — and the screen says that,
   and says which setting fixes it, rather than reporting "none found" for a
@@ -549,7 +557,8 @@ src/UrDatabase.App/          the application: one cross-platform project
   Styles/                    Tokens.axaml: every colour, face and metric.
                              Theme.axaml: the shared control styles
   Models/                    what the views bind to
-  Services/                  config, SQLite, scanning, TMDB, OMDb, Jellyfin, posters
+  Services/                  config, SQLite, scanning, search, TMDB, OMDb,
+                             Jellyfin, posters
   Assets/UrDatabase.icns     the macOS application icon
   Data/schema.sql            the full schema, applied on first launch
   appsettings.example.json   configuration template, copied to the user's data
@@ -620,6 +629,14 @@ Stated plainly, so nobody has to find out by using it:
 - **Windows builds are not signed.** SmartScreen warns on first run and there
   is no way around it short of a Windows code signing certificate. The macOS
   side of this closed in 0.2.1; the Windows side has not.
+- **Nothing on the library page is virtualised, so a very large library is slow
+  to draw.** Every film on screen gets a real poster card, built up front,
+  whether or not it has been scrolled to. Querying is no longer the expensive
+  part — typing stays smooth on any size of library — but drawing is: around two
+  thousand films the shelves take about half a second to lay out, and at ten
+  thousand and up the window becomes unusable and the process grows to several
+  gigabytes. A search narrow enough to be useful is unaffected. Fixing it means
+  virtualising the shelves and the result list, which is a change to the view.
 
 ## Licence
 
