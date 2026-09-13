@@ -960,6 +960,12 @@ namespace UrDatabase.Views
             vm.Runtime = details.Runtime;
             vm.ImdbId = details.ImdbId;
             vm.Genres = CreditLine.Genres(details);
+
+            // Written to the catalogue, not just to the screen. The automatic match may already
+            // have filed this film under the genres of the film it wrongly picked, and those are
+            // exactly what the person is correcting; leaving them would put the film on the wrong
+            // shelf permanently, since nothing asks TMDB about a film that already has a poster.
+            await SaveGenresAsync(vm, CreditLine.Genres(details), cts.Token);
             vm.BackdropUrl = string.IsNullOrWhiteSpace(details.BackdropPath) ? null : tmdb.BuildImageUrl(details.BackdropPath!);
             vm.TopCast = CreditLine.Cast(credits);
             vm.KeyCrew = CreditLine.Crew(credits);
@@ -1028,11 +1034,31 @@ namespace UrDatabase.Views
             try
             {
                 using var conn = Database.Open(_dbPath);
-                await MovieMatch.SaveAsync(conn, vm.LocalId, tmdbId, posterPath, title, ct);
+                await MovieMatch.SaveAsync(conn, vm.LocalId, tmdbId, posterPath, title, ct: ct);
             }
             catch (Exception ex)
             {
                 AppLog.Write("posters.log", $"could not save tmdb match {tmdbId} for movie {vm.LocalId}: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Files the film under the genres of the film the user just chose. Reported to the log
+        /// rather than to them, on the same reasoning as the match above: the correction itself has
+        /// already succeeded and the screen in front of them is right.
+        /// </summary>
+        private async Task SaveGenresAsync(MovieDetailsVm vm, string? genres, CancellationToken ct)
+        {
+            if (string.IsNullOrWhiteSpace(_dbPath) || vm.LocalId <= 0) return;
+
+            try
+            {
+                using var conn = Database.Open(_dbPath);
+                await MovieMatch.SaveGenresAsync(conn, vm.LocalId, genres, ct);
+            }
+            catch (Exception ex)
+            {
+                AppLog.Write("posters.log", $"could not save genres for movie {vm.LocalId}: {ex.Message}");
             }
         }
     }

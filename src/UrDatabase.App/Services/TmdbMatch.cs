@@ -48,6 +48,20 @@ namespace UrDatabase.Services
 
             [JsonPropertyName("overview")] public string? Overview { get; init; }
 
+            /// <summary>
+            /// TMDB's genre ids for the film, which a search result carries and a details request
+            /// would otherwise have to be made for.
+            /// </summary>
+            /// <remarks>
+            /// Ids and not names: <c>/search/movie</c> gives only the numbers, and the names come
+            /// from a list that is the same for every film and is fetched once per run of the app
+            /// — see <see cref="TmdbService.GenreNamesAsync"/>. That is what keeps genres free. The
+            /// alternative, asking <c>/movie/{id}</c> per film for the spelled-out names, would
+            /// double the number of requests a library makes, and on a few thousand films that is
+            /// the difference between filling the column in and being rate limited while trying.
+            /// </remarks>
+            [JsonPropertyName("genre_ids")] public List<int>? GenreIds { get; init; }
+
             /// <summary>The release year, when the date is present and parses. Null otherwise.</summary>
             [JsonIgnore] public int? Year => ParseYear(ReleaseDate);
         }

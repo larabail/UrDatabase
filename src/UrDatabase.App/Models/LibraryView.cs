@@ -26,13 +26,15 @@ namespace UrDatabase.Models
             IReadOnlyList<UiMovie> local,
             IReadOnlyList<UiMovie> remote,
             IReadOnlyList<UiMovie> all,
-            string status)
+            string status,
+            LibraryTally? tally = null)
         {
             Query = query;
             Local = local ?? Array.Empty<UiMovie>();
             Remote = remote ?? Array.Empty<UiMovie>();
             All = all ?? Array.Empty<UiMovie>();
             Status = status ?? "";
+            Tally = tally;
         }
 
         /// <summary>What was typed, exactly as typed. Null when nothing was.</summary>
@@ -61,5 +63,12 @@ namespace UrDatabase.Models
 
         /// <summary>The line under the library, including the wording for a read that failed.</summary>
         public string Status { get; }
+
+        /// <summary>
+        /// The numbers <see cref="Status"/> was written from, so the window can write it again as
+        /// artwork arrives. Null when the read failed: the status is then a message about the
+        /// failure, and there is nothing to count or to keep up to date.
+        /// </summary>
+        public LibraryTally? Tally { get; }
     }
 }

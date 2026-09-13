@@ -129,15 +129,17 @@ namespace UrDatabase.Services
             // disk, which is the whole of what this half of the line is about.
             var shown = all.Where(m => m.IsOnThisComputer).ToList();
 
-            var status = failure ?? LibraryStatus.Describe(
-                localCount: shown.Count,
-                localWithPosters: shown.Count(x => !string.IsNullOrWhiteSpace(x.PosterPath)),
-                remoteCount: matched.Count(x => x.IsFilm),
-                hasLocalDatabase: _repository.Exists,
-                databasePath: _repository.DatabasePath,
-                remoteSeriesCount: matched.Count(x => x.IsSeries));
+            // Carried rather than only rendered, because artwork keeps arriving after this read
+            // has been put on screen and the line has to be able to say so.
+            var tally = new LibraryTally(
+                LocalCount: shown.Count,
+                LocalWithPosters: shown.Count(x => !string.IsNullOrWhiteSpace(x.PosterPath)),
+                RemoteCount: matched.Count(x => x.IsFilm),
+                HasLocalDatabase: _repository.Exists,
+                DatabasePath: _repository.DatabasePath,
+                RemoteSeriesCount: matched.Count(x => x.IsSeries));
 
-            return new LibraryView(query, shown, matched, all, status);
+            return new LibraryView(query, shown, matched, all, failure ?? tally.Describe(), failure is null ? tally : null);
         }
 
         /// <summary>
