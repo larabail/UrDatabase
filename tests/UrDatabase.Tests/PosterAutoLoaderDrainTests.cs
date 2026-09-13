@@ -164,7 +164,7 @@ namespace UrDatabase.Tests
             using var loader = new PosterAutoLoader(Configured(), DbPath, maxConcurrency: 4, handler: handler);
 
             var reported = new ConcurrentBag<string?>();
-            loader.Queue(1, "Film 1", 1999, path => reported.Add(path), CancellationToken.None);
+            loader.Queue(1, "Film 1", 1999, found => reported.Add(found.PosterPath), CancellationToken.None);
             await handler.Entered;
 
             var stopping = loader.StopAsync(TimeSpan.FromSeconds(10));

@@ -245,6 +245,21 @@
                 </Grid>
             </StackPanel>
         </DataTemplate>
+        <!-- One row of that card, for the two grid views. The wrapping is done
+             in PosterGrid rather than by a WrapPanel, so the rows can be fed to
+             a VirtualizingStackPanel; a row is at most a screen wide, so the
+             cards inside it need no virtualising of their own. -->
+        <DataTemplate x:Key="PosterRowTemplate" DataType="models:PosterRow">
+            <ItemsControl ItemsSource="{Binding Items}"
+                          ItemTemplate="{StaticResource MovieCardTemplate}">
+                <ItemsControl.ItemsPanel>
+                    <ItemsPanelTemplate>
+                        <StackPanel Orientation="Horizontal"/>
+                    </ItemsPanelTemplate>
+                </ItemsControl.ItemsPanel>
+            </ItemsControl>
+        </DataTemplate>
+
     </Window.Resources>
 
     <Window.Styles>
@@ -612,149 +627,186 @@
                 </Grid>
             </Border>
 
-            <!-- The hall. -->
+            <!-- The hall.
+
+                 One scroller per view rather than one wrapping all of them.
+                 Exactly one of these is ever visible, so this costs nothing —
+                 and it is what makes the grids virtualisable: a
+                 VirtualizingStackPanel measures against the nearest scroll
+                 viewport, and inside a shared StackPanel it is handed infinite
+                 height, realises every card and virtualises nothing at all.
+
+                 Margin on the content rather than padding on the scroller:
+                 a ScrollViewer will not scroll into its own bottom padding,
+                 so the last shelf was unreachable behind the status bar. -->
             <Grid>
-                <!-- Margin on the content rather than padding on the scroller:
-                     a ScrollViewer will not scroll into its own bottom padding,
-                     so the last shelf was unreachable behind the status bar. -->
-                <ScrollViewer VerticalScrollBarVisibility="Auto"
+
+                <!-- SEARCH RESULTS (flat) -->
+                <ScrollViewer x:Name="SearchPanel"
+                              IsVisible="False"
+                              VerticalScrollBarVisibility="Auto"
                               Background="Transparent">
-                    <StackPanel Margin="24,24,0,24">
-
-                        <!-- SEARCH RESULTS (flat) -->
-                        <StackPanel x:Name="SearchPanel" IsVisible="False">
-                            <Grid ColumnDefinitions="Auto,12,*,12,Auto" Margin="0,0,24,12">
-                                <TextBlock Grid.Column="0"
-                                           Classes="display"
-                                           FontSize="20"
-                                           Text="Search"
-                                           VerticalAlignment="Center"/>
-                                <Rectangle Grid.Column="2"
-                                           Height="1"
-                                           Fill="{StaticResource EdgeBrush}"
-                                           VerticalAlignment="Center"/>
-                                <TextBlock Grid.Column="4"
-                                           x:Name="SearchCountText"
-                                           Classes="label"
-                                           VerticalAlignment="Center"/>
-                            </Grid>
-                            <ItemsControl ItemsSource="{Binding FlatResults}"
-                                          ItemTemplate="{StaticResource MovieCardTemplate}">
-                                <ItemsControl.ItemsPanel>
-                                    <ItemsPanelTemplate>
-                                        <WrapPanel/>
-                                    </ItemsPanelTemplate>
-                                </ItemsControl.ItemsPanel>
-                            </ItemsControl>
-                            <!-- A search that found nothing has to say so.
-                                 Silence reads as a broken search box. -->
-                            <TextBlock x:Name="NoResultsText"
-                                       Classes="body"
-                                       IsVisible="False"
-                                       Margin="0,4,24,0"/>
-                        </StackPanel>
-
-                        <!-- ALL GENRES (one shelf per genre) -->
-                        <StackPanel x:Name="GroupPanel" IsVisible="True">
-                            <ItemsControl ItemsSource="{Binding VisibleGroups}">
-                                <ItemsControl.ItemTemplate>
-                                    <DataTemplate DataType="models:GenreGroup">
-                                        <StackPanel Margin="0,0,0,12">
-                                            <!-- The rule runs from the heading
-                                                 out to the window edge, which
-                                                 is a Rectangle in the star
-                                                 column and is exactly as cheap
-                                                 as it looks. -->
-                                            <Grid ColumnDefinitions="Auto,12,*,12,Auto" Margin="0,0,24,12">
-                                                <TextBlock Grid.Column="0"
-                                                           Classes="display"
-                                                           FontSize="20"
-                                                           Text="{Binding Name}"
-                                                           VerticalAlignment="Center"/>
-                                                <Rectangle Grid.Column="2"
-                                                           Height="1"
-                                                           Fill="{StaticResource EdgeBrush}"
-                                                           VerticalAlignment="Center"/>
-                                                <TextBlock Grid.Column="4"
-                                                           Classes="label"
-                                                           Text="{Binding CountLabel}"
-                                                           VerticalAlignment="Center"/>
-                                            </Grid>
-                                            <ScrollViewer Classes="shelf">
-                                                <ItemsControl ItemsSource="{Binding Items}"
-                                                              ItemTemplate="{StaticResource MovieCardTemplate}">
-                                                    <ItemsControl.ItemsPanel>
-                                                        <ItemsPanelTemplate>
-                                                            <StackPanel Orientation="Horizontal"/>
-                                                        </ItemsPanelTemplate>
-                                                    </ItemsControl.ItemsPanel>
-                                                </ItemsControl>
-                                            </ScrollViewer>
-                                        </StackPanel>
-                                    </DataTemplate>
-                                </ItemsControl.ItemTemplate>
-                            </ItemsControl>
-                        </StackPanel>
-
-                        <!-- SINGLE GENRE (vertical flow) -->
-                        <StackPanel x:Name="SingleGenrePanel" IsVisible="False">
-                            <Grid ColumnDefinitions="Auto,12,*,12,Auto" Margin="0,0,24,12">
-                                <TextBlock Grid.Column="0"
-                                           Classes="display"
-                                           FontSize="20"
-                                           Text="{Binding SelectedGenre}"
-                                           VerticalAlignment="Center"/>
-                                <Rectangle Grid.Column="2"
-                                           Height="1"
-                                           Fill="{StaticResource EdgeBrush}"
-                                           VerticalAlignment="Center"/>
-                                <TextBlock Grid.Column="4"
-                                           x:Name="SingleGenreCountText"
-                                           Classes="label"
-                                           VerticalAlignment="Center"/>
-                            </Grid>
-                            <ItemsControl ItemsSource="{Binding SingleGenreItems}"
-                                          ItemTemplate="{StaticResource MovieCardTemplate}">
-                                <ItemsControl.ItemsPanel>
-                                    <ItemsPanelTemplate>
-                                        <WrapPanel/>
-                                    </ItemsPanelTemplate>
-                                </ItemsControl.ItemsPanel>
-                            </ItemsControl>
-                        </StackPanel>
-
-                        <!-- NOTHING SCANNED YET. A fresh install used to open
-                             on a blank grey page, which is indistinguishable
-                             from a scan that failed. -->
-                        <StackPanel x:Name="EmptyPanel"
-                                    IsVisible="False"
-                                    Margin="0,120,24,0"
-                                    MaxWidth="560"
-                                    HorizontalAlignment="Center">
-                            <TextBlock Classes="display"
-                                       FontSize="34"
-                                       TextAlignment="Center"
-                                       TextWrapping="Wrap"
-                                       Text="Nothing in the library yet"/>
-                            <TextBlock Classes="body"
-                                       TextAlignment="Center"
-                                       Margin="0,12,0,24"
-                                       Text="Point UrDatabase at the folders your films are in and scan them, or connect a Jellyfin server. Nothing is copied or moved — only what is found is recorded."/>
-                            <StackPanel Orientation="Horizontal"
-                                        Spacing="12"
-                                        HorizontalAlignment="Center">
-                                <Button Classes="primary"
-                                        Content="Choose folders"
-                                        Click="Settings_Click"/>
-                                <Button Classes="ghost"
-                                        Height="34"
-                                        Content="Scan now"
-                                        Click="ScanButton_Click"/>
-                            </StackPanel>
-                        </StackPanel>
-
+                    <StackPanel x:Name="SearchContent"
+                                Margin="24,24,0,24"
+                                SizeChanged="GridContent_SizeChanged">
+                        <Grid ColumnDefinitions="Auto,12,*,12,Auto" Margin="0,0,24,12">
+                            <TextBlock Grid.Column="0"
+                                       Classes="display"
+                                       FontSize="20"
+                                       Text="Search"
+                                       VerticalAlignment="Center"/>
+                            <Rectangle Grid.Column="2"
+                                       Height="1"
+                                       Fill="{StaticResource EdgeBrush}"
+                                       VerticalAlignment="Center"/>
+                            <TextBlock Grid.Column="4"
+                                       x:Name="SearchCountText"
+                                       Classes="label"
+                                       VerticalAlignment="Center"/>
+                        </Grid>
+                        <ItemsControl ItemsSource="{Binding SearchRows}"
+                                      ItemTemplate="{StaticResource PosterRowTemplate}">
+                            <ItemsControl.ItemsPanel>
+                                <ItemsPanelTemplate>
+                                    <VirtualizingStackPanel/>
+                                </ItemsPanelTemplate>
+                            </ItemsControl.ItemsPanel>
+                        </ItemsControl>
+                        <!-- A search that found nothing has to say so.
+                             Silence reads as a broken search box. -->
+                        <TextBlock x:Name="NoResultsText"
+                                   Classes="body"
+                                   IsVisible="False"
+                                   Margin="0,4,24,0"/>
                     </StackPanel>
                 </ScrollViewer>
+
+                <!-- ALL GENRES (one shelf per genre) -->
+                <ScrollViewer x:Name="GroupPanel"
+                              IsVisible="True"
+                              VerticalScrollBarVisibility="Auto"
+                              Background="Transparent">
+                    <StackPanel Margin="24,24,0,24">
+                        <!-- The shelves themselves are not virtualised, and
+                             deliberately: there is one per genre, so the count
+                             is the twenty-odd a server library brings rather
+                             than the size of the library. The cards inside each
+                             one are, which is where the thousands are. -->
+                        <ItemsControl ItemsSource="{Binding VisibleGroups}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate DataType="models:GenreGroup">
+                                    <StackPanel Margin="0,0,0,12">
+                                        <!-- The rule runs from the heading
+                                             out to the window edge, which
+                                             is a Rectangle in the star
+                                             column and is exactly as cheap
+                                             as it looks. -->
+                                        <Grid ColumnDefinitions="Auto,12,*,12,Auto" Margin="0,0,24,12">
+                                            <TextBlock Grid.Column="0"
+                                                       Classes="display"
+                                                       FontSize="20"
+                                                       Text="{Binding Name}"
+                                                       VerticalAlignment="Center"/>
+                                            <Rectangle Grid.Column="2"
+                                                       Height="1"
+                                                       Fill="{StaticResource EdgeBrush}"
+                                                       VerticalAlignment="Center"/>
+                                            <TextBlock Grid.Column="4"
+                                                       Classes="label"
+                                                       Text="{Binding CountLabel}"
+                                                       VerticalAlignment="Center"/>
+                                        </Grid>
+                                        <!-- VirtualizingStackPanel, not StackPanel. A
+                                             shelf is as long as its genre, and
+                                             Uncategorised holds the whole of a scanned
+                                             library until something enriches it — six
+                                             thousand films on one shelf realised six
+                                             thousand PosterCards, each with a gradient
+                                             brush of its own, and cost about two
+                                             gigabytes and a UI thread that never came
+                                             back. The plain panel measures every child
+                                             it is given; this one measures what the
+                                             viewport can show. -->
+                                        <ScrollViewer Classes="shelf">
+                                            <ItemsControl ItemsSource="{Binding Items}"
+                                                          ItemTemplate="{StaticResource MovieCardTemplate}">
+                                                <ItemsControl.ItemsPanel>
+                                                    <ItemsPanelTemplate>
+                                                        <VirtualizingStackPanel Orientation="Horizontal"/>
+                                                    </ItemsPanelTemplate>
+                                                </ItemsControl.ItemsPanel>
+                                            </ItemsControl>
+                                        </ScrollViewer>
+                                    </StackPanel>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </StackPanel>
+                </ScrollViewer>
+
+                <!-- SINGLE GENRE (vertical flow) -->
+                <ScrollViewer x:Name="SingleGenrePanel"
+                              IsVisible="False"
+                              VerticalScrollBarVisibility="Auto"
+                              Background="Transparent">
+                    <StackPanel x:Name="SingleGenreContent"
+                                Margin="24,24,0,24"
+                                SizeChanged="GridContent_SizeChanged">
+                        <Grid ColumnDefinitions="Auto,12,*,12,Auto" Margin="0,0,24,12">
+                            <TextBlock Grid.Column="0"
+                                       Classes="display"
+                                       FontSize="20"
+                                       Text="{Binding SelectedGenre}"
+                                       VerticalAlignment="Center"/>
+                            <Rectangle Grid.Column="2"
+                                       Height="1"
+                                       Fill="{StaticResource EdgeBrush}"
+                                       VerticalAlignment="Center"/>
+                            <TextBlock Grid.Column="4"
+                                       x:Name="SingleGenreCountText"
+                                       Classes="label"
+                                       VerticalAlignment="Center"/>
+                        </Grid>
+                        <ItemsControl ItemsSource="{Binding SingleGenreRows}"
+                                      ItemTemplate="{StaticResource PosterRowTemplate}">
+                            <ItemsControl.ItemsPanel>
+                                <ItemsPanelTemplate>
+                                    <VirtualizingStackPanel/>
+                                </ItemsPanelTemplate>
+                            </ItemsControl.ItemsPanel>
+                        </ItemsControl>
+                    </StackPanel>
+                </ScrollViewer>
+
+                <!-- NOTHING SCANNED YET. A fresh install used to open
+                     on a blank grey page, which is indistinguishable
+                     from a scan that failed. -->
+                <StackPanel x:Name="EmptyPanel"
+                            IsVisible="False"
+                            Margin="0,120,24,0"
+                            MaxWidth="560"
+                            HorizontalAlignment="Center">
+                    <TextBlock Classes="display"
+                               FontSize="34"
+                               TextAlignment="Center"
+                               TextWrapping="Wrap"
+                               Text="Nothing in the library yet"/>
+                    <TextBlock Classes="body"
+                               TextAlignment="Center"
+                               Margin="0,12,0,24"
+                               Text="Point UrDatabase at the folders your films are in and scan them, or connect a Jellyfin server. Nothing is copied or moved — only what is found is recorded."/>
+                    <StackPanel Orientation="Horizontal"
+                                Spacing="12"
+                                HorizontalAlignment="Center">
+                        <Button Classes="primary"
+                                Content="Choose folders"
+                                Click="Settings_Click"/>
+                        <Button Classes="ghost"
+                                Height="34"
+                                Content="Scan now"
+                                Click="ScanButton_Click"/>
+                    </StackPanel>
+                </StackPanel>
 
                 <!-- The one atmospheric move in the design: a shallow vignette,
                      so the shelves read as lit from the middle of the room. Not

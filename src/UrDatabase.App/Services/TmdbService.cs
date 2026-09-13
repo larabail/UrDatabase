@@ -38,6 +38,14 @@ namespace UrDatabase.Services
         private readonly string _posterCacheDir;
         private readonly string _imageSize;
         private readonly bool _downloadPosters;
+
+        /// <summary>
+        /// TMDB's film genres by id, once anybody has asked. Volatile because the fetches that
+        /// read it run on several threads at once and the first of them publishes it.
+        /// </summary>
+        private volatile IReadOnlyDictionary<int, string>? _genreNames;
+
+        private readonly SemaphoreSlim _genreGate = new(1, 1);
         private readonly JsonSerializerOptions _json = new JsonSerializerOptions
         {
             PropertyNameCaseInsensitive = true,
@@ -85,6 +93,13 @@ namespace UrDatabase.Services
 
         public string BuildDetailsUrl(int tmdbId) =>
             $"{ApiBaseUrl}/movie/{tmdbId}?api_key={Uri.EscapeDataString(_apiKey)}&language=en-US";
+
+        /// <summary>
+        /// Every genre TMDB files a film under, with the names that go with the ids a search
+        /// returns. One request for the whole library rather than one per film.
+        /// </summary>
+        public string BuildGenreListUrl() =>
+            $"{ApiBaseUrl}/genre/movie/list?api_key={Uri.EscapeDataString(_apiKey)}&language=en-US";
 
         public string BuildCreditsUrl(int tmdbId) =>
             $"{ApiBaseUrl}/movie/{tmdbId}/credits?api_key={Uri.EscapeDataString(_apiKey)}&language=en-US";
@@ -168,6 +183,131 @@ namespace UrDatabase.Services
             var results = await SearchAsync(title, year, ct);
             var hit = TmdbMatch.ChooseBest(results, title, year);
             return hit is null ? (null, null) : (hit.Id, hit.PosterPath);
+        }
+
+        /// <summary>
+        /// The same search, also answering what kind of film it is.
+        /// </summary>
+        /// <remarks>
+        /// Genres come back from the search TMDB has already been asked, so identifying a film and
+        /// learning its genres is one request rather than two. That matters more than it sounds:
+        /// this runs once per film in a library, and a scanned library of a few thousand would
+        /// otherwise spend its whole rate limit asking a second time for something the first
+        /// answer contained.
+        ///
+        /// <c>Genres</c> is null when TMDB gave none, which is different from an empty string: the
+        /// caller stores null and leaves the column alone, so a film whose genres somebody filled
+        /// in by hand — or one a Jellyfin server describes — is not blanked by a search that
+        /// happened to come back thin.
+        /// </remarks>
+        public async Task<(int? TmdbId, string? PosterPath, string? Genres)> SearchFilmAsync(string title, int? year, CancellationToken ct)
+        {
+            var results = await SearchAsync(title, year, ct);
+            var hit = TmdbMatch.ChooseBest(results, title, year);
+
+            if (hit is null) return (null, null, null);
+
+            return (hit.Id, hit.PosterPath, await NameGenresAsync(hit.GenreIds, ct));
+        }
+
+        /// <summary>
+        /// Turns TMDB's genre ids into the comma-separated names the catalogue stores, or null
+        /// when there is nothing worth storing.
+        /// </summary>
+        /// <remarks>
+        /// An id the list does not explain is dropped rather than written as a number. TMDB adds
+        /// genres occasionally, and a shelf headed "10752" is worse than a film sitting under one
+        /// fewer genre than it has.
+        /// </remarks>
+        private async Task<string?> NameGenresAsync(List<int>? ids, CancellationToken ct)
+        {
+            if (ids is null || ids.Count == 0) return null;
+
+            var names = await GenreNamesAsync(ct);
+            if (names.Count == 0) return null;
+
+            var named = new List<string>(ids.Count);
+
+            foreach (var id in ids)
+            {
+                if (!names.TryGetValue(id, out var name)) continue;
+                if (string.IsNullOrWhiteSpace(name)) continue;
+                if (named.Contains(name, StringComparer.OrdinalIgnoreCase)) continue;
+
+                named.Add(name);
+            }
+
+            return named.Count == 0 ? null : string.Join(", ", named);
+        }
+
+        /// <summary>
+        /// TMDB's film genres, by id. Fetched once and then held for the life of this client.
+        /// </summary>
+        /// <remarks>
+        /// The list is about twenty entries and changes perhaps once a year, so asking for it per
+        /// film would be the same answer several thousand times over. Cached even when the request
+        /// fails, deliberately: a library warming with no network would otherwise retry this once
+        /// per film, and the failure is not per-film information. An app restart asks again, which
+        /// is the right granularity for something this stable.
+        ///
+        /// The gate makes the several fetches running at once share one request rather than each
+        /// making their own — without it, the first four films of every launch each asked.
+        /// </remarks>
+        internal async Task<IReadOnlyDictionary<int, string>> GenreNamesAsync(CancellationToken ct)
+        {
+            var known = _genreNames;
+            if (known is not null) return known;
+
+            await _genreGate.WaitAsync(ct);
+            try
+            {
+                if (_genreNames is not null) return _genreNames;
+
+                _genreNames = await FetchGenreNamesAsync(ct);
+                return _genreNames;
+            }
+            finally
+            {
+                _genreGate.Release();
+            }
+        }
+
+        private async Task<IReadOnlyDictionary<int, string>> FetchGenreNamesAsync(CancellationToken ct)
+        {
+            var empty = new Dictionary<int, string>();
+
+            if (string.IsNullOrWhiteSpace(_apiKey)) return empty;
+
+            try
+            {
+                using var resp = await GetWithRetryAsync(BuildGenreListUrl(), ct);
+                if (resp is null || !resp.IsSuccessStatusCode) return empty;
+
+                await using var stream = await resp.Content.ReadAsStreamAsync(ct);
+                var doc = await JsonSerializer.DeserializeAsync<TmdbGenreList>(stream, _json, ct);
+
+                if (doc?.Genres is null) return empty;
+
+                var map = new Dictionary<int, string>(doc.Genres.Count);
+                foreach (var genre in doc.Genres)
+                {
+                    if (genre.Id <= 0 || string.IsNullOrWhiteSpace(genre.Name)) continue;
+                    map[genre.Id] = genre.Name.Trim();
+                }
+
+                return map;
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                // Not reported to the user. A library with no genres is the state this app shipped
+                // in for its whole life, and a film still gets its poster and its title.
+                AppLog.Write("posters.log", $"could not read TMDB's genre list: {ex.Message}");
+                return empty;
+            }
         }
 
         /// <summary>
@@ -384,7 +524,11 @@ namespace UrDatabase.Services
             return updated;
         }
 
-        public void Dispose() => _http.Dispose();
+        public void Dispose()
+        {
+            _http.Dispose();
+            _genreGate.Dispose();
+        }
 
         // --- DTOs ---
         private sealed class TmdbSearchResult
@@ -409,6 +553,12 @@ namespace UrDatabase.Services
         {
             [JsonPropertyName("id")] public int Id { get; set; }
             [JsonPropertyName("name")] public string Name { get; set; } = "";
+        }
+
+        /// <summary>The body of <c>/genre/movie/list</c>.</summary>
+        private sealed class TmdbGenreList
+        {
+            [JsonPropertyName("genres")] public List<TmdbGenre>? Genres { get; set; }
         }
 
         internal string BuildImageUrlPublic(string posterPath) => BuildImageUrl(posterPath);

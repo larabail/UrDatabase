@@ -384,7 +384,12 @@ runtime rather than at compile time.
 - **`AppConfig.Load` swallows every exception** and returns defaults. Malformed
   JSON does not raise; the app just behaves as though you configured nothing.
   Check that your file parses before hunting for a bug elsewhere.
-- **A scanned library has no genres.** Scanning writes a title and a year and
-  nothing else, so every film lands in the `Uncategorised` bucket until
-  something fills the `genres` column in. Nothing does yet. An empty-looking
-  grouped view after a successful scan is this, not a bug in the grouping.
+- **A scan still writes no genres; the poster pass does.** Scanning writes a
+  title and a year and nothing else, so a film lands in the `Uncategorised`
+  bucket and stays there until `PosterAutoLoader` has looked it up — the TMDB
+  search that finds its artwork is also what fills the `genres` column in. That
+  pass runs at a few films a second, so a large library really is entirely
+  uncategorised for the first minutes, and the shelves only reorganise every
+  fifteen seconds while it runs. An empty-looking grouped view straight after a
+  scan is this, not a bug in the grouping — and with no TMDB key it is permanent,
+  because nothing else writes that column.

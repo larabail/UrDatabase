@@ -35,9 +35,10 @@ It runs on Windows and macOS from one codebase, built with
 - **Filter by where a film is.** When the library draws on both this computer
   and a server, a row above the genres offers **Everywhere**, **Offline** and
   **On the server**, each with a count. Genre and location are different
-  questions: a scanned film has no genre until something enriches it, so without
-  this every local film sat in the Uncategorised bucket, which sorts behind every
-  genre a server library brings with it. A film in both places answers to both
+  questions: a film has no genre until something has looked it up, so without
+  this a freshly scanned library sat entirely in the Uncategorised bucket, which
+  sorts behind every genre a server library brings with it. A film in both places
+  answers to both
   controls, so the counts deliberately do not add up to the total. The row is
   hidden entirely when everything comes from one place, or when every film is in
   both (`Services/LibraryFilter`).
@@ -69,6 +70,24 @@ It runs on Windows and macOS from one codebase, built with
   year the scanner parsed, on a plate tinted from the title, inside a dashed
   edge that means "not final" without putting forty spinners on one screen
   (`Controls/PosterCard`, `Services/PlateTint`).
+- **A scanned film learns what it is.** The same background pass that finds the
+  artwork also files the film under its genres, so a library scanned off a disk
+  groups itself instead of sitting in one **Uncategorised** heap for ever. It is
+  free: TMDB's search already returns the genres alongside the poster, and the
+  names behind its genre ids are fetched once for the whole library rather than
+  per film — which is what keeps a few thousand films inside a rate-limited key.
+  The line under the library counts up as it goes, and the shelves reorganise
+  every so often rather than under your hands. Genres the server supplied, or
+  ones you fixed with **Wrong film?**, are never overwritten by the guess
+  (`Services/PosterAutoLoader`, `Services/TmdbService`, `Services/MovieMatch`).
+- **A library of thousands opens like a library of forty.** Only the cards on
+  screen exist: a shelf realises what its viewport can show, and the grid views
+  wrap their films into rows and virtualise those, Avalonia having no
+  virtualising wrap panel of its own. A catalogue of six thousand films used to
+  build six thousand poster cards before it could paint, which cost about two
+  gigabytes and a window that never appeared — and hit hardest exactly when a
+  library had no genres yet, because then every film was on one shelf
+  (`Services/PosterGrid`, `Views/MainWindow`).
 - **Search.** Typing in the search box queries the `movies_fts` full-text index
   and replaces the grouped view with a flat, ranked list of hits. What you type
   is escaped into FTS5's own query language first, so a title with punctuation
@@ -1446,15 +1465,16 @@ Stated plainly, so nobody has to find out by using it:
   genre shelves — but the year on the card still comes from the filename, and a
   film TMDB does not have cannot be renamed at all, because the name has to come
   from a film you picked.
-- **A scanned library has no genres.** Nothing writes the `genres` column for a
-  scanned film yet, so every film from a scan lands in a single
-  **Uncategorised** bucket, and a freshly scanned library looks bare until
-  something fills genres in — which no code does. The **Offline**
-  filter means those films are still one click away rather than buried behind a
-  server library's genres, but they remain ungrouped. Films from a Jellyfin
-  server are unaffected: the server supplies their genres, and a scanned film
-  the server also has borrows them for as long as the two are shown as one card
-  — the catalogue itself is not written to. A **programme** the server never
+- **A scanned library has no genres until it has been looked up.** Genres now
+  arrive with the artwork — the TMDB search that finds a poster also says what
+  the film is, so filling them in costs no extra request — but they arrive at
+  the speed of that pass, which on a few thousand films is minutes. Until a film
+  has been looked up it sits in the **Uncategorised** bucket, and a library
+  opened for the first time is entirely in there. The shelves reorganise
+  themselves roughly every fifteen seconds while this is going on rather than
+  rearranging under your hands as each film lands. A film TMDB refuses to match
+  stays uncategorised for good, for the same reason it stays without a poster,
+  and **Wrong film?** is what fixes it. A **programme** the server never
   identified has no genres either and shares that bucket, deliberately: both mean
   "nobody has said what this is", and the **Television** filter separates them
   again in a click.
@@ -1496,10 +1516,9 @@ Stated plainly, so nobody has to find out by using it:
   recommendations against the catalogue on `movies.tmdb_id`, which the poster
   loader writes for every film it can match — so a film with no poster usually
   has no shelf either, and neither has anything the automatic match refused. The
-  genre fallback behind it needs genres, and a scanned library has none of those
-  either, so on a purely local library that has never reached TMDB the shelf is
-  simply absent. Nothing on it is ever a film you do not own, which is the one
-  guarantee it does make.
+  genre fallback behind it needs genres, which the same pass fills in, so on a
+  library that has never reached TMDB at all the shelf is simply absent. Nothing
+  on it is ever a film you do not own, which is the one guarantee it does make.
 - **A series has no awards panel.** The Academy does not give programmes Oscars,
   and the archive is searched by title, so a series is never asked about at all —
   a programme sharing a name with a film would otherwise be handed the film's

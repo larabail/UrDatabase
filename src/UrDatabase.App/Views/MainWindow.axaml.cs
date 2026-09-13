@@ -49,7 +49,77 @@ namespace UrDatabase.Views
         public ObservableCollection<GenreGroup> VisibleGroups { get; } = new();
         public ObservableCollection<UiMovie> FlatResults { get; } = new();
 
+        /// <summary>
+        /// The two grid views, wrapped into rows so they can be virtualised.
+        /// </summary>
+        /// <remarks>
+        /// <see cref="FlatResults"/> and <see cref="SingleGenreItems"/> remain what the window
+        /// reasons about — counts, warming, emptiness — and these are a view of them for the
+        /// markup to bind to. Kept as a projection rather than replacing them, because a row is a
+        /// unit of layout: the number of them changes when somebody resizes the window, and
+        /// nothing about the library does.
+        /// </remarks>
+        public ObservableCollection<PosterRow> SingleGenreRows { get; } = new();
+
+        public ObservableCollection<PosterRow> SearchRows { get; } = new();
+
+        /// <summary>
+        /// How many cards fit across a grid. Recomputed when a grid is resized, and remembered so
+        /// that a resize which does not change it re-chunks nothing — a window dragged wider by a
+        /// pixel raises a great many of these.
+        /// </summary>
+        private int _gridColumns = 1;
+
         private IReadOnlyList<UiMovie> _allMovies = Array.Empty<UiMovie>();
+
+        /// <summary>
+        /// The films on this computer, by catalogue id, as of the current library read.
+        /// </summary>
+        /// <remarks>
+        /// What a poster fetch reports back into. Rebuilt with every read, because every read
+        /// builds new <see cref="UiMovie"/> objects and the previous ones stop being anything the
+        /// window is showing — so an answer arriving late has to be looked up rather than
+        /// delivered to whatever object happened to be current when it was asked for.
+        ///
+        /// Server films are left out: they are keyed by a Jellyfin id and all carry a catalogue id
+        /// of zero, so indexing them here would file the whole remote library under one entry.
+        /// Nothing asks TMDB about them anyway.
+        /// </remarks>
+        private Dictionary<long, UiMovie> _moviesById = new();
+
+        /// <summary>
+        /// The numbers the status line was last written from, and a running count of how many
+        /// films now have artwork. Null until a library has actually been read.
+        /// </summary>
+        private LibraryTally? _tally;
+
+        private int _postersPresent;
+        private bool _statusIsLibrarySummary;
+        private bool _statusStale;
+        private bool _genresStale;
+
+        /// <summary>
+        /// How long the shelves are left alone between regroupings while genres are arriving.
+        /// </summary>
+        /// <remarks>
+        /// A compromise, and worth stating as one. Genres now arrive for minutes on end — a
+        /// library of several thousand films takes that long to look up — and rebuilding the
+        /// shelves as each one lands would rearrange the page under somebody several times a
+        /// second. Waiting until they have all arrived is the other extreme: the library would sit
+        /// in one Uncategorised heap for the whole pass, which is the complaint this set out to
+        /// fix. So the page reorganises occasionally, slowly enough to be read as progress rather
+        /// than as flicker, and the last regrouping lands within this long of the final genre.
+        /// </remarks>
+        private static readonly TimeSpan RegroupInterval = TimeSpan.FromSeconds(15);
+
+        private readonly System.Diagnostics.Stopwatch _sinceRegroup = System.Diagnostics.Stopwatch.StartNew();
+
+        /// <summary>
+        /// Coalesces everything that happens while a library fills in: the poster count in the
+        /// status line, and the regrouping that genres make necessary. Both arrive far faster than
+        /// anybody can read, and neither is worth a redraw apiece.
+        /// </summary>
+        private DispatcherTimer? _progressTimer;
 
         /// <summary>
         /// The library as the window is currently showing it: everything, or only what is on this
@@ -177,6 +247,12 @@ namespace UrDatabase.Views
 
             ApplyConfig();
 
+            // Four a second: fast enough that the poster count plainly moves, slow enough to read
+            // a digit before it changes. Started only when something has landed and stopped again
+            // once the window has caught up, so an idle library pays nothing for it.
+            _progressTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(250) };
+            _progressTimer.Tick += (_, __) => ApplyProgress();
+
             _searchLoop = new SearchCoordinator<LibraryView>(
                 run: (query, ct) => _library.LoadAsync(query, _remoteMovies, ct),
                 apply: ApplyLibrary,
@@ -185,7 +261,7 @@ namespace UrDatabase.Views
 
             // Runs after the poster drain in OnClosing, and has to: cancelling this first would
             // cut short the very fetches the drain is there to let finish.
-            Closed += (_, __) => { _cts.Cancel(); _searchLoop.Dispose(); _posterLoader?.Dispose(); _ratings.Dispose(); _awards.Dispose(); _jellyfin?.Dispose(); };
+            Closed += (_, __) => { _cts.Cancel(); _progressTimer?.Stop(); _searchLoop.Dispose(); _posterLoader?.Dispose(); _ratings.Dispose(); _awards.Dispose(); _jellyfin?.Dispose(); };
 
             DataContext = this;
 
@@ -371,7 +447,23 @@ namespace UrDatabase.Views
             _view = view;
             _allMovies = view.All;
 
-            SetStatus(view.Status);
+            // Before anything is warmed, so a fetch that answers immediately has somewhere to
+            // report to. Last write wins on a duplicate id, which cannot happen for a local film
+            // but costs nothing to be safe about.
+            _moviesById = new Dictionary<long, UiMovie>();
+            foreach (var movie in _allMovies)
+            {
+                if (movie.Id <= 0) continue;
+                _moviesById[movie.Id] = movie;
+            }
+
+            // Reset before the status is written, so a fresh read starts counting from what it
+            // actually found rather than carrying the previous library's total forward.
+            _tally = view.Tally;
+            _postersPresent = view.Tally?.LocalWithPosters ?? 0;
+            _statusStale = false;
+
+            SetStatus(view.Status, isLibrarySummary: view.Tally is not null);
             WarmPosters(_allMovies);
 
             // searching → flat view
@@ -429,6 +521,7 @@ namespace UrDatabase.Views
             }
 
             SearchCountText.Text = LibraryGrouping.CountLabel(FlatResults);
+            RebuildGrid(SearchRows, FlatResults);
 
             // A search that found nothing has to say so. Silence reads as a broken search box.
             NoResultsText.IsVisible = FlatResults.Count == 0;
@@ -452,10 +545,95 @@ namespace UrDatabase.Views
             SetStatus($"Could not read the library: {ex.Message}");
         }
 
-        private void SetStatus(string message)
+        private void SetStatus(string message) => SetStatus(message, isLibrarySummary: false);
+
+        /// <summary>
+        /// Writes the status line, and remembers whether what it now says is the library's own
+        /// summary.
+        /// </summary>
+        /// <remarks>
+        /// That flag is what lets the poster count keep moving without talking over anything.
+        /// A scan's progress, a Jellyfin failure, a poster that could not be fetched: each of those
+        /// takes the line deliberately, and a summary rewritten underneath one would erase a
+        /// message somebody still needs to read. So the count only ever replaces itself.
+        /// </remarks>
+        private void SetStatus(string message, bool isLibrarySummary)
         {
+            _statusIsLibrarySummary = isLibrarySummary;
             Title = $"UrDatabase — {message}";
             if (StatusText is not null) StatusText.Text = message;
+        }
+
+        /// <summary>
+        /// Notes that one more film has artwork, and arranges for the line under the library to
+        /// say so. Called on the UI thread, once per film that genuinely gained a poster.
+        /// </summary>
+        private void NotePosterArrived()
+        {
+            if (_tally is null) return;
+
+            _postersPresent++;
+            _statusStale = true;
+
+            // Not written here. A library warming at four fetches at a time produces these
+            // several times a second for as long as it takes to fill in a few thousand films,
+            // and each one sets a window title — which on macOS is a call into the window server.
+            // The timer below coalesces them into an update slow enough to read.
+            _progressTimer?.Start();
+        }
+
+        /// <summary>
+        /// Everything a filling library owes the screen, on one beat: the count in the status
+        /// line, and — much less often — the shelves the new genres belong on. Stops the timer
+        /// once there is nothing outstanding, so this costs nothing on a settled library.
+        /// </summary>
+        private void ApplyProgress()
+        {
+            RefreshLibrarySummary();
+            RegroupForNewGenres();
+
+            if (!_statusStale && !_genresStale) _progressTimer?.Stop();
+        }
+
+        /// <summary>
+        /// Puts films that have just learned what they are onto the right shelves.
+        /// </summary>
+        /// <remarks>
+        /// Only while the shelves are what is on screen. Rebuilding them under a search would
+        /// throw away the results somebody is reading, and the grouped view is rebuilt from
+        /// scratch on the way back to it anyway — so this waits rather than fighting.
+        /// </remarks>
+        private void RegroupForNewGenres()
+        {
+            if (!_genresStale) return;
+            if (_sinceRegroup.Elapsed < RegroupInterval) return;
+            if (_view.IsSearch || !GroupPanel.IsVisible) return;
+
+            _genresStale = false;
+            _sinceRegroup.Restart();
+
+            // The chips first: a genre nothing had until a moment ago has to exist as a bucket
+            // before anything can be put in it, and the shelves are built from the chip list.
+            BuildGenres();
+            RebuildGroups();
+        }
+
+        /// <summary>
+        /// Rewrites the summary if it is still the thing on screen and something has changed.
+        /// Stops the timer once the line has caught up, so an idle library costs nothing.
+        /// </summary>
+        private void RefreshLibrarySummary()
+        {
+            if (!_statusStale)
+            {
+                return;
+            }
+
+            _statusStale = false;
+
+            if (_tally is null || !_statusIsLibrarySummary) return;
+
+            SetStatus(_tally.WithPosters(_postersPresent).Describe(), isLibrarySummary: true);
         }
 
         /// <summary>
@@ -732,8 +910,41 @@ namespace UrDatabase.Views
                 SingleGenreItems.Add(m);
 
             SingleGenreCountText.Text = LibraryGrouping.CountLabel(SingleGenreItems);
+            RebuildGrid(SingleGenreRows, SingleGenreItems);
             WarmPosters(SingleGenreItems);
             ShowSingleGenre();
+        }
+
+        /// <summary>
+        /// Re-wraps one grid into rows of the current width.
+        /// </summary>
+        /// <remarks>
+        /// The rows are replaced wholesale rather than reconciled. A grid is rebuilt when its
+        /// contents change or when the window is resized past a column, and in both cases every
+        /// row after the first difference has moved anyway — so a diff would do the same work and
+        /// have to be right about it as well.
+        /// </remarks>
+        private void RebuildGrid(ObservableCollection<PosterRow> rows, IReadOnlyList<UiMovie> items)
+        {
+            rows.Clear();
+            foreach (var row in PosterGrid.Chunk(items, _gridColumns))
+                rows.Add(row);
+        }
+
+        /// <summary>
+        /// A grid changed width. Only a change in how many cards fit across it means anything, so
+        /// everything else is dropped here rather than re-chunking thousands of films for a drag
+        /// that moved the edge by a pixel.
+        /// </summary>
+        private void GridContent_SizeChanged(object? sender, SizeChangedEventArgs e)
+        {
+            var columns = PosterGrid.Columns(e.NewSize.Width);
+            if (columns == _gridColumns) return;
+
+            _gridColumns = columns;
+
+            RebuildGrid(SingleGenreRows, SingleGenreItems);
+            RebuildGrid(SearchRows, FlatResults);
         }
 
         private void WarmPosters(IEnumerable<UiMovie> movies)
@@ -758,13 +969,55 @@ namespace UrDatabase.Views
                 // Queued rather than discarded. The task used to be dropped on the floor here,
                 // which is what let a closing window walk away from work it had started: nothing
                 // held it, so nothing could wait for it or notice it had gone.
+                //
+                // The film is named by its id rather than captured as an object, and that is
+                // load-bearing rather than tidy. Every library read builds a fresh set of UiMovie
+                // objects — a Jellyfin sync does one seconds after launch, and so does each
+                // keystroke in the search box — so a callback closing over the card it was made
+                // for can outlive that card by minutes and then faithfully update something no
+                // longer on screen. Looking the film up when the answer arrives means a result
+                // always reaches whatever is representing that film now.
+                var id = m.Id;
+
                 loader.Queue(
-                    movieId: m.Id,
+                    movieId: id,
                     title: m.Title,
                     year: m.Year,
-                    onFetched: path => ShowOnUiThread(() => m.PosterPath = path),
+                    onFetched: found => ShowOnUiThread(() => ApplyEnrichment(id, found)),
                     ct: _cts.Token);
             }
+        }
+
+        /// <summary>
+        /// Puts what TMDB found onto whichever card is representing that film now.
+        /// </summary>
+        /// <remarks>
+        /// The poster count is taken from the transition rather than from this being called. The
+        /// loader also reports artwork it found already recorded in the catalogue, and a film can
+        /// be handed to it twice by two rebuilds in quick succession, so counting calls would
+        /// drift upwards and the line would claim more artwork than the library has. Counting the
+        /// moment a film goes from having none to having some cannot: it runs on the UI thread,
+        /// and it is true exactly once per film.
+        /// </remarks>
+        private void ApplyEnrichment(long movieId, Enrichment found)
+        {
+            if (!_moviesById.TryGetValue(movieId, out var m)) return;
+
+            var gained = string.IsNullOrWhiteSpace(m.PosterPath) && found.HasPoster;
+
+            if (found.PosterPath is not null) m.PosterPath = found.PosterPath;
+
+            // Only onto a film that has none. A server's genres are already on the card by this
+            // point and are the better answer — they describe the copy the server actually holds
+            // — and the catalogue keeps its own either way.
+            if (!string.IsNullOrWhiteSpace(found.Genres) && string.IsNullOrWhiteSpace(m.Genres))
+            {
+                m.Genres = found.Genres;
+                _genresStale = true;
+                _progressTimer?.Start();
+            }
+
+            if (gained) NotePosterArrived();
         }
 
         /// <summary>

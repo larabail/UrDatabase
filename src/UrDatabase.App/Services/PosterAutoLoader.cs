@@ -5,6 +5,8 @@ using System.Linq;
 using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Data.Sqlite;
+using UrDatabase.Models;
 
 namespace UrDatabase.Services
 {
@@ -37,11 +39,51 @@ namespace UrDatabase.Services
 
         private readonly AppConfig _cfg;
         private readonly string _dbPath;
+        private readonly int _maxConcurrency;
         private readonly SemaphoreSlim _gate;
         private readonly Action<string>? _onFailure;
-        private readonly ConcurrentDictionary<long, byte> _inflight = new();
+        /// <summary>
+        /// Films this loader has already taken on, and it never forgets one.
+        /// </summary>
+        /// <remarks>
+        /// It stopped being a record of what is in flight when the shelves began rebuilding
+        /// themselves as genres arrive. Every rebuild offers the loader every film again, and a
+        /// set that forgot a film the moment its fetch ended would let each of those rebuilds
+        /// re-ask TMDB about every film it had refused to match — which on a few thousand films is
+        /// thousands of requests for an answer already known to be "no", and the surest way to be
+        /// rate limited out of the ones that would have succeeded.
+        ///
+        /// So a film is asked about at most once per loader. That is not forever: the loader is
+        /// rebuilt whenever the configuration changes, and the next launch asks again, which is
+        /// the right interval for something that only changes when TMDB's catalogue does.
+        /// </remarks>
+        private readonly ConcurrentDictionary<long, byte> _attempted = new();
         private readonly ConcurrentDictionary<Task, byte> _queued = new();
         private readonly CancellationTokenSource _stopping = new();
+
+        /// <summary>
+        /// Films waiting to be looked up, and how many are waiting or being looked up right now.
+        ///
+        /// The queue is the whole point of this class's shape. <see cref="Queue"/> is called from
+        /// a UI event handler, once per film the library is missing a poster for, and it used to
+        /// start a task apiece: a library of six thousand films produced several thousand tasks
+        /// and as many linked cancellation registrations, all created on the interface thread and
+        /// then immediately parked on a semaphore four of them could hold. The work was correctly
+        /// limited and the bookkeeping for it was not. Now the request is a record in a queue —
+        /// which is what it always was — and a fixed number of workers take turns at it.
+        /// </summary>
+        private readonly ConcurrentQueue<Request> _pending = new();
+
+        private int _outstanding;
+        private int _workers;
+
+        /// <summary>One film to look up, and who to tell about it.</summary>
+        private readonly record struct Request(
+            long MovieId,
+            string Title,
+            int? Year,
+            Action<Enrichment> OnFetched,
+            CancellationToken Token);
 
         /// <summary>
         /// One TMDB client for the whole library, rather than one per poster.
@@ -77,7 +119,8 @@ namespace UrDatabase.Services
         {
             _cfg = cfg;
             _dbPath = dbPath;
-            _gate = new SemaphoreSlim(Math.Max(1, maxConcurrency));
+            _maxConcurrency = Math.Max(1, maxConcurrency);
+            _gate = new SemaphoreSlim(_maxConcurrency);
             _onFailure = onFailure;
 
             _tmdb = new TmdbService(
@@ -92,19 +135,110 @@ namespace UrDatabase.Services
         internal int AvailableSlots => _gate.CurrentCount;
 
         /// <summary>How many queued fetches have not finished yet. For tests.</summary>
-        internal int Pending => _queued.Count;
+        internal int Pending => Volatile.Read(ref _outstanding);
 
         /// <summary>
-        /// Starts a fetch and keeps hold of it, so that <see cref="StopAsync"/> has something to
-        /// wait for. This is what a caller on the UI thread wants: the alternative, discarding
-        /// the task, is how a closing window came to abandon work it had started — invisibly,
-        /// since nothing was left holding the task to notice it had been dropped.
+        /// Takes a film to look up. Returns immediately: this is called from the UI thread, once
+        /// per film, and a library hands over thousands in a single loop.
         /// </summary>
-        public void Queue(long movieId, string title, int? year, Action<string?> onFetched, CancellationToken ct)
+        /// <remarks>
+        /// Queued rather than started. The alternative, a task per film, is how a closing window
+        /// came to abandon work it had started — nothing held the tasks — and then, once they were
+        /// held, how warming a large library came to allocate one of them per film on the
+        /// interface thread. A record in a queue costs neither.
+        /// </remarks>
+        public void Queue(long movieId, string title, int? year, Action<Enrichment> onFetched, CancellationToken ct)
         {
             if (_disposed) return;
 
-            Track(EnsurePosterAsync(movieId, title, year, onFetched, ct));
+            Interlocked.Increment(ref _outstanding);
+            _pending.Enqueue(new Request(movieId, title, year, onFetched, ct));
+
+            StartWorkerIfNeeded();
+        }
+
+        /// <summary>
+        /// Makes sure somebody is going to take the queue, without ever running more workers than
+        /// the configured concurrency.
+        /// </summary>
+        /// <remarks>
+        /// The compare-exchange loop rather than a lock: this is called once per film, and a lock
+        /// on the interface thread for six thousand consecutive calls is a lock worth not taking.
+        /// </remarks>
+        private void StartWorkerIfNeeded()
+        {
+            while (true)
+            {
+                var running = Volatile.Read(ref _workers);
+                if (running >= _maxConcurrency) return;
+
+                if (Interlocked.CompareExchange(ref _workers, running + 1, running) != running) continue;
+
+                // Counted before the worker exists, not inside it. A Dispose landing in the gap
+                // would otherwise see nothing in flight and hand the shared client back, leaving
+                // the worker about to start to fetch through a disposed client.
+                Interlocked.Increment(ref _active);
+
+                Track(Task.Run(DrainQueueAsync));
+                return;
+            }
+        }
+
+        /// <summary>
+        /// Takes films off the queue until there are none left.
+        /// </summary>
+        /// <remarks>
+        /// It deliberately does not stop when the loader does. Everything in the queue was
+        /// accepted before the stop — <see cref="Queue"/> refuses anything after it — and a fetch
+        /// TMDB may already have answered is one write away from being useful forever. What bounds
+        /// the wait is <see cref="StopAsync"/>'s deadline and the token behind it, not a worker
+        /// walking away from work it agreed to do.
+        ///
+        /// The re-check after standing down closes the race that would otherwise strand a film:
+        /// a worker can find the queue empty at the same moment <see cref="Queue"/> finds the
+        /// worker count full, and without looking again the item would sit there until something
+        /// else happened to be queued.
+        /// </remarks>
+        private async Task DrainQueueAsync()
+        {
+            // _active was raised by whoever started this worker, and is held for its whole life
+            // rather than only while a fetch runs — so the shared client is never released out
+            // from under a worker that is between two films.
+            try
+            {
+                while (true)
+                {
+                    while (_pending.TryDequeue(out var request))
+                    {
+                        try
+                        {
+                            await FetchAsync(request).ConfigureAwait(false);
+                        }
+                        finally
+                        {
+                            Interlocked.Decrement(ref _outstanding);
+                        }
+                    }
+
+                    Interlocked.Decrement(ref _workers);
+
+                    if (_pending.IsEmpty) return;
+
+                    // Something arrived as this was standing down. Take the post back if nobody
+                    // else already has, and otherwise leave it to them.
+                    while (true)
+                    {
+                        var running = Volatile.Read(ref _workers);
+                        if (running >= _maxConcurrency) return;
+
+                        if (Interlocked.CompareExchange(ref _workers, running + 1, running) == running) break;
+                    }
+                }
+            }
+            finally
+            {
+                if (Interlocked.Decrement(ref _active) == 0 && _disposed) ReleaseClient();
+            }
         }
 
         /// <summary>
@@ -125,11 +259,32 @@ namespace UrDatabase.Services
                 TaskScheduler.Default);
         }
 
-        public async Task EnsurePosterAsync(long movieId, string title, int? year, Action<string?> onFetched, CancellationToken ct)
+        /// <summary>
+        /// Looks one film up now, on the calling task. The public way in for anything that wants
+        /// to await a single fetch; the library goes through <see cref="Queue"/> instead.
+        /// </summary>
+        public Task EnsurePosterAsync(long movieId, string title, int? year, Action<Enrichment> onFetched, CancellationToken ct)
         {
-            if (_disposed) return;
+            if (_disposed) return Task.CompletedTask;
+
+            return FetchAsync(new Request(movieId, title, year, onFetched, ct));
+        }
+
+        /// <summary>
+        /// The fetch itself, with no admission check of its own.
+        /// </summary>
+        /// <remarks>
+        /// That omission is deliberate and is the reason this is separate from
+        /// <see cref="EnsurePosterAsync"/>. A worker reaches here with a film the loader accepted
+        /// before it was told to stop, and re-testing the flag at this point would silently drop
+        /// everything still in the queue at the moment a window closed — which is the bug the
+        /// drain was written to fix, reintroduced one level down.
+        /// </remarks>
+        private async Task FetchAsync(Request request)
+        {
+            var (movieId, title, year, onFetched, ct) = request;
+
             if (string.IsNullOrWhiteSpace(_cfg.TmdbApiKey)) return;
-            if (!_inflight.TryAdd(movieId, 0)) return;
 
             // Tracked rather than assumed. WaitAsync throws when the token is already cancelled,
             // which happens on window close, and the release below would then hand back a slot
@@ -152,36 +307,54 @@ namespace UrDatabase.Services
 
                 using var conn = Database.Open(_dbPath);
 
-                // SAFE read of poster_path (it may be NULL/DBNull)
-                string? existing;
-                using (var cmd = conn.CreateCommand())
-                {
-                    cmd.CommandText = "SELECT poster_path FROM movies WHERE id=@id";
-                    cmd.Parameters.AddWithValue("@id", movieId);
-                    var o = await cmd.ExecuteScalarAsync(token);
-                    existing = (o == null || o is DBNull) ? null : Convert.ToString(o);
-                }
+                // What the catalogue already knows, read before anything decides whether to ask
+                // TMDB. SAFE against NULL/DBNull in either column.
+                var known = await ReadKnownAsync(conn, movieId, token);
 
-                if (!string.IsNullOrWhiteSpace(existing))
+                // Answered from the catalogue, and this is the only thing a film asked about a
+                // second time ever gets — which is why it comes before the guard below rather
+                // than after it.
+                //
+                // Every library read builds fresh UiMovie objects, and the window then offers the
+                // loader every poster-less film again, with callbacks closing over the new ones.
+                // A guard that returned silently here would drop those, so the artwork reached
+                // the database and never the card: posters that only appeared after a restart,
+                // which is most of the bug this set out to fix, reintroduced by the fix for it.
+                if (known.HasPoster)
                 {
-                    onFetched(existing);
+                    onFetched(known);
                     return;
                 }
 
-                var (tmdbId, posterPath) = await _tmdb.SearchPosterAsync(title, year, token);
-                if (tmdbId is null || string.IsNullOrWhiteSpace(posterPath)) return;
+                // Only now is a request being considered, so only now does it count as an attempt.
+                // A film already asked about stops here: there is nothing stored to report and
+                // nothing left to learn until the next launch. See the field for why asking again
+                // instead would spend the key on answers already known to be "no".
+                if (!_attempted.TryAdd(movieId, 0)) return;
 
-                string? pathToStore;
-                var url = _tmdb.BuildImageUrlPublic(posterPath!);
+                // The search that finds the artwork also says what kind of film it is, so genres
+                // cost nothing extra here. Before this, nothing in the app ever wrote the genres
+                // column for a scanned film, and every one of them sat in a single Uncategorised
+                // bucket for the life of the library.
+                var (tmdbId, posterPath, genres) = await _tmdb.SearchFilmAsync(title, year, token);
 
-                if (_cfg.DownloadPosters)
+                // Identification is what this turns on, not artwork. TMDB confidently knows plenty
+                // of films it holds no poster for, and the guard here used to refuse those outright
+                // — throwing away an id and a set of genres that had already been fetched and paid
+                // for. Since a film is only ever asked about once, that left it uncategorised for
+                // good: the column would never be written on this launch or any other.
+                if (tmdbId is null) return;
+
+                string? pathToStore = null;
+
+                if (!string.IsNullOrWhiteSpace(posterPath))
                 {
+                    var url = _tmdb.BuildImageUrlPublic(posterPath!);
+
                     // download; if it fails, fall back to URL so UI can still load online
-                    pathToStore = await _tmdb.DownloadForPublic(url, $"{movieId}.jpg", token) ?? url;
-                }
-                else
-                {
-                    pathToStore = url;
+                    pathToStore = _cfg.DownloadPosters
+                        ? await _tmdb.DownloadForPublic(url, $"{movieId}.jpg", token) ?? url
+                        : url;
                 }
 
                 // Through the lane, not straight at the database. Up to four of these run at once
@@ -191,10 +364,12 @@ namespace UrDatabase.Services
                 //
                 // The id is stored beside the poster so the details screen describes the film the
                 // artwork belongs to, and so a person correcting the match has something to
-                // correct rather than a poster from nowhere.
-                await MovieMatch.SaveAsync(conn, movieId, tmdbId.Value, pathToStore, ct: token);
+                // correct rather than a poster from nowhere. A null path leaves the column alone,
+                // which is what a film with no artwork wants — it must not blank a poster somebody
+                // chose by hand.
+                await MovieMatch.SaveAsync(conn, movieId, tmdbId.Value, pathToStore, genres: genres, ct: token);
 
-                onFetched(pathToStore);
+                onFetched(new Enrichment(pathToStore, genres));
             }
             catch (OperationCanceledException)
             {
@@ -216,10 +391,35 @@ namespace UrDatabase.Services
             finally
             {
                 if (acquired) _gate.Release();
-                _inflight.TryRemove(movieId, out _);
+
+                // Deliberately not removed from _attempted. A film is asked about once per loader,
+                // including one that failed: see the field for why forgetting it turns every
+                // regrouping into a fresh sweep of TMDB for answers already known to be "no".
 
                 if (Interlocked.Decrement(ref _active) == 0 && _disposed) ReleaseClient();
             }
+        }
+
+        /// <summary>
+        /// The artwork and genres the catalogue already holds for a film.
+        /// </summary>
+        /// <remarks>
+        /// Both columns, not just the poster. A film looked up in an earlier pass has its genres
+        /// written down too, and a card rebuilt by a later library read has to be told about them
+        /// or it stays in the Uncategorised bucket while the database says otherwise.
+        /// </remarks>
+        private static async Task<Enrichment> ReadKnownAsync(SqliteConnection conn, long movieId, CancellationToken ct)
+        {
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = "SELECT poster_path, genres FROM movies WHERE id=@id";
+            cmd.Parameters.AddWithValue("@id", movieId);
+
+            using var reader = await cmd.ExecuteReaderAsync(ct);
+            if (!await reader.ReadAsync(ct)) return Enrichment.None;
+
+            return new Enrichment(
+                reader.IsDBNull(0) ? null : reader.GetString(0),
+                reader.IsDBNull(1) ? null : reader.GetString(1));
         }
 
         /// <summary>

@@ -72,17 +72,30 @@ namespace UrDatabase.Services
         /// the first place, so writing that title back would say nothing and would overwrite a
         /// correction made by hand with a guess.
         /// </param>
+        /// <param name="genres">
+        /// What TMDB files the film under, comma separated. Null leaves the column as it is, which
+        /// is what a search that returned no genres wants: the automatic loader must not blank a
+        /// film whose genres came from somewhere better, and "TMDB said nothing" is not the same
+        /// fact as "this film has no genres".
+        /// </param>
         public static Task SaveAsync(
             SqliteConnection conn,
             long movieId,
             int tmdbId,
             string? posterPath,
             string? title = null,
+            string? genres = null,
             CancellationToken ct = default) =>
             DatabaseWriteLane.RunAsync(conn, async token =>
             {
                 var columns = new List<string> { "tmdb_id=@tmdb" };
                 if (posterPath is not null) columns.Add("poster_path=@poster");
+
+                // Only when the column is empty. A film the user has corrected, or one a Jellyfin
+                // server already described, keeps what it has: this runs on every launch for every
+                // film still missing a poster, and without the guard it would reassert TMDB's
+                // opinion over a better one indefinitely.
+                if (genres is not null) columns.Add("genres=COALESCE(NULLIF(genres, ''), @genres)");
 
                 if (title is not null)
                 {
@@ -100,6 +113,7 @@ namespace UrDatabase.Services
                 cmd.Parameters.AddWithValue("@tmdb", tmdbId);
                 cmd.Parameters.AddWithValue("@id", movieId);
                 if (posterPath is not null) cmd.Parameters.AddWithValue("@poster", posterPath);
+                if (genres is not null) cmd.Parameters.AddWithValue("@genres", genres);
                 if (title is not null) cmd.Parameters.AddWithValue("@title", title);
 
                 // ConfigureAwait(false) as everywhere else on this path: the lane is entered from
@@ -121,6 +135,40 @@ namespace UrDatabase.Services
                 // Inside the lane and before it is given back, so the rename and the tidying are
                 // one write rather than two a reader can catch between.
                 if (title is not null) await SweepDiscardedAsync(conn, token).ConfigureAwait(false);
+            }, ct);
+
+        /// <summary>
+        /// Records what a film is filed under, replacing whatever was there.
+        /// </summary>
+        /// <remarks>
+        /// The replacing is the point, and it is why this is not just
+        /// <see cref="SaveAsync"/> with a genre. That one fills the column only when it is empty,
+        /// because it is called by the automatic loader on every launch for every film still
+        /// missing a poster and must not keep overruling a better answer. This is called when
+        /// somebody has said which film this is, and at that moment the genres already stored are
+        /// the other film's — so leaving them would mean a correction that fixed the title, the
+        /// poster and the plot while filing the film under the wrong genre for ever.
+        ///
+        /// An empty or absent name list clears the column rather than being refused. A film TMDB
+        /// files under nothing is a fact worth recording, and refusing it here would leave the
+        /// previous film's genres in place, which is the bug this exists to prevent.
+        /// </remarks>
+        public static Task SaveGenresAsync(
+            SqliteConnection conn,
+            long movieId,
+            string? genres,
+            CancellationToken ct = default) =>
+            DatabaseWriteLane.RunAsync(conn, async token =>
+            {
+                using var cmd = conn.CreateCommand();
+                cmd.CommandText = "UPDATE movies SET genres=@genres WHERE id=@id";
+
+                cmd.Parameters.AddWithValue("@id", movieId);
+                cmd.Parameters.AddWithValue(
+                    "@genres",
+                    string.IsNullOrWhiteSpace(genres) ? (object)DBNull.Value : genres.Trim());
+
+                await cmd.ExecuteNonQueryAsync(token).ConfigureAwait(false);
             }, ct);
 
         /// <summary>
