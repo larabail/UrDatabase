@@ -106,8 +106,10 @@ namespace UrDatabase.Views
             _appLifetime = appLifetime;
 
             _cts?.Cancel();
-            _cts = new CancellationTokenSource();
+            _cts?.Dispose();
+            _cts = CancellationTokenSource.CreateLinkedTokenSource(appLifetime);
             _closed = new TaskCompletionSource();
+            LoadNotice.IsVisible = false;
 
             Bind(vm);
             IsVisible = true;
@@ -144,6 +146,20 @@ namespace UrDatabase.Views
             Vm = null;
 
             closed.TrySetResult();
+        }
+
+        public void ReportLoadNotice(SeriesDetailsVm vm, string message)
+        {
+            if (!ReferenceEquals(Vm, vm)) return;
+            LoadNotice.Text = message;
+            LoadNotice.IsVisible = message.Length > 0;
+        }
+
+        public void UpdateRating(SeriesDetailsVm vm, double? rating)
+        {
+            if (!ReferenceEquals(Vm, vm)) return;
+            vm.ImdbRating = rating;
+            FactsList.ItemsSource = DetailFacts.For(vm);
         }
 
         private void Bind(SeriesDetailsVm vm)

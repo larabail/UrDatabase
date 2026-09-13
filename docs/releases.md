@@ -311,10 +311,70 @@ Nothing about the human-readable text depends on the marker; it is the same
 fact in a form a script can act on, and `summariseNotes` strips it so it never
 appears under "What's new".
 
-Windows is still unsigned. SmartScreen shows *"Windows protected your PC"*,
-which is a reputation check rather than a signature one: **More info**, then
-**Run anyway**. Fixing it needs a Windows code signing certificate and is not
-covered here.
+## Windows signing and antivirus warnings
+
+**The Windows release is still unsigned.** Nothing in the current packaging
+action performs Authenticode signing. The Apple certificate cannot sign the
+Windows executable, and putting a signature on the ZIP is not a substitute for
+signing the executable inside it.
+
+There are two different reports to distinguish:
+
+- **SmartScreen: "Windows protected your PC" / "unrecognized app".** This is
+  an application-reputation warning. Publicly trusted signing identifies the
+  publisher and lets reputation accumulate across releases, but new signed
+  files can still warn. Buying an EV certificate does not buy an instant
+  SmartScreen bypass.
+- **Antivirus: a named threat or quarantined file.** Record the antivirus
+  vendor, detection name, app version and exact file that was blocked. Investigate
+  that release before calling it a false positive. If it is clean, submit the
+  affected file to the vendor; Microsoft's
+  [software-developer submission portal](https://www.microsoft.com/en-us/wdsi/filesubmission)
+  is the route for Defender. Signing does not override a malware detection.
+  Do not ask users to disable protection or exclude the app's directory.
+
+### Choosing a provider
+
+For this open-source project, consider
+[SignPath Foundation](https://signpath.org/terms) first: it offers free signing
+to qualifying projects, subject to application, licensing and supply-chain
+requirements, a published signing policy and release approvals. Acceptance is
+not automatic, and its certificate identifies SignPath Foundation as publisher.
+
+For signing under a verified individual or organisation identity,
+[Azure Artifact Signing](https://learn.microsoft.com/en-us/windows/apps/package-and-deploy/code-signing-options)
+(formerly Trusted Signing) is Microsoft's recommended non-Store option.
+Microsoft currently lists approximately US$9.99/month, available to individuals
+in the US and Canada and organisations in the US, Canada, EU and UK. Identity
+verification and an Azure account are required. A public-CA code-signing
+certificate with a supported hardware token or cloud HSM is another option.
+Self-signed certificates are for development or managed internal deployments,
+not public downloads. An MSIX submitted through the Microsoft Store is a
+different distribution path: the Store signs it after certification.
+
+### Where signing belongs in this pipeline
+
+Provider enrolment and CI integration **have not been done yet**. Once a
+provider is chosen:
+
+1. Keep the macOS publishing/signing job on macOS. For an Azure/SignTool
+   integration, hand the Windows publish output to a separate Windows job;
+   for SignPath, use its approved artifact-signing integration.
+2. Sign `UrDatabase.App.exe` and the project's own shipped DLLs with
+   Authenticode and a SHA-256 timestamp. Preserve third-party signatures;
+   do not re-sign dependencies as though this project authored them.
+3. Verify the returned binaries, for example with `signtool verify /pa /v`
+   on a Windows runner, and fail the release if required signatures are
+   missing or invalid.
+4. Create the Windows ZIP **from the signed output**, then generate
+   `SHA256SUMS.txt` and publish. Signing after checksumming changes the bytes
+   and invalidates the recorded hashes.
+
+Restrict signing to approved release builds. Use GitHub OIDC with narrowly
+scoped Azure permissions where supported, or the provider's protected signing
+credentials and approval flow; do not expose signing access to untrusted pull
+requests or commit private keys. Keep one publisher identity across releases
+so its reputation can build.
 
 ## Secrets
 

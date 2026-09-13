@@ -93,6 +93,13 @@
                 </Button>
             </Border>
 
+            <TextBlock x:Name="LoadNotice"
+                       DockPanel.Dock="Top"
+                       Margin="24,0,48,8"
+                       Foreground="{DynamicResource DimBrush}"
+                       TextWrapping="Wrap"
+                       IsVisible="False"/>
+
             <!-- The action bar is docked, so Play is in the same place on every
                  film regardless of how long the plot ran. -->
             <Border DockPanel.Dock="Bottom"

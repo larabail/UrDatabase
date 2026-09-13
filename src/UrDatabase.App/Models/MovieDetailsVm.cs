@@ -42,6 +42,10 @@ namespace UrDatabase.Models
 
         public bool HasFile => !string.IsNullOrWhiteSpace(FilePath);
 
+        public bool IsLoadingFile { get; set; }
+        public bool IsConnecting { get; set; }
+        public bool IsLoadingMetadata { get; set; }
+
         public List<string> TopCast { get; set; } = new();     // “Actor (Role)”
         public List<string> KeyCrew { get; set; } = new();     // “Director: Name”
 
