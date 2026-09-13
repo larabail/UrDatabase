@@ -38,6 +38,10 @@ namespace UrDatabase.Views
         private MoviePageRefresh? _pageRefresh;
         private bool _changingMovie;
         private int _artworkGeneration;
+        private CancellationTokenSource? _artworkCts;
+        private Action? _cancelEnrichment;
+        private string? _posterSource;
+        private string? _backdropSource;
 
         /// <summary>
         /// Where to record a file the user links by hand. Null when the screen was shown without
@@ -159,7 +163,8 @@ namespace UrDatabase.Views
             Func<string?, int?, CancellationToken, Task<OscarHonours>>? awardsLookup = null,
             RelatedShelf? related = null,
             Func<string, CancellationToken, Task<JellyfinMovie?>>? movieLookup = null,
-            Func<MovieDetailsVm, CancellationToken, Task<RelatedShelf>>? relatedLookup = null)
+            Func<MovieDetailsVm, CancellationToken, Task<RelatedShelf>>? relatedLookup = null,
+            Action? cancelEnrichment = null)
         {
             // Leaving one film open behind another would strand its completion source and hang
             // whichever caller was awaiting it.
@@ -175,6 +180,7 @@ namespace UrDatabase.Views
             _pageRefresh = new MoviePageRefresh(config, dbPath, jellyfin, movieLookup, ratingLookup, awardsLookup, relatedLookup);
             _changingMovie = false;
             _refreshCts = null;
+            _cancelEnrichment = cancelEnrichment;
             DownloadedSomething = false;
             RenamedSomething = false;
             RequestedNext = null;
@@ -184,6 +190,9 @@ namespace UrDatabase.Views
             _cts?.Dispose();
             _cts = CancellationTokenSource.CreateLinkedTokenSource(appLifetime);
             _closed = new TaskCompletionSource();
+            LoadNotice.IsVisible = false;
+            _posterSource = null;
+            _backdropSource = null;
 
             Bind(vm);
             SetRefreshControls(refreshing: false);
@@ -214,9 +223,12 @@ namespace UrDatabase.Views
             _uploadCts?.Cancel();
             _refreshCts?.Cancel();
 
+            _cancelEnrichment?.Invoke();
+            _cancelEnrichment = null;
             _cts?.Cancel();
             _pageRefresh?.Dispose();
             _pageRefresh = null;
+            _artworkCts?.Cancel();
             IsVisible = false;
 
             BackdropImage.Source = null;
@@ -232,6 +244,25 @@ namespace UrDatabase.Views
         /// <summary>True while a film is on screen.</summary>
         public bool IsShowing => _closed is not null;
 
+        public void ReportLoadNotice(MovieDetailsVm vm, string message)
+        {
+            if (!ReferenceEquals(Vm, vm)) return;
+            LoadNotice.Text = message;
+            LoadNotice.IsVisible = message.Length > 0;
+        }
+
+        public void Refresh(MovieDetailsVm vm)
+        {
+            if (!ReferenceEquals(Vm, vm)) return;
+            Bind(vm);
+            LoadArtwork(_cts?.Token ?? default);
+        }
+
+        public void RefreshRelated(MovieDetailsVm vm, RelatedShelf related)
+        {
+            if (ReferenceEquals(Vm, vm)) ShowRelated(related);
+        }
+
         private void Bind(MovieDetailsVm vm)
         {
             TitleText.Text = vm.Title;
@@ -246,7 +277,7 @@ namespace UrDatabase.Views
             // An empty panel where the plot should be reads as a failed request. Which sentence
             // goes there depends on why it is empty — see MissingMetadata.
             OverviewText.Text = string.IsNullOrWhiteSpace(vm.Overview)
-                ? MissingMetadata.OverviewNotice(vm.IsRemote, vm.TmdbConfigured)
+                ? vm.IsLoadingMetadata ? "Loading the plot..." : MissingMetadata.OverviewNotice(vm.IsRemote, vm.TmdbConfigured)
                 : vm.Overview;
 
             var cast = vm.TopCast
@@ -269,19 +300,17 @@ namespace UrDatabase.Views
             LinkFileButton.IsVisible = !vm.IsRemote;
             CorrectMatchButton.IsVisible = !vm.IsRemote;
 
-            // Asked here rather than by the caller so that a film downloaded and then deleted in
-            // Finder offers its download again instead of insisting it is already there.
-            if (vm.IsRemote && string.IsNullOrWhiteSpace(vm.DownloadedPath))
-                vm.DownloadedPath = JellyfinDownload.FindExisting(vm.DownloadFolder, vm.Title, vm.Year);
-
             UpdateDownloadButton();
             UpdateUploadButton();
+            UpdateRefreshButton();
 
             AttributionText.Text = vm.IsRemote
                 ? "Metadata and artwork supplied by your Jellyfin server. IMDb rating retrieved from the OMDb API; neither IMDb nor OMDb endorses this application."
                 : "Metadata and artwork from TMDB. This product uses the TMDB API but is not endorsed or certified by TMDB. IMDb rating retrieved from the OMDb API; neither IMDb nor OMDb endorses this application.";
 
-            UpdateFileNote();
+            UpdatePlaybackControls();
+            if (_downloadCts is null && _uploadCts is null)
+                FileNote.Text = PlayPrompts.FileNote(vm, MediaPlayerLauncher.CanResumeHere());
         }
 
         /// <summary>
@@ -359,7 +388,9 @@ namespace UrDatabase.Views
         /// </summary>
         private void ShowMissingCredits(List<CreditEntry> cast, List<CreditEntry> crew, MovieDetailsVm vm)
         {
-            var reason = MissingMetadata.CreditsNotice(vm.IsRemote, vm.TmdbConfigured);
+            var reason = vm.IsLoadingMetadata
+                ? "Loading cast and crew..."
+                : MissingMetadata.CreditsNotice(vm.IsRemote, vm.TmdbConfigured);
 
             NoCastText.Text = reason;
             NoCastText.IsVisible = cast.Count == 0;
@@ -376,17 +407,22 @@ namespace UrDatabase.Views
         {
             if (Vm is null) return;
 
-            var canSeek = MediaPlayerLauncher.CanResumeHere();
+            FileNote.Text = PlayPrompts.FileNote(Vm, MediaPlayerLauncher.CanResumeHere());
+            UpdatePlaybackControls();
+        }
 
-            FileNote.Text = PlayPrompts.FileNote(Vm, canSeek);
+        private void UpdatePlaybackControls()
+        {
+            if (Vm is null) return;
+            var canSeek = MediaPlayerLauncher.CanResumeHere();
 
             // The label and the offset are two readings of one rule, so a film that will resume
             // says so and a film that cannot never claims it. See PlayPrompts.CanResume.
             PlayBtn.Content = PlayPrompts.PlayButtonLabel(Vm, canSeek);
+            PlayBtn.IsEnabled = !Vm.IsLoadingFile && (!Vm.IsConnecting || !string.IsNullOrWhiteSpace(Vm.DownloadedPath));
             StartAgainButton.IsVisible = PlayPrompts.CanResume(Vm, canSeek);
+            StartAgainButton.IsEnabled = PlayBtn.IsEnabled;
         }
-
-        private void LoadArtwork(CancellationToken ct) => _ = LoadArtworkAsync(ct);
 
         private async Task<IReadOnlyList<string>> LoadArtworkAsync(
             CancellationToken ct,
@@ -428,9 +464,9 @@ namespace UrDatabase.Views
         {
             var busy = _refreshCts is not null || _changingMovie ||
                        _downloadCts is not null || _uploadCts is not null;
-            RefreshButton.IsEnabled = IsShowing && !busy;
-            LinkFileButton.IsEnabled = !busy;
-            CorrectMatchButton.IsEnabled = !busy;
+            RefreshButton.IsEnabled = IsShowing && !busy && Vm is { IsLoadingFile: false, IsConnecting: false };
+            LinkFileButton.IsEnabled = !busy && Vm?.IsLoadingFile == false;
+            CorrectMatchButton.IsEnabled = !busy && Vm?.IsLoadingFile == false;
             DownloadButton.IsEnabled = !busy || _downloadCts is not null;
             UploadButton.IsEnabled = !busy || _uploadCts is not null;
         }
@@ -447,6 +483,11 @@ namespace UrDatabase.Views
             var refresh = _pageRefresh;
             if (vm is null || refresh is null || !RefreshButton.IsEnabled) return;
 
+            _cancelEnrichment?.Invoke();
+            _cancelEnrichment = null;
+            _artworkCts?.Cancel();
+            vm.IsLoadingMetadata = false;
+            ReportLoadNotice(vm, "");
             using var cts = CancellationTokenSource.CreateLinkedTokenSource(_cts?.Token ?? default);
             cts.CancelAfter(TimeSpan.FromSeconds(60));
             _refreshCts = cts;
@@ -479,6 +520,8 @@ namespace UrDatabase.Views
                 var artworkNotices = await LoadArtworkAsync(cts.Token, keepCurrent: true, previousSources: previousSources);
                 cts.Token.ThrowIfCancellationRequested();
                 if (!ReferenceEquals(Vm, vm)) return;
+                _posterSource = vm.PosterPath;
+                _backdropSource = vm.BackdropUrl;
                 var notices = result.Notices.Concat(artworkNotices).ToList();
                 RefreshStatus.Text = notices.Count == 0
                     ? "Movie refreshed."
@@ -508,6 +551,31 @@ namespace UrDatabase.Views
                     if (ReferenceEquals(Vm, vm)) SetRefreshControls(refreshing: false);
                 }
             }
+        }
+
+        private void LoadArtwork(CancellationToken ct)
+        {
+            var vm = Vm;
+            if (vm is null) return;
+            if (_posterSource == vm.PosterPath && _backdropSource == vm.BackdropUrl) return;
+
+            _artworkGeneration++;
+            _artworkCts?.Cancel();
+            _artworkCts?.Dispose();
+            _artworkCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            _posterSource = vm.PosterPath;
+            _backdropSource = vm.BackdropUrl;
+
+            // Metadata can arrive while the card's artwork is still downloading. A refresh
+            // must neither fetch it again unnecessarily nor let old artwork replace a correction.
+            _ = LoadImageAsync(PosterImage, _posterSource, vm, _artworkCts.Token);
+            _ = LoadImageAsync(BackdropImage, _backdropSource, vm, _artworkCts.Token);
+        }
+
+        private async Task LoadImageAsync(Image image, string? source, MovieDetailsVm vm, CancellationToken ct)
+        {
+            var bitmap = await ImageLoader.LoadAsync(source, ct);
+            if (!ct.IsCancellationRequested && ReferenceEquals(Vm, vm)) image.Source = bitmap;
         }
 
         /// <summary>
@@ -664,7 +732,7 @@ namespace UrDatabase.Views
 
         private void UpdateDownloadButton()
         {
-            DownloadButton.IsVisible = Vm is not null && Vm.CanDownload && _jellyfin is not null;
+            DownloadButton.IsVisible = Vm is not null && !Vm.IsLoadingFile && Vm.CanDownload && _jellyfin is not null;
         }
 
         /// <summary>
@@ -756,6 +824,7 @@ namespace UrDatabase.Views
                 DownloadProgress.IsIndeterminate = false;
                 UpdateDownloadButton();
                 UpdateRefreshButton();
+                UpdatePlaybackControls();
             }
         }
 
@@ -1040,6 +1109,10 @@ namespace UrDatabase.Views
             {
                 var chosen = await TmdbMatchWindow.ChooseAsync(owner, _config, vm.Title, vm.Year);
                 if (chosen is null || !ReferenceEquals(Vm, vm) || _cts?.IsCancellationRequested != false) return;
+                _cancelEnrichment?.Invoke();
+                _cancelEnrichment = null;
+                vm.IsLoadingMetadata = false;
+                ReportLoadNotice(vm, "");
                 await ApplyMatchAsync(vm, chosen);
             }
             catch (OperationCanceledException)

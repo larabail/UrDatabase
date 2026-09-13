@@ -42,6 +42,7 @@ namespace UrDatabase.Views
         private SeriesLoader? _loader;
         private JellyfinClient? _jellyfin;
         private Func<string?, CancellationToken, Task<double?>>? _loadRating;
+        private Action? _cancelEnrichment;
 
         /// <summary>
         /// Which season is on screen, by name. Kept rather than an index because a refresh from
@@ -97,7 +98,8 @@ namespace UrDatabase.Views
             JellyfinClient? jellyfin = null,
             CancellationToken appLifetime = default,
             int? openAtSeason = null,
-            Func<string?, CancellationToken, Task<double?>>? loadRating = null)
+            Func<string?, CancellationToken, Task<double?>>? loadRating = null,
+            Action? cancelEnrichment = null)
         {
             if (_closed is not null) Close();
 
@@ -105,12 +107,14 @@ namespace UrDatabase.Views
             _loader = loader;
             _jellyfin = jellyfin;
             _loadRating = loadRating;
+            _cancelEnrichment = cancelEnrichment;
             _selectedSeason = null;
             _openAtSeason = openAtSeason;
             _appLifetime = appLifetime;
 
             var session = _session = new SeriesRefreshSession(appLifetime);
             _closed = new TaskCompletionSource();
+            LoadNotice.IsVisible = false;
 
             BindMetadata(vm);
             Seasons.Clear();
@@ -141,6 +145,8 @@ namespace UrDatabase.Views
         {
             if (_closed is null) return;
 
+            _cancelEnrichment?.Invoke();
+            _cancelEnrichment = null;
             _session?.Dispose();
             _session = null;
             RefreshButton.IsEnabled = false;
@@ -158,6 +164,20 @@ namespace UrDatabase.Views
             _loadRating = null;
 
             closed.TrySetResult();
+        }
+
+        public void ReportLoadNotice(SeriesDetailsVm vm, string message)
+        {
+            if (!ReferenceEquals(Vm, vm)) return;
+            LoadNotice.Text = message;
+            LoadNotice.IsVisible = message.Length > 0;
+        }
+
+        public void UpdateRating(SeriesDetailsVm vm, double? rating)
+        {
+            if (!ReferenceEquals(Vm, vm)) return;
+            vm.ImdbRating = rating;
+            FactsList.ItemsSource = DetailFacts.For(vm);
         }
 
         private void BindMetadata(SeriesDetailsVm vm)
@@ -214,13 +234,16 @@ namespace UrDatabase.Views
             var loader = _loader;
             var client = _jellyfin;
             var loadRating = _loadRating;
-            if (session is null || vm is null || !IsCurrent(session)) return Task.CompletedTask;
+            if (session is null || vm is null || !IsCurrent(session) || session.IsBusy) return Task.CompletedTask;
             if (loader is null || client is null)
             {
                 SetRefreshNote("No Jellyfin server is configured, so this programme cannot be refreshed.");
                 return Task.CompletedTask;
             }
 
+            _cancelEnrichment?.Invoke();
+            _cancelEnrichment = null;
+            LoadNotice.IsVisible = false;
             return RunPageWorkAsync(session, async ct =>
             {
                 var result = await SeriesDetailsRefresh.LoadAsync(vm, loader, client, loadRating, ct);

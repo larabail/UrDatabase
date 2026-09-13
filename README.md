@@ -108,10 +108,21 @@ It runs on Windows and macOS from one codebase, built with
   and says which setting fixes it, rather than reporting "none found" for a
   question nobody asked. A server film says when the server itself supplied
   nothing (`Services/MissingMetadata`).
-- **Details in place.** Opening a card fetches the film from TMDB and fills the
+- **Details in place.** Opening a card shows the catalogue's title and any cached
+  server details straight away, then fills the
   whole window — not a dialog inside it — with the backdrop, overview, runtime,
   genres, the top ten billed cast set as name over character, and up to three
   directors and three writers. Escape or **Library** goes back.
+
+  Network lookups no longer stand between the click and the page. Ratings,
+  awards and recommendations load independently where their inputs are already
+  known, and each lookup gets its own twelve-second deadline rather than sharing
+  one deadline across all the services. A slow or unreachable service leaves the
+  page open, says which lookup timed out, and records it in `details.log`;
+  **Refresh** retries. Leaving the page cancels its outstanding work, and an old
+  answer cannot overwrite a corrected match. Checking linked files or downloaded
+  copies runs off the UI thread too, so an unavailable Windows share does not
+  freeze the page (`Services/DetailLoading`).
 
   The facts under the title are each printed under the name of the service they
   came from, which is the one thing this screen has to get right: the **IMDb**
@@ -1307,6 +1318,14 @@ page deployed to Firebase Hosting. Every asset is also on the
 builds as `UrDatabase-<version>-<rid>.dmg`, Windows as
 `UrDatabase-<version>-win-x64.zip`.
 
+The website's [privacy policy](web/downloads/privacy.html), linked from the
+downloads page footer, describes Firebase Hosting request data, Google Fonts,
+GitHub release requests, browser-only device detection and privacy contact
+details. The policy is a standalone static page with no scripts or external
+fonts; it covers the website rather than the desktop application's features.
+It deploys with the rest of `web/downloads/`, with no build step. Run the site's
+checks with `node --test web/downloads/*.test.js`.
+
 Once you are running a build, it tells you itself when a newer one exists: a
 banner above the library, with **Update now** to fetch the right file for the
 machine into your downloads folder and open it. Nothing installs itself — see
@@ -1319,9 +1338,14 @@ On a Mac, open the `.dmg` and drag **UrDatabase** to Applications. The build is
 signed with an Apple Developer ID, notarized by Apple and stapled, so it opens
 like any other application. There is no terminal command and nothing to clear.
 
-On Windows, SmartScreen shows *"Windows protected your PC"*. Choose **More
-info**, then **Run anyway**. That is a reputation check rather than a signature
-one, and there is no Windows code signing certificate yet.
+Windows builds are currently unsigned. SmartScreen may show *"Windows protected
+your PC"* because the download has no established reputation or verified
+publisher. This is different from antivirus detecting or quarantining a named
+threat. Do not disable antivirus or add exclusions to work around a detection:
+report the exact warning, app version and detected filename so the release can
+be investigated and, if clean, submitted to the vendor as a false positive.
+See [Windows signing](docs/releases.md#windows-signing-and-antivirus-warnings)
+for the release-signing options and their limits.
 
 > [!NOTE]
 > **Releases before 0.2.1 do not open on a current Mac.** They shipped a bare
@@ -1668,9 +1692,12 @@ Stated plainly, so nobody has to find out by using it:
   setting for the file's location and no way to trust a key from inside the app —
   a host with no entry is refused, and adding one is a step you take with
   `ssh-keyscan` or by connecting once with `sftp`.
-- **Windows builds are not signed.** SmartScreen warns on first run and there
-  is no way around it short of a Windows code signing certificate. The macOS
-  side of this closed in 0.2.1; the Windows side has not.
+- **Windows builds are not signed.** A signing provider and verified publisher
+  identity still need to be arranged and wired into releases. Signing identifies
+  the publisher and lets reputation build; it does not guarantee that SmartScreen
+  or antivirus will accept a new release. The
+  [available options](docs/releases.md#windows-signing-and-antivirus-warnings)
+  include free signing for qualifying open-source projects.
 - **The app tells you about an update and fetches it; it does not install it.**
   **Update now** downloads the right build for the machine and opens it, and
   there it stops: you still drag UrDatabase into Applications or unzip it over
