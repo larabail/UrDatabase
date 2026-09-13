@@ -1,0 +1,153 @@
+name: Microsoft Store package
+
+on:
+  push:
+    # The second branch bootstraps the Windows artifact before this new workflow
+    # exists on main. It neither releases nor submits anything to Microsoft.
+    branches: [main, larabail-microsoft-store-packaging]
+    paths:
+      - 'src/**'
+      - 'tests/**'
+      - 'packaging/windows/**'
+      - 'tool/**'
+      - 'scripts/package-store.ps1'
+      - 'scripts/make-store-assets.sh'
+      - 'Directory.Build.props'
+      - '.github/workflows/store.yml'
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+  workflow_call:
+    inputs:
+      publish:
+        description: Submit only after the calling main release job succeeded
+        type: boolean
+        default: false
+    secrets:
+      TMDB_API_KEY:
+        required: false
+      OMDB_API_KEY:
+        required: false
+      URACTOR_API_KEY:
+        required: false
+      # The release caller does not pass these. The submission job resolves them
+      # only after entering the separately protected microsoft-store environment.
+      AZURE_AD_TENANT_ID:
+        required: false
+      AZURE_AD_APPLICATION_CLIENT_ID:
+        required: false
+      AZURE_AD_APPLICATION_SECRET:
+        required: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: store-${{ inputs.publish && 'publication' || 'build' }}-${{ inputs.publish && 'main' || github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ !inputs.publish }}
+
+env:
+  DOTNET_NOLOGO: 'true'
+  DOTNET_CLI_TELEMETRY_OPTOUT: 'true'
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: 'true'
+
+jobs:
+  package:
+    name: Store upload package
+    runs-on: windows-2022
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Test the packaging and submission rules without credentials
+        run: python -m unittest discover -s tool -p '*store*.py' -v
+      - name: Test the compiled Store distribution
+        run: >-
+          dotnet test tests/UrDatabase.Tests/UrDatabase.Tests.csproj
+          --configuration Release -p:DistributionChannel=MicrosoftStore
+          --filter FullyQualifiedName~AppDistributionTests
+      - name: Build and inspect the unsigned MSIX
+        shell: pwsh
+        env:
+          # Only main carries the optional metadata defaults. Branch and PR
+          # artifacts are keyless and still build; no signing secrets are used.
+          TMDB_API_KEY: ${{ github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && secrets.TMDB_API_KEY || '' }}
+          OMDB_API_KEY: ${{ github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && secrets.OMDB_API_KEY || '' }}
+          URACTOR_API_KEY: ${{ github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && secrets.URACTOR_API_KEY || '' }}
+        run: ./scripts/package-store.ps1
+      - name: Keep the Store-upload artifact, separate from public downloads
+        uses: actions/upload-artifact@v4
+        with:
+          name: UrDatabase-store-upload-x64-${{ github.run_number }}
+          path: |
+            dist/store/*.msix
+            dist/store/*.sha256
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
+      - name: Explain the artifact
+        shell: pwsh
+        run: |
+          @'
+          ### Unsigned Microsoft Store upload
+
+          Download **UrDatabase-store-upload-x64-${{ github.run_number }}** from this run.
+          Upload its `.msix` to the reserved **MSIX or PWA app** in Partner Center.
+          This is not a signed GitHub download or a directly installable sideload package.
+          Microsoft signs it after certification. Ordinary artifact builds do not submit it.
+          Only an explicitly enabled, successful main release can invoke the submission job.
+
+          Branch/PR packages have no embedded metadata keys. Main builds use the existing
+          optional repository keys. All builds allow keys in user settings.
+          Before submission, complete the Windows packaged-app smoke test and WACK,
+          the listing/privacy/age-rating fields and the `runFullTrust` justification
+          described in `docs/releases.md`.
+          '@ | Add-Content $env:GITHUB_STEP_SUMMARY
+
+  submit:
+    name: Submit Store update
+    needs: package
+    if: >-
+      inputs.publish && vars.STORE_PUBLISH_ENABLED == 'true' &&
+      github.ref == 'refs/heads/main' && github.repository == 'larabail/UrDatabase' &&
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: microsoft-store
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/download-artifact@v4
+        with:
+          name: UrDatabase-store-upload-x64-${{ github.run_number }}
+          path: dist/store
+      - name: Submit a new draft without deleting or adopting existing submissions
+        env:
+          STORE_PUBLISH_ENABLED: ${{ vars.STORE_PUBLISH_ENABLED }}
+          AZURE_AD_TENANT_ID: ${{ secrets.AZURE_AD_TENANT_ID }}
+          AZURE_AD_APPLICATION_CLIENT_ID: ${{ secrets.AZURE_AD_APPLICATION_CLIENT_ID }}
+          AZURE_AD_APPLICATION_SECRET: ${{ secrets.AZURE_AD_APPLICATION_SECRET }}
+        run: |
+          set -euo pipefail
+          packages=(dist/store/*.msix)
+          if [ "${#packages[@]}" -ne 1 ] || [ ! -f "${packages[0]}" ]; then
+            echo "::error::Expected exactly one MSIX from this release run."
+            exit 1
+          fi
+          python tool/store_submission.py submit \
+            --package "${packages[0]}" --state-file store-submission-state.json
+      - name: Keep the submission ID even if a network request or commit failed
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Store-submission-state-${{ github.run_number }}-${{ github.run_attempt }}
+          path: store-submission-state.json
+          if-no-files-found: ignore
+          retention-days: 90

@@ -474,7 +474,7 @@ cp src/UrDatabase.App/appsettings.example.json src/UrDatabase.App/appsettings.js
 | `DownloadPosters` | `false` points the UI at TMDB's own image URLs; `true` caches each poster to disk |
 | `TmdbImageSize` | TMDB's poster width — `w185`, `w342`, `w500`, `original` |
 | `SetupCompleted` | Set by the setup screen once it has been answered, and the only thing that stops it being offered again |
-| `CheckForUpdates` | `true`, as it ships, asks GitHub at most once a day whether there is a newer release and raises a banner if there is; the answer is kept in `update-state.json` so that further launches that day cost no request, and the request that is made is conditional, which GitHub does not charge when nothing has changed. `false` means no request is made at all, rather than one being made and its answer hidden |
+| `CheckForUpdates` | In standalone builds, `true` asks GitHub at most once a day whether there is a newer release; `update-state.json` caches the answer and conditional requests avoid spending the rate limit on unchanged results. `false` means no request at all. Microsoft Store builds ignore this setting: Store manages their updates and they never offer a GitHub ZIP |
 | `Jellyfin` | An optional server to browse. Empty, as it ships, means the feature is off entirely — see [A Jellyfin server](#a-jellyfin-server) |
 | `JellyfinSftp` | An optional SFTP account on the machine running that server, which is what makes **Upload to Jellyfin** appear. Empty, as it ships, means no upload button anywhere — see [Sending a film the other way](#sending-a-film-the-other-way) |
 
@@ -1323,7 +1323,8 @@ downloads page footer, describes Firebase Hosting request data, Google Fonts,
 GitHub release requests, browser-only device detection and privacy contact
 details. The policy is a standalone static page with no scripts or external
 fonts; it covers the website rather than the desktop application's features.
-It deploys with the rest of `web/downloads/`, with no build step. Run the site's
+It deploys with the rest of `web/downloads/`; deployment injects only the public
+Store listing configuration, with no frontend build dependencies. Run the site's
 checks with `node --test web/downloads/*.test.js`.
 
 Once you are running a build, it tells you itself when a newer one exists: a
@@ -1332,13 +1333,55 @@ machine into your downloads folder and open it. Nothing installs itself — see
 [Known gaps](#known-gaps) — so the last step is the same drag or unzip described
 below. `"CheckForUpdates": false` in `appsettings.json` switches the check off.
 
+### Microsoft Store package preparation
+
+There is a separate Windows x64 MSIX build for the reserved **UrActor.UrDatabase**
+product, targeting Windows 10 1809 or later. It is the same full-trust desktop
+app, not a UWP rewrite: folder scanning, default-player playback, external VLC,
+Jellyfin and downloads retain normal user permissions. Store builds use
+Store-managed updates, never the GitHub update banner or cached ZIP offers.
+
+The **Microsoft Store package** workflow produces an **unsigned Store-upload
+artifact**, not an installable signed download. Microsoft signs it after
+certification; adding this build does not publish the app or certify it. The
+GitHub ZIP remains unsigned. See [Store packaging](docs/releases.md#microsoft-store-msix)
+for the artifact, local Windows SDK command and remaining listing/review steps.
+
+**Branch and pull-request artifacts contain no metadata API keys.** Supply your
+own keys in settings if using one of those packages. Trusted `main` builds use
+the existing optional CI metadata keys; they are the production submission path.
+
+The Store build starts with a separate profile, logically
+`%APPDATA%\UrDatabase.Store`, subject to Windows' package-data virtualization.
+It does not import, move or overwrite `%APPDATA%\UrDatabase` from a ZIP install.
+Settings opens normally for the new profile. Package-private data may be removed
+on uninstall; back it up before uninstalling. Explicit user-configured paths and
+`URDATABASE_DATA_DIR` are still honoured, so do not point two running copies at
+the same catalogue.
+
+After the first manual Store release is live, CI can submit later releases
+automatically. This is opt-in: a successful versioned `main` release builds the
+MSIX on Windows, and a separate protected job submits it for certification.
+Existing manual/pending submissions block automation instead of being deleted.
+Microsoft still controls certification and signing; a submitted update is not
+necessarily published. [Setup and recovery](docs/releases.md#automatic-store-updates)
+cover the three Entra credentials, GitHub environment and enablement variable.
+
+The public Store ID is **`9N6B4KTL3LB2`**, configured in
+`packaging/windows/store-product.json`. After confirming the listing is public,
+set repository variable `STORE_LISTING_LIVE=true` and run **Deploy the downloads
+site** on `main`. Windows visitors then get the permanent Store link with the
+unsigned ZIP as an alternative; Mac downloads are unchanged. Until that explicit
+confirmation the Store button stays hidden. The site never guesses the Store
+version from GitHub's newest release.
+
 ### Opening it the first time
 
 On a Mac, open the `.dmg` and drag **UrDatabase** to Applications. The build is
 signed with an Apple Developer ID, notarized by Apple and stapled, so it opens
 like any other application. There is no terminal command and nothing to clear.
 
-Windows builds are currently unsigned. SmartScreen may show *"Windows protected
+Windows ZIP builds are currently unsigned. SmartScreen may show *"Windows protected
 your PC"* because the download has no established reputation or verified
 publisher. This is different from antivirus detecting or quarantining a named
 threat. Do not disable antivirus or add exclusions to work around a detection:
@@ -1361,6 +1404,14 @@ for the release-signing options and their limits.
 `Directory.Build.props` at the repository root holds a single `<Version>`, and
 that one line is the source of truth for everything below. Do not put a version
 in the `.csproj`.
+
+`store.yml` separately builds an MSIX on Windows using MakePri and MakeAppx,
+attaching it only to that Actions run. It does not alter the existing macOS-hosted
+release jobs or their required check names. Its Store-only identity version is
+`(major + 1).minor.patch.0`: Store forbids a zero major and reserves the fourth
+component. The product version, tags and normal download names are unchanged.
+The Store distinction is compiled with `-p:DistributionChannel=MicrosoftStore`;
+ordinary builds default to `Standalone`, and an unknown value fails the build.
 
 - **On a pull request**, the workflows restore, build and test, then publish
   each runtime identifier and attach the results to the run. You can download
@@ -1439,11 +1490,12 @@ tests/UrDatabase.Tests/      xUnit suite; TempLog is how a test class stays out
                              stops it forgetting
 tool/                        Python helpers with their own unittest suite:
                              the version-bump check, the release gate and the
-                             macOS bundler
+                             macOS bundler and Store payload/archive validation
+packaging/windows/           Store manifest and PNG assets derived from the app icon
 Directory.Build.props        the single <Version> for the whole solution
 web/                         the downloads site served by Firebase Hosting
 docs/                        design notes
-scripts/                     local helper scripts, and the macOS signing script
+scripts/                     local helpers, macOS signing, Windows MSIX packaging
 .github/                     workflows, issue templates, the PR template
 ```
 
@@ -1692,13 +1744,15 @@ Stated plainly, so nobody has to find out by using it:
   setting for the file's location and no way to trust a key from inside the app —
   a host with no entry is refused, and adding one is a step you take with
   `ssh-keyscan` or by connecting once with `sftp`.
-- **Windows builds are not signed.** A signing provider and verified publisher
+- **Windows ZIP builds are not signed.** A signing provider and verified publisher
   identity still need to be arranged and wired into releases. Signing identifies
   the publisher and lets reputation build; it does not guarantee that SmartScreen
   or antivirus will accept a new release. The
   [available options](docs/releases.md#windows-signing-and-antivirus-warnings)
-  include free signing for qualifying open-source projects.
-- **The app tells you about an update and fetches it; it does not install it.**
+  are separate from Store signing. The MSIX workflow prepares an unsigned
+  Store-upload package; listing, full-trust review and certification remain manual.
+- **Standalone builds fetch updates but do not install them.** Store builds
+  instead leave updating entirely to Microsoft Store.
   **Update now** downloads the right build for the machine and opens it, and
   there it stops: you still drag UrDatabase into Applications or unzip it over
   the old copy, and you still quit the running app first. Replacing itself is not

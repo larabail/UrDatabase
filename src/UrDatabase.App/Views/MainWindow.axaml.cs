@@ -294,7 +294,7 @@ namespace UrDatabase.Views
             // window, and an unreachable GitHub costs a background task and nothing on screen.
             // Switched off in configuration it does not happen at all, rather than happening and
             // having its answer hidden — an install kept off the network stays off it.
-            if (_config.CheckForUpdates)
+            if (AppDistribution.ShouldCheckForUpdates(_config.CheckForUpdates))
                 Dispatcher.UIThread.Post(() => _ = CheckForUpdateAsync());
         }
 

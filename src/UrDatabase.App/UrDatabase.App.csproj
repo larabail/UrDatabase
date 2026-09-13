@@ -25,6 +25,10 @@
 
   <ItemGroup>
     <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
+      <_Parameter1>DistributionChannel</_Parameter1>
+      <_Parameter2>$(DistributionChannel)</_Parameter2>
+    </AssemblyAttribute>
+    <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
       <_Parameter1>TmdbApiKey</_Parameter1>
       <_Parameter2>$(TmdbApiKey)</_Parameter2>
     </AssemblyAttribute>
@@ -57,7 +61,7 @@
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
     <!-- Untracked local override. The condition keeps the build green when it is absent. -->
-    <Content Include="appsettings.json" Condition="Exists('$(MSBuildProjectDirectory)/appsettings.json')">
+    <Content Include="appsettings.json" Condition="'$(DistributionChannel)' != 'MicrosoftStore' and Exists('$(MSBuildProjectDirectory)/appsettings.json')">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
     <Content Include="Data/schema.sql">
@@ -68,4 +72,15 @@
   <ItemGroup>
     <InternalsVisibleTo Include="UrDatabase.Tests" />
   </ItemGroup>
+
+  <Target Name="ValidateDistributionChannel" BeforeTargets="PrepareForBuild">
+    <Error Condition="'$(DistributionChannel)' != 'Standalone' and '$(DistributionChannel)' != 'MicrosoftStore'"
+           Text="DistributionChannel must be Standalone or MicrosoftStore." />
+  </Target>
+
+  <Target Name="WriteStoreDistribution" AfterTargets="Publish" Condition="'$(DistributionChannel)' == 'MicrosoftStore'">
+    <Error Condition="'$(RuntimeIdentifier)' != 'win-x64' or '$(SelfContained)' != 'true'"
+           Text="MicrosoftStore publishing requires --runtime win-x64 --self-contained true." />
+    <WriteLinesToFile File="$(PublishDir)distribution-channel.txt" Lines="$(DistributionChannel)" Overwrite="true" />
+  </Target>
 </Project>

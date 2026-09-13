@@ -221,7 +221,8 @@ h1 em { display: block; font-style: italic; font-weight: 400; color: var(--stamp
 }
 .button:active { transform: translate(2px, 2px); box-shadow: 2px 2px 0 rgba(27, 26, 22, .2); }
 
-.button.secondary { background: transparent; color: var(--ink); box-shadow: none; }
+.button.secondary,
+#store-win-x64:not([hidden]) ~ #button-win-x64 { background: transparent; color: var(--ink); box-shadow: none; }
 .button.secondary:hover { background: var(--card); color: var(--ink); border-color: var(--ink); }
 
 /* A build that has not been published. Said with a dashed edge, the way a
@@ -517,6 +518,9 @@ footer { padding: 2.2rem 0 3.4rem; border-top: 1.5px solid var(--ink); }
         <span class="rid">win-x64</span>
         <h3>Windows<span class="badge" id="badge-win-x64" hidden>Yours</span></h3>
         <p class="meta">Windows 10 or later &middot; 64-bit</p>
+        <a class="button store-button" id="store-win-x64" hidden>Get it from Microsoft Store</a>
+        <p class="asset" id="store-description" hidden>Windows 10 1809 or later.
+           Store-managed updates; its own setup and catalogue, separate from a ZIP install.</p>
         <a class="button" id="button-win-x64"
            href="https://github.com/larabail/UrDatabase/releases">Download for Windows</a>
         <p class="asset" id="asset-win-x64"><span class="skeleton">Checking&hellip;</span></p>
@@ -553,7 +557,7 @@ footer { padding: 2.2rem 0 3.4rem; border-top: 1.5px solid var(--ink); }
       </div>
 
       <div class="note">
-        <h3>Windows &mdash; &ldquo;Windows protected your PC&rdquo;</h3>
+        <h3>Windows ZIP &mdash; &ldquo;Windows protected your PC&rdquo;</h3>
         <p>SmartScreen shows this for any program it has not seen many people
            run before. Choose <strong>More info</strong>, then
            <strong>Run anyway</strong>.</p>

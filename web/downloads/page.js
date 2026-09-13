@@ -30,6 +30,8 @@ import {
   latestFor,
   selectReleases,
 } from './releases.js';
+import { STORE_CONFIG } from './store-config.js';
+import { applyStoreLinks } from './store.js';
 
 /** What each build is called where there is room to say it properly. */
 const PLATFORM_NAMES = {
@@ -359,10 +361,18 @@ function render({ releases, source }, detected) {
       + 'how often it can be asked. Every build is on the releases page.');
     el('hero-meta').textContent = '';
   }
+  applyStoreLinks(STORE_CONFIG, detected.platform, el);
 }
 
+let detectedPlatform = null;
 platformHints()
-  .then(async (hints) => render(await loadReleases(), detectPlatform(hints)))
+  .then(async (hints) => {
+    const detected = detectPlatform(hints);
+    detectedPlatform = detected.platform;
+    // The Store listing does not depend on GitHub answering, or having any releases.
+    applyStoreLinks(STORE_CONFIG, detectedPlatform, el);
+    render(await loadReleases(), detected);
+  })
   .catch((error) => {
     // Getting here is a bug in this file rather than a network problem, and it
     // must not leave the page half-updated: "Checking..." under a button that
@@ -373,4 +383,5 @@ platformHints()
     for (const platform of PLATFORMS) el(`asset-${platform}`).textContent = '';
     showStatus('The list of downloads could not be loaded. Every build is on '
       + 'the releases page.');
+    applyStoreLinks(STORE_CONFIG, detectedPlatform, el);
   });

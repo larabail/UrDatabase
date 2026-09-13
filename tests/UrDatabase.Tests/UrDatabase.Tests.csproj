@@ -14,5 +14,9 @@
 
   <ItemGroup>
     <ProjectReference Include="../../src/UrDatabase.App/UrDatabase.App.csproj" />
+    <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
+      <_Parameter1>ExpectedDistributionChannel</_Parameter1>
+      <_Parameter2>$(DistributionChannel)</_Parameter2>
+    </AssemblyAttribute>
   </ItemGroup>
 </Project>

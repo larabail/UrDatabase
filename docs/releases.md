@@ -39,6 +39,7 @@ That number is the only source of truth. Everything else is derived from it:
 | Windows, 64-bit | `UrDatabase-0.2.1-win-x64.zip` |
 | Bundle version | `CFBundleShortVersionString` and `CFBundleVersion` of `0.2.1` |
 | Assembly version | `0.2.1` |
+| Store MSIX identity version | `1.2.1.0` (Store-only major offset, final component reserved) |
 
 Nothing else needs editing to release, and nothing else should be edited
 instead.
@@ -164,9 +165,295 @@ browser, so a release published five minutes ago appears on it without any
 deploy. Tying the two together would mean the only way to fix a typo on a web
 page is to publish a version of the application.
 
+### `store.yml` — Microsoft Store upload artifacts
+
+A separate **Store upload package** job runs on `windows-2022`, with .NET 8,
+Python 3.12 and Windows SDK `10.0.26100.0`. It runs on pull requests and relevant
+pushes to `main`, and supports manual dispatch once the workflow exists on the
+default branch. A narrowly scoped push trigger on
+`larabail-microsoft-store-packaging` bootstraps the first Windows build without
+merging or opening a pull request. Pushing that branch requires owner approval.
+After this workflow is on `main`, the bootstrap branch entry can be removed.
+
+It compiles and tests the Store distribution, generates the icon resource index
+with MakePri, packs with MakeAppx's semantic validation enabled, and checks the
+actual archive against every staged byte. It uploads
+`UrDatabase-store-upload-x64-<run_number>` for 14 days. The artifact contains
+`UrDatabase-<version>-store-x64.msix` and its `.sha256` checksum, produced under
+`dist/store/` on the runner.
+
+This workflow has read-only repository permissions. Ordinary artifact builds
+never sign, create a release, upload to Partner Center or accept publishing terms.
+Only the opted-in release caller can start its separate submission job.
+Branch and PR
+builds are keyless; `main` builds use only the existing optional `TMDB_API_KEY`,
+`OMDB_API_KEY` and `URACTOR_API_KEY` secrets via the existing MSBuild properties.
+No signing credential or new metadata key is required.
+
+Branch/PR packages therefore need user-supplied metadata keys. Trusted `main`
+builds are the production submission path; they are not interchangeable with
+the keyless bootstrap artifact merely because the version is the same.
+
+The original four required check names and the macOS-hosted ZIP/DMG workflows
+are unchanged. Store artifacts are not attached to GitHub releases or advertised
+as signed downloads.
+
+## Microsoft Store MSIX
+
+### Identity, version and desktop permissions
+
+`packaging/windows/AppxManifest.xml` carries the public Partner Center identity:
+
+| Field | Exact value |
+| --- | --- |
+| `Identity/Name` | `UrActor.UrDatabase` |
+| `Identity/Publisher` | `CN=53FDA7CE-E84E-4A01-A833-B1C55FBA5540` |
+| `Properties/PublisherDisplayName` | `UrActor` |
+
+The display name is `UrDatabase`; confirm it matches the reserved Store name.
+The package is x64, targets `Windows.Desktop` from `10.0.17763.0` (Windows 10
+1809), and uses `Windows.FullTrustApplication` with restricted `runFullTrust`.
+It runs at the interactive user's normal permission level, not as administrator
+or in a UWP AppContainer. No `broadFileSystemAccess` or `unvirtualizedResources`
+capability is requested. Default-player launches, external VLC, local folder
+access, Jellyfin and SFTP stay desktop operations, subject to OS policy.
+
+Store requires a nonzero first version component and reserves the fourth as
+zero. The tooling derives **`(major + 1).minor.patch.0`** from the existing
+`Directory.Build.props` version, so product `0.22.0` becomes package `1.22.0.0`,
+and future product `1.0.0` becomes package `2.0.0.0`. This mapping is our
+convention, not a second version to maintain; it stays monotonic across 1.0.
+The tooling rejects values outside the 16-bit component range. Compare against
+any previously submitted package before adopting a different mapping.
+
+The 100/200/400% square logos, all five Store logo scales and a 44px unplated
+taskbar asset come from the existing 1024px app artwork, not a new icon design.
+Regenerate them on macOS with `bash scripts/make-store-assets.sh`; MakePri builds
+`resources.pri` on Windows for the qualified assets.
+
+### Build locally or obtain the CI artifact
+
+On Windows, install .NET 8 SDK, Python **3.12+**, PowerShell **7+**, and Windows
+SDK `10.0.26100.0` including MakeAppx and MakePri. From the repository root:
+
+```powershell
+pwsh -File scripts/package-store.ps1
+# For another installed SDK, explicitly select it:
+# pwsh -File scripts/package-store.ps1 -SdkVersion <installed-version>
+```
+
+The script publishes into a newly created temporary directory and removes it
+afterwards. It refuses to overwrite an existing output MSIX. It includes the
+self-contained .NET runtime and native dependencies, `Data/schema.sql` and the
+tracked blank `appsettings.example.json`, excluding debug symbols. It refuses
+unknown publish content, links, a non-x64 launcher, a framework-dependent build,
+modified templates or a standalone distribution. A developer's ignored
+`appsettings.json` is excluded by the Store build itself and rejected again by
+the packager. No catalogue, poster cache, logs or personal paths are copied.
+
+For CI, open **Actions > Microsoft Store package > successful run > Artifacts**,
+download `UrDatabase-store-upload-x64-<run_number>`, and extract its MSIX. A local
+Mac can cross-publish and stage the Windows payload, but **cannot produce the
+MSIX with this tooling**: the exact Windows step is **Build and inspect the
+unsigned MSIX**, which invokes `scripts/package-store.ps1`.
+
+**Unsigned is intentional.** Partner Center accepts `.msix` uploads and
+Microsoft signs them after certification. The unsigned artifact is not a
+double-click installer, does not remove SmartScreen warnings from the separate
+GitHub ZIP, and is not evidence of certification. Do not add test-certificate
+identities or an unsigned-testing publisher OID to the Store manifest.
+
+### Data and updates
+
+The compiled `DistributionChannel=MicrosoftStore` disables the GitHub release
+request and cached update offer even if `CheckForUpdates` is true. Store handles
+servicing; ordinary ZIP/macOS builds keep their existing updater.
+
+The Store's default logical profile is `%APPDATA%\UrDatabase.Store`, not the
+ZIP install's `%APPDATA%\UrDatabase`. Windows' AppData redirection and merged view
+vary by OS version; on modern Windows existing files can be modified in place.
+Relying on virtualization alone would therefore risk changing the old catalogue.
+The separate profile avoids reading it in the first place. There is no automatic
+import, move, legacy uninstall or cleanup; the new profile gets first-run setup.
+Do not promise that Store and ZIP copies share settings or scan results.
+
+Windows may keep the Store profile in package-private storage and remove it on
+uninstall. Back up the actual resolved profile before uninstalling; do not infer
+its physical location from the logical AppData path alone. Explicit config paths
+and `URDATABASE_DATA_DIR` still override defaults, so a person can deliberately
+share data, but simultaneous copies must not share a catalogue. Test only in a
+disposable Windows account/VM, with explicit scratch paths and fixture catalogues,
+never against a maintainer's real app data.
+
+### Before the owner submits
+
+1. On a disposable Windows test account/VM, unpack with `makeappx unpack /p
+   <package.msix> /d <scratch-layout>`. Microsoft documents development-mode
+   registration using `Add-AppxPackage -Register <scratch-layout>\AppxManifest.xml`
+   without changing the Store identity or signing the upload. Launch from Start
+   so the process has package identity; launching the loose EXE is not this test.
+2. Test Windows 10 1809 and current Windows 11 as a standard user, without
+   preinstalled .NET. Confirm first-run setup/restart persistence, folder scan,
+   local/default-player playback, VLC presence and absence, Jellyfin streaming
+   and downloads, offline behavior, no GitHub updater, and an upgrade preserving
+   the Store profile. Use fixture legacy data to check ZIP coexistence and
+   uninstall preservation. `MaxVersionTested` is a compatibility declaration,
+   not a claim that CI exercised that desktop; complete these checks before
+   submitting. WACK can be run as an additional diagnostic where available, but
+   Microsoft now marks it deprecated; neither it nor MakeAppx replaces review.
+3. Open the reserved **MSIX or PWA app** in Partner Center and upload the `.msix`
+   under **Packages**, not the EXE/MSI form asking for a package URL and silent
+   install parameters. Review all package warnings and version ordering.
+4. Complete pricing/availability, age ratings, description, screenshots, support
+   contact and privacy policy fields. Reuse and review the existing
+   [privacy page](https://urdatabase-downloads.web.app/privacy.html): it currently
+   describes the website, so its scope must accurately cover desktop data and
+   services before using it for the Store listing. Disclose the external-player
+   requirement at the beginning of the description (VLC for Jellyfin playback).
+5. Explain `runFullTrust` in **Submission options > Restricted capabilities**:
+   "UrDatabase is an existing .NET/Avalonia desktop media catalogue. It scans
+   user-selected local folders, persists a SQLite catalogue and settings, opens
+   local films in the user's default player, launches installed VLC for Jellyfin
+   streams, and downloads media at the user's request. It runs as the current
+   user without elevation. It does not download or install application updates;
+   Microsoft Store manages those." Supply reproducible test instructions and
+   appropriate test media/server access without exposing private credentials.
+6. The owner must explicitly approve submission. Store security, technical,
+   content and restricted-capability review, signing and publication are still
+   Microsoft's process. The first submission remains manual; opt-in CI can
+   request later updates, but cannot approve or bypass certification.
+
+Official references: [Store package/version requirements](https://learn.microsoft.com/en-us/windows/apps/publish/publish-your-app/msix/app-package-requirements),
+[desktop manifest and MakePri](https://learn.microsoft.com/en-us/windows/msix/desktop/desktop-to-uwp-manual-conversion),
+[MSIX Store minimum OS](https://learn.microsoft.com/en-us/windows/msix/supported-platforms#microsoft-store-submissions),
+[AppData virtualization](https://learn.microsoft.com/en-us/windows/msix/desktop/flexible-virtualization#default-msix-behavior),
+[restricted-capability review](https://learn.microsoft.com/en-us/windows/apps/publish/publish-your-app/msix/manage-submission-options#restricted-capabilities),
+[Store servicing and privacy policies](https://learn.microsoft.com/en-us/windows/apps/publish/store-policies).
+
+### Automatic Store updates
+
+Automation is **off by default**. `release.yml` calls the reusable `store.yml`
+only after a new version has actually been released successfully on `main`,
+and only when repository variable `STORE_PUBLISH_ENABLED` is exactly `true`.
+The existing macOS ZIP/DMG release job stays on macOS. The called workflow builds
+and inspects the self-contained MSIX on Windows, then a separate Linux job uses
+the Store submission REST API. Ordinary pushes, pull requests and direct
+**Microsoft Store package** dispatches build artifacts only.
+
+Complete these prerequisites before enabling it:
+
+1. Publish the first free MSIX submission manually. Finish the listing,
+   privacy/age ratings, desktop acceptance and `runFullTrust` approval above.
+   Prefer a trusted `main` artifact with the existing optional metadata defaults.
+   If the keyless branch package was already published, a later key-equipped
+   package needs a new product version: the updater refuses equal/older x64
+   versions rather than silently substituting different bytes.
+2. Associate an Entra tenant with Partner Center. Register an Entra application,
+   add it to Partner Center account users, and assign the **Manager** role.
+   Create a client secret and record its expiry for rotation. This REST flow
+   requires no Seller ID and no code-signing certificate.
+3. In GitHub, create environment **`microsoft-store`**, restrict its deployment
+   branches to `main`, and add its secrets: `AZURE_AD_TENANT_ID`,
+   `AZURE_AD_APPLICATION_CLIENT_ID`, and `AZURE_AD_APPLICATION_SECRET`.
+   Enter values directly in GitHub, never in source, issues, command examples or
+   chat. These credentials never enter the app, MSIX, website or artifacts.
+   Required reviewers are optional; enabling them makes submission and status
+   jobs wait for approval instead of operating unattended.
+4. Set repository Actions variable **`STORE_PUBLISH_ENABLED=true`**. The next
+   successful new-version release can submit an update. Removing the variable
+   or setting it to `false` disables submission and scheduled status checks,
+   without changing ordinary releases or artifact builds.
+
+`packaging/windows/store-product.json` is the public product-ID source:
+**`9N6B4KTL3LB2`**. The API response must also match the manifest's identity name
+and publisher. The tool requires a `Published` baseline, ordinary free pricing
+and recognizable individual x64 packages. It clones the published submission,
+preserves listings/pricing and other architectures, marks only old x64 packages
+for replacement, uploads a ZIP containing the new MSIX, and requests immediate
+publication **after successful certification**. Advanced pricing, ambiguous
+bundles/architectures and unsupported states fail closed for manual handling.
+The single-blob upload is capped at 64 MiB to work with older SAS service
+versions; larger packages need a manual upload or separately tested block-upload
+support, and are refused before creating a draft.
+
+**Draft safety and concurrency.** Publishing runs share a non-canceling lock,
+separate from cancelable artifact-only builds. A pending submission, including
+an unfinished manual draft or one still in certification, stops CI before it
+creates anything. The tool never sends DELETE, never adopts an existing draft,
+and never blindly retries a create/commit after a timeout. It checks ownership
+and unchanged draft contents before updating and committing its new draft.
+We deliberately do not use `msstore publish`: it deletes an existing pending
+draft before recreating one.
+
+Do not edit Partner Center, or run another publisher outside this workflow,
+while submission CI is running. Microsoft's REST API does not document an
+ETag/conditional-create contract, so CI serialization and rechecks cannot
+guarantee an atomic lock against a human editing the portal. Microsoft also
+warns that portal edits to an API-created draft can make it uncommittable.
+On conflict or uncertainty this implementation stops, leaves the draft intact,
+and asks for operator investigation rather than destructive recovery.
+
+The submitting run saves **`Store-submission-state-<run_number>-<run_attempt>`**
+for 90 days, including the returned submission ID, commit, package version,
+checksum and last phase, but never access tokens or upload SAS URLs. A
+`creating` phase without an ID means the create response was lost: inspect
+Partner Center instead of blindly rerunning. A `committing` phase likewise
+requires checking the known submission's status before any retry. Do not
+delete/recreate drafts automatically to make a red run green.
+
+The submit job waits up to ten minutes for commit processing. `PreProcessing`
+or `Certification` is **not** a claim that the app is live. **Microsoft Store
+status** (`store-status.yml`) checks the current pending/latest published
+submission every six hours, or by manual dispatch on `main`; it performs only
+GETs after authentication. It reports processing versus `Published` in the
+Actions summary and fails on certification/publishing failures or cancellation.
+Status checks do not resume, edit, commit or delete a draft. Follow failures
+in Partner Center; the published GitHub release remains available even when its
+separate Store update is blocked. A full release rerun with an existing tag
+does not manufacture another release; after investigation, use failed-job
+reruns where safe or publish a higher version.
+
+Offline coverage: `python3 -m unittest discover -s tool -p '*store*.py'`.
+Tests inject a fake HTTP transport and fixture submission data; no credentials,
+live API calls or local app-data access are required. Live authentication,
+ingestion and certification still need the owner's configured account and
+cannot be established by these tests.
+
+Official references: [submission API prerequisites and OAuth](https://learn.microsoft.com/en-us/windows/uwp/monetize/create-and-manage-submissions-using-windows-store-services),
+[submission lifecycle and portal-edit warning](https://learn.microsoft.com/en-us/windows/uwp/monetize/manage-app-submissions),
+[create a submission](https://learn.microsoft.com/en-us/windows/uwp/monetize/create-an-app-submission),
+[update its packages](https://learn.microsoft.com/en-us/windows/uwp/monetize/update-an-app-submission),
+[commit status](https://learn.microsoft.com/en-us/windows/uwp/monetize/get-status-for-an-app-submission),
+[CLI draft replacement behavior](https://learn.microsoft.com/en-us/windows/apps/publish/msstore-dev-cli/commands#publish-command).
+
+### Enable the website Store link
+
+The permanent destination is
+`https://apps.microsoft.com/detail/9N6B4KTL3LB2`, not an unsigned artifact URL.
+It is configured but **hidden by default**, because an assigned ID does not
+prove the first listing is public. After verifying it is live, set repository
+Actions variable **`STORE_LISTING_LIVE=true`** and dispatch **Deploy the downloads
+site** on `main`. Variable changes alone do not redeploy the site.
+
+Deployment runs `node tool/configure_store_site.mjs` before the existing site
+tests. It generates `web/downloads/store-config.js` from the public product JSON
+and updates the static HTML Store link, so the Windows card also works without
+JavaScript. Only the product ID and live flag enter the site, never publishing
+credentials. Invalid enabled IDs or flag values fail deployment. To preview
+locally: `STORE_LISTING_LIVE=true node tool/configure_store_site.mjs`; run the
+same command with `false` to restore the disabled configuration.
+
+With the link enabled, Windows visitors get a Store hero and card link;
+the GitHub ZIP stays an unsigned alternative and macOS is unchanged. The
+Store link works even when GitHub has no releases, fails or does not respond,
+and never labels the Store build with GitHub's version. Each Store update
+continues to use the same URL after certification; no redeploy is needed for
+each release. The card explains the separate first-run setup/catalogue.
+Set `STORE_LISTING_LIVE=false` and redeploy to hide it again.
+
 ## Why the builds are made on macOS
 
-Both `pr.yml`'s packaging job and `release.yml` run on `macos-14`, and that
+Both `pr.yml`'s download packaging job and `release.yml` run on `macos-14`, and that
 cannot be changed without breaking the Mac downloads.
 
 On Apple silicon the kernel refuses to execute an arm64 binary carrying no code
@@ -510,7 +797,13 @@ pass before merging**, and select, by these exact names:
 
 Without this the version check is advisory, and a pull request can merge red.
 
-### 4. Nothing else
+### 4. Complete the first Store submission, then opt in to updates
+
+Follow [Microsoft Store MSIX](#microsoft-store-msix) for the package and manual
+certification steps. Generating an artifact does not submit or publish it.
+[Automatic Store updates](#automatic-store-updates) and
+[the public website link](#enable-the-website-store-link) have separate opt-in
+variables; neither is activated just by adding a product ID.
 
 No Firestore, no Cloud Functions, no emulators, no Firebase Authentication. The
 application uses no Firebase at runtime at all; Hosting serves one static page
