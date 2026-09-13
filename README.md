@@ -193,7 +193,16 @@ It runs on Windows and macOS from one codebase, built with
   hand it the 1996 film's Oscars, which is the exact false attribution the year
   window exists to prevent (`Services/OscarsService`, `Services/UrActorService`,
   `Services/OscarMatch`).
-- **Posters fill themselves in.** Any film in the catalogue with no poster is
+- **Refresh without restarting.** The library, film details and programme pages
+  each have a **Refresh** button. Library refresh reloads the catalogue, syncs
+  Jellyfin when configured and retries missing artwork and genres without
+  clearing your search or filters. Film and programme refresh update the page
+  in place; programmes keep the selected season. Failed requests leave the
+  existing page usable and report the problem. **Scan Folders** remains separate:
+  Refresh does not walk your film folders or discard unsaved settings.
+  Background poster work already in flight carries on rather than being
+  duplicated; completed unsuccessful lookups get another attempt.
+- **Posters fill themselves in.** Any film in the catalogue with no poster or genres is
   looked up in the background, four at a time, through one shared connection to
   TMDB, and the result is written back to the database so the next launch is
   instant. A result is only accepted when its title agrees with the catalogued
@@ -202,7 +211,11 @@ It runs on Windows and macOS from one codebase, built with
   that contains it, so an unverified first hit would put another film's artwork on
   the card and leave it there. Posters are either referenced at their TMDB URL or
   downloaded into a local cache directory, depending on `DownloadPosters`
-  (`Services/PosterAutoLoader`, `Services/TmdbMatch`).
+  (`Services/PosterAutoLoader`, `Services/TmdbMatch`). Refresh also repairs
+  references to cached poster files that have been deleted. An identified film
+  is fetched by its stored TMDB id rather than searched again, so a corrected
+  match stays corrected; existing artwork is preserved when only genres are
+  missing.
 - **Say which film it actually is.** Two films share a title, a translation
   renames one, and a filename spells one wrongly, so some films are matched to
   the wrong TMDB record however careful the rules are. **Wrong film?** on the
@@ -1390,6 +1403,8 @@ src/UrDatabase.App/          the application: one cross-platform project
                              UrActor, Jellyfin, posters, playback reporting,
                              the update check
   Assets/UrDatabase.icns     the macOS application icon
+  Assets/UrDatabase.ico      multi-resolution Windows executable and window icon,
+                             embedded in the app rather than loaded from a loose file
   Data/schema.sql            the shape a database is created with; Database.Migrate
                              brings an older one up to it
   appsettings.example.json   configuration template, copied to the user's data
@@ -1473,8 +1488,8 @@ Stated plainly, so nobody has to find out by using it:
   opened for the first time is entirely in there. The shelves reorganise
   themselves roughly every fifteen seconds while this is going on rather than
   rearranging under your hands as each film lands. A film TMDB refuses to match
-  stays uncategorised for good, for the same reason it stays without a poster,
-  and **Wrong film?** is what fixes it. A **programme** the server never
+  stays uncategorised until a later **Refresh** finds a match or you choose one
+  through **Wrong film?**. A **programme** the server never
   identified has no genres either and shares that bucket, deliberately: both mean
   "nobody has said what this is", and the **Television** filter separates them
   again in a click.

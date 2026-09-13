@@ -20,5 +20,8 @@ namespace UrDatabase.Models
 
         /// <summary>Whether there is anything here worth putting on a card.</summary>
         public bool HasPoster => !string.IsNullOrWhiteSpace(PosterPath);
+
+        /// <summary>The file was restored at the same path, so string bindings will not reload it.</summary>
+        public bool ArtworkRepaired { get; init; }
     }
 }

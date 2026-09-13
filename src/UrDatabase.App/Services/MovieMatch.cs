@@ -95,7 +95,8 @@ namespace UrDatabase.Services
                 // server already described, keeps what it has: this runs on every launch for every
                 // film still missing a poster, and without the guard it would reassert TMDB's
                 // opinion over a better one indefinitely.
-                if (genres is not null) columns.Add("genres=COALESCE(NULLIF(genres, ''), @genres)");
+                if (genres is not null)
+                    columns.Add("genres=CASE WHEN genres IS NULL OR trim(genres, ' ' || char(9) || char(10) || char(13))='' THEN @genres ELSE genres END");
 
                 if (title is not null)
                 {

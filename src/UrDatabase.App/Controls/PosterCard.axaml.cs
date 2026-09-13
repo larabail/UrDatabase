@@ -77,6 +77,17 @@ namespace UrDatabase.Controls
             _loadCts?.Cancel();
         }
 
+        protected override void OnAttachedToVisualTree(VisualTreeAttachmentEventArgs e)
+        {
+            base.OnAttachedToVisualTree(e);
+            if (_loadCts is null || _loadCts.IsCancellationRequested) RetryArtwork();
+        }
+
+        public void RetryArtwork()
+        {
+            if (PosterImage.Source is null) LoadPoster(SourcePath);
+        }
+
         /// <summary>
         /// Paints the plate behind the artwork from the title, so that the second before a
         /// bitmap decodes is a colour rather than a hole, and so a poster with transparency

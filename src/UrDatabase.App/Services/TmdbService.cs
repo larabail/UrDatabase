@@ -247,8 +247,7 @@ namespace UrDatabase.Services
         /// The list is about twenty entries and changes perhaps once a year, so asking for it per
         /// film would be the same answer several thousand times over. Cached even when the request
         /// fails, deliberately: a library warming with no network would otherwise retry this once
-        /// per film, and the failure is not per-film information. An app restart asks again, which
-        /// is the right granularity for something this stable.
+        /// per film, and the failure is not per-film information. Refresh allows another attempt.
         ///
         /// The gate makes the several fetches running at once share one request rather than each
         /// making their own — without it, the first four films of every launch each asked.
@@ -265,6 +264,19 @@ namespace UrDatabase.Services
 
                 _genreNames = await FetchGenreNamesAsync(ct);
                 return _genreNames;
+            }
+            finally
+            {
+                _genreGate.Release();
+            }
+        }
+
+        internal async Task RetryGenreListAsync(CancellationToken ct)
+        {
+            await _genreGate.WaitAsync(ct);
+            try
+            {
+                if (_genreNames?.Count == 0) _genreNames = null;
             }
             finally
             {
@@ -542,6 +554,7 @@ namespace UrDatabase.Services
             [JsonPropertyName("title")] public string? Title { get; set; }
             [JsonPropertyName("overview")] public string? Overview { get; set; }
             // TMDB returns snake_case; case-insensitive matching alone never bound these.
+            [JsonPropertyName("poster_path")] public string? PosterPath { get; set; }
             [JsonPropertyName("backdrop_path")] public string? BackdropPath { get; set; }
             [JsonPropertyName("imdb_id")] public string? ImdbId { get; set; }
             [JsonPropertyName("runtime")] public int? Runtime { get; set; }

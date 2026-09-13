@@ -12,6 +12,7 @@ namespace UrDatabase.Tests
     {
         private readonly string _dir;
         private readonly SqliteConnection _conn;
+        private readonly TempLog _log = new();
 
         public ImdbRatingServiceTests()
         {
@@ -37,6 +38,7 @@ INSERT INTO movies (id, title, year) VALUES (42, 'Fight Club', 1999);";
 
         public void Dispose()
         {
+            _log.Dispose();
             _conn.Dispose();
             SqliteConnection.ClearAllPools();
             try { Directory.Delete(_dir, recursive: true); } catch { }
@@ -99,6 +101,26 @@ INSERT INTO movies (id, title, year) VALUES (42, 'Fight Club', 1999);";
             Assert.Null(await svc.GetRatingAsync(_conn, "tt0137523", movieId: 1));
             Assert.Null(await svc.GetRatingAsync(_conn, "tt0137523", movieId: 1));
 
+            Assert.Equal(1, lookup.Calls);
+        }
+
+        [Fact]
+        public async Task Explicit_refresh_forgets_only_the_requested_missing_rating()
+        {
+            using var seeding = new ImdbRatingService(new CountingLookup(null));
+            await seeding.GetRatingAsync(_conn, "tt0137523", movieId: 1);
+            await seeding.GetRatingAsync(_conn, "tt0111161", movieId: 2);
+            using var positive = new ImdbRatingService(new CountingLookup(8.2));
+            await positive.GetRatingAsync(_conn, "tt0000042", movieId: 42);
+
+            await ImdbRatingService.ForgetMissingAsync(_conn, "tt0137523");
+            await ImdbRatingService.ForgetMissingAsync(_conn, "tt0000042");
+
+            var lookup = new CountingLookup(7.3);
+            using var refreshed = new ImdbRatingService(lookup);
+            Assert.Equal(7.3, await refreshed.GetRatingAsync(_conn, "tt0137523", movieId: 1));
+            Assert.Null(await refreshed.GetRatingAsync(_conn, "tt0111161", movieId: 2));
+            Assert.Equal(8.2, await refreshed.GetRatingAsync(_conn, "tt0000042", movieId: 42));
             Assert.Equal(1, lookup.Calls);
         }
 

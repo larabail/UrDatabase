@@ -34,6 +34,10 @@ namespace UrDatabase.Views
         public MovieDetailsVm? Vm { get; private set; }
 
         private CancellationTokenSource? _cts;
+        private CancellationTokenSource? _refreshCts;
+        private MoviePageRefresh? _pageRefresh;
+        private bool _changingMovie;
+        private int _artworkGeneration;
 
         /// <summary>
         /// Where to record a file the user links by hand. Null when the screen was shown without
@@ -153,7 +157,9 @@ namespace UrDatabase.Views
             JellyfinClient? jellyfin = null,
             CancellationToken appLifetime = default,
             Func<string?, int?, CancellationToken, Task<OscarHonours>>? awardsLookup = null,
-            RelatedShelf? related = null)
+            RelatedShelf? related = null,
+            Func<string, CancellationToken, Task<JellyfinMovie?>>? movieLookup = null,
+            Func<MovieDetailsVm, CancellationToken, Task<RelatedShelf>>? relatedLookup = null)
         {
             // Leaving one film open behind another would strand its completion source and hang
             // whichever caller was awaiting it.
@@ -166,16 +172,22 @@ namespace UrDatabase.Views
             _awardsLookup = awardsLookup;
             _jellyfin = jellyfin;
             _appLifetime = appLifetime;
+            _pageRefresh = new MoviePageRefresh(config, dbPath, jellyfin, movieLookup, ratingLookup, awardsLookup, relatedLookup);
+            _changingMovie = false;
+            _refreshCts = null;
             DownloadedSomething = false;
             RenamedSomething = false;
             RequestedNext = null;
             DataContext = vm;
 
             _cts?.Cancel();
-            _cts = new CancellationTokenSource();
+            _cts?.Dispose();
+            _cts = CancellationTokenSource.CreateLinkedTokenSource(appLifetime);
             _closed = new TaskCompletionSource();
 
             Bind(vm);
+            SetRefreshControls(refreshing: false);
+            RefreshStatus.Text = "";
             ShowRelated(related);
             IsVisible = true;
 
@@ -200,8 +212,11 @@ namespace UrDatabase.Views
             // against a screen showing something else and report itself there.
             _downloadCts?.Cancel();
             _uploadCts?.Cancel();
+            _refreshCts?.Cancel();
 
             _cts?.Cancel();
+            _pageRefresh?.Dispose();
+            _pageRefresh = null;
             IsVisible = false;
 
             BackdropImage.Source = null;
@@ -371,18 +386,128 @@ namespace UrDatabase.Views
             StartAgainButton.IsVisible = PlayPrompts.CanResume(Vm, canSeek);
         }
 
-        private async void LoadArtwork(CancellationToken ct)
+        private void LoadArtwork(CancellationToken ct) => _ = LoadArtworkAsync(ct);
+
+        private async Task<IReadOnlyList<string>> LoadArtworkAsync(
+            CancellationToken ct,
+            bool keepCurrent = false,
+            (string? Poster, string? Backdrop)? previousSources = null)
         {
             var vm = Vm;
-            if (vm is null) return;
+            var generation = ++_artworkGeneration;
+            var notices = new List<string>();
+            if (vm is null) return notices;
 
-            var poster = await ImageLoader.LoadAsync(vm.PosterPath, ct);
-            if (ct.IsCancellationRequested || !ReferenceEquals(Vm, vm)) return;
-            PosterImage.Source = poster;
+            var poster = await MoviePageArtwork.RetryAsync<Avalonia.Media.IImage>(
+                vm.PosterPath, keepCurrent ? PosterImage.Source : null,
+                static async (source, token) => await ImageLoader.LoadAsync(source, token), ct);
+            if (ct.IsCancellationRequested || !ReferenceEquals(Vm, vm) || generation != _artworkGeneration) return notices;
+            PosterImage.Source = poster.Image;
+            if (poster.Failed)
+            {
+                if (keepCurrent && poster.Image is not null && previousSources?.Poster is { } previousPoster)
+                    vm.PosterPath = previousPoster;
+                notices.Add("The poster could not be loaded; existing artwork kept.");
+            }
 
-            var backdrop = await ImageLoader.LoadAsync(vm.BackdropUrl, ct);
-            if (ct.IsCancellationRequested || !ReferenceEquals(Vm, vm)) return;
-            BackdropImage.Source = backdrop;
+            var backdrop = await MoviePageArtwork.RetryAsync<Avalonia.Media.IImage>(
+                vm.BackdropUrl, keepCurrent ? BackdropImage.Source : null,
+                static async (source, token) => await ImageLoader.LoadAsync(source, token), ct);
+            if (ct.IsCancellationRequested || !ReferenceEquals(Vm, vm) || generation != _artworkGeneration) return notices;
+            BackdropImage.Source = backdrop.Image;
+            if (backdrop.Failed)
+            {
+                if (keepCurrent && backdrop.Image is not null && previousSources?.Backdrop is { } previousBackdrop)
+                    vm.BackdropUrl = previousBackdrop;
+                notices.Add("The backdrop could not be loaded; existing artwork kept.");
+            }
+            return notices;
+        }
+
+        private void UpdateRefreshButton()
+        {
+            var busy = _refreshCts is not null || _changingMovie ||
+                       _downloadCts is not null || _uploadCts is not null;
+            RefreshButton.IsEnabled = IsShowing && !busy;
+            LinkFileButton.IsEnabled = !busy;
+            CorrectMatchButton.IsEnabled = !busy;
+            DownloadButton.IsEnabled = !busy || _downloadCts is not null;
+            UploadButton.IsEnabled = !busy || _uploadCts is not null;
+        }
+
+        private void SetRefreshControls(bool refreshing)
+        {
+            RefreshButton.Content = refreshing ? "Refreshing…" : "Refresh";
+            UpdateRefreshButton();
+        }
+
+        private async void Refresh_Click(object? sender, RoutedEventArgs e)
+        {
+            var vm = Vm;
+            var refresh = _pageRefresh;
+            if (vm is null || refresh is null || !RefreshButton.IsEnabled) return;
+
+            using var cts = CancellationTokenSource.CreateLinkedTokenSource(_cts?.Token ?? default);
+            cts.CancelAfter(TimeSpan.FromSeconds(60));
+            _refreshCts = cts;
+            SetRefreshControls(refreshing: true);
+            RefreshStatus.Text = "Reloading movie details and artwork…";
+            var previousSources = (vm.PosterPath, vm.BackdropUrl);
+            var previousPoster = PosterImage.Source;
+            var previousBackdrop = BackdropImage.Source;
+            void KeepWorkingArtworkSources()
+            {
+                if (previousPoster is not null && ReferenceEquals(PosterImage.Source, previousPoster))
+                    vm.PosterPath = previousSources.PosterPath;
+                if (previousBackdrop is not null && ReferenceEquals(BackdropImage.Source, previousBackdrop))
+                    vm.BackdropUrl = previousSources.BackdropUrl;
+            }
+            try
+            {
+                var result = await refresh.LoadAsync(vm, cts.Token);
+                cts.Token.ThrowIfCancellationRequested();
+                if (result is null || !result.TryApply(Vm, cts.Token))
+                {
+                    if (ReferenceEquals(Vm, vm))
+                        RefreshStatus.Text = "The movie changed while refreshing. Try Refresh again.";
+                    return;
+                }
+                Bind(vm);
+                if (result.Related is not null) ShowRelated(result.Related);
+                // Always load again, even when the source string is unchanged: a failed image is
+                // not cached, and assigning the same bound path would never retry that request.
+                var artworkNotices = await LoadArtworkAsync(cts.Token, keepCurrent: true, previousSources: previousSources);
+                cts.Token.ThrowIfCancellationRequested();
+                if (!ReferenceEquals(Vm, vm)) return;
+                var notices = result.Notices.Concat(artworkNotices).ToList();
+                RefreshStatus.Text = notices.Count == 0
+                    ? "Movie refreshed."
+                    : string.Join(" ", notices);
+            }
+            catch (OperationCanceledException)
+            {
+                if (ReferenceEquals(Vm, vm) && _cts?.IsCancellationRequested == false)
+                {
+                    KeepWorkingArtworkSources();
+                    RefreshStatus.Text = "Refresh timed out. Available details are still shown; try Refresh again.";
+                }
+            }
+            catch
+            {
+                if (ReferenceEquals(Vm, vm))
+                {
+                    KeepWorkingArtworkSources();
+                    RefreshStatus.Text = "Refresh did not finish. Available details are still shown; try Refresh again.";
+                }
+            }
+            finally
+            {
+                if (ReferenceEquals(_refreshCts, cts))
+                {
+                    _refreshCts = null;
+                    if (ReferenceEquals(Vm, vm)) SetRefreshControls(refreshing: false);
+                }
+            }
         }
 
         /// <summary>
@@ -556,9 +681,11 @@ namespace UrDatabase.Views
             }
 
             var vm = Vm;
-            if (vm is null || _jellyfin is null || string.IsNullOrWhiteSpace(vm.RemoteId)) return;
+            if (vm is null || _refreshCts is not null || _changingMovie ||
+                _jellyfin is null || string.IsNullOrWhiteSpace(vm.RemoteId)) return;
 
             _downloadCts = CancellationTokenSource.CreateLinkedTokenSource(_cts?.Token ?? default);
+            UpdateRefreshButton();
             DownloadButton.Content = "Cancel";
             DownloadProgress.IsVisible = true;
             DownloadProgress.IsIndeterminate = true;
@@ -628,6 +755,7 @@ namespace UrDatabase.Views
                 DownloadProgress.IsVisible = false;
                 DownloadProgress.IsIndeterminate = false;
                 UpdateDownloadButton();
+                UpdateRefreshButton();
             }
         }
 
@@ -687,7 +815,7 @@ namespace UrDatabase.Views
 
             var vm = Vm;
             var settings = SftpSettings;
-            if (vm is null || settings is null || _jellyfin is null) return;
+            if (vm is null || _refreshCts is not null || _changingMovie || settings is null || _jellyfin is null) return;
 
             // Asked again here rather than trusted from when the button was drawn: the linked file
             // is ordinary local state and may have been moved or deleted since.
@@ -701,16 +829,29 @@ namespace UrDatabase.Views
 
             if (UploadPrompts.NeedsConfirmation(vm))
             {
-                var confirmed = await MessageBoxWindow.ConfirmAsync(
-                    Owner(),
-                    "UrDatabase",
-                    UploadPrompts.ConfirmationQuestion(vm),
-                    confirmText: "Upload");
-
-                if (!confirmed) return;
+                _changingMovie = true;
+                UpdateRefreshButton();
+                try
+                {
+                    var confirmed = await MessageBoxWindow.ConfirmAsync(
+                        Owner(),
+                        "UrDatabase",
+                        UploadPrompts.ConfirmationQuestion(vm),
+                        confirmText: "Upload");
+                    if (!confirmed || !ReferenceEquals(Vm, vm) || _cts?.IsCancellationRequested != false) return;
+                }
+                finally
+                {
+                    if (ReferenceEquals(Vm, vm))
+                    {
+                        _changingMovie = false;
+                        UpdateRefreshButton();
+                    }
+                }
             }
 
             _uploadCts = CancellationTokenSource.CreateLinkedTokenSource(_cts?.Token ?? default);
+            UpdateRefreshButton();
             UploadButton.Content = UploadPrompts.CancelLabel;
             UploadProgress.IsVisible = true;
             UploadProgress.IsIndeterminate = true;
@@ -777,50 +918,63 @@ namespace UrDatabase.Views
                 UploadProgress.IsVisible = false;
                 UploadProgress.IsIndeterminate = false;
                 UpdateUploadButton();
+                UpdateRefreshButton();
             }
         }
 
         private async void LinkFile_Click(object? sender, RoutedEventArgs e)
         {
-            if (Vm is null) return;
+            var vm = Vm;
+            if (vm is null || _refreshCts is not null || _changingMovie) return;
 
             var storage = TopLevel.GetTopLevel(this)?.StorageProvider;
             if (storage is null) return;
 
-            // Avalonia's StorageProvider replaces Microsoft.Win32.OpenFileDialog and is the
-            // only picker that works on macOS.
-            var videoFiles = new FilePickerFileType("Video files")
+            _changingMovie = true;
+            UpdateRefreshButton();
+            try
             {
-                Patterns = ScanService.SupportedExtensions.Select(ext => "*" + ext).ToArray(),
-                AppleUniformTypeIdentifiers = new[] { "public.movie" },
-                MimeTypes = new[] { "video/*" }
-            };
+                // Avalonia's StorageProvider replaces Microsoft.Win32.OpenFileDialog and is the
+                // only picker that works on macOS.
+                var videoFiles = new FilePickerFileType("Video files")
+                {
+                    Patterns = ScanService.SupportedExtensions.Select(ext => "*" + ext).ToArray(),
+                    AppleUniformTypeIdentifiers = new[] { "public.movie" },
+                    MimeTypes = new[] { "video/*" }
+                };
 
-            var picked = await storage.OpenFilePickerAsync(new FilePickerOpenOptions
-            {
-                Title = "Choose movie file",
-                AllowMultiple = false,
-                FileTypeFilter = new[] { videoFiles, FilePickerFileTypes.All }
-            });
+                var picked = await storage.OpenFilePickerAsync(new FilePickerOpenOptions
+                {
+                    Title = "Choose movie file",
+                    AllowMultiple = false,
+                    FileTypeFilter = new[] { videoFiles, FilePickerFileTypes.All }
+                });
+                if (!ReferenceEquals(Vm, vm) || _cts?.IsCancellationRequested != false) return;
 
-            var path = picked.Count > 0 ? picked[0].TryGetLocalPath() : null;
-            if (string.IsNullOrWhiteSpace(path)) return;
+                var path = picked.Count > 0 ? picked[0].TryGetLocalPath() : null;
+                if (string.IsNullOrWhiteSpace(path)) return;
 
-            // The picker's type filter is advisory — macOS honours it loosely and the dialog
-            // offers "All files" besides — so what was actually chosen is checked here, and the
-            // refusal is shown rather than swallowed: the user picked this file deliberately and
-            // is owed a reason.
-            var refusal = PlayTargetResolver.DescribeLinkRefusal(path);
-            if (refusal is not null)
-            {
-                await MessageBoxWindow.ShowAsync(Owner(), "UrDatabase", refusal);
-                return;
+                // The picker filter is advisory, so check the chosen path before linking it.
+                var refusal = PlayTargetResolver.DescribeLinkRefusal(path);
+                if (refusal is not null)
+                {
+                    await MessageBoxWindow.ShowAsync(Owner(), "UrDatabase", refusal);
+                    return;
+                }
+
+                vm.FilePath = path;
+                vm.FileMatch = PlayTargetKind.Linked;
+                RememberLink(path);
+                UpdateFileNote();
             }
-
-            Vm.FilePath = path;
-            Vm.FileMatch = PlayTargetKind.Linked;
-            RememberLink(path);
-            UpdateFileNote();
+            finally
+            {
+                if (ReferenceEquals(Vm, vm))
+                {
+                    _changingMovie = false;
+                    UpdateRefreshButton();
+                }
+            }
         }
 
         /// <summary>
@@ -867,7 +1021,8 @@ namespace UrDatabase.Views
         private async void CorrectMatch_Click(object? sender, RoutedEventArgs e)
         {
             var vm = Vm;
-            if (vm is null) return;
+            if (vm is null || _refreshCts is not null || _changingMovie ||
+                _downloadCts is not null || _uploadCts is not null) return;
 
             var owner = Owner();
             if (owner is null) return;
@@ -879,11 +1034,12 @@ namespace UrDatabase.Views
                 return;
             }
 
-            var chosen = await TmdbMatchWindow.ChooseAsync(owner, _config, vm.Title, vm.Year);
-            if (chosen is null) return;
-
+            _changingMovie = true;
+            UpdateRefreshButton();
             try
             {
+                var chosen = await TmdbMatchWindow.ChooseAsync(owner, _config, vm.Title, vm.Year);
+                if (chosen is null || !ReferenceEquals(Vm, vm) || _cts?.IsCancellationRequested != false) return;
                 await ApplyMatchAsync(vm, chosen);
             }
             catch (OperationCanceledException)
@@ -892,9 +1048,18 @@ namespace UrDatabase.Views
             }
             catch (Exception ex)
             {
-                AppLog.Write("posters.log", $"could not apply tmdb match {chosen.TmdbId} to movie {vm.LocalId}: {ex}");
-                await MessageBoxWindow.ShowAsync(owner, "UrDatabase",
-                    $"Could not fetch that film from TMDB:{Environment.NewLine}{ex.Message}");
+                AppLog.Write("posters.log", $"could not apply tmdb match to movie {vm.LocalId}: {ex}");
+                if (ReferenceEquals(Vm, vm))
+                    await MessageBoxWindow.ShowAsync(owner, "UrDatabase",
+                        $"Could not fetch that film from TMDB:{Environment.NewLine}{ex.Message}");
+            }
+            finally
+            {
+                if (ReferenceEquals(Vm, vm))
+                {
+                    _changingMovie = false;
+                    UpdateRefreshButton();
+                }
             }
         }
 
@@ -918,6 +1083,7 @@ namespace UrDatabase.Views
                 downloadPosters: _config.DownloadPosters);
 
             var poster = await ResolvePosterAsync(tmdb, vm.LocalId, chosen, _config.DownloadPosters, cts.Token);
+            if (cts.IsCancellationRequested || !ReferenceEquals(Vm, vm)) return;
 
             vm.TmdbId = chosen.TmdbId;
             if (poster is not null) vm.PosterPath = poster;
@@ -949,7 +1115,7 @@ namespace UrDatabase.Views
 
                 await MessageBoxWindow.ShowAsync(Owner(), "UrDatabase",
                     "The poster was changed, but TMDB did not return the rest of the details. " +
-                    "Reopening the film will try again.");
+                    "Use Refresh to try again.");
                 return;
             }
 

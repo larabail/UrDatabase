@@ -6,6 +6,7 @@
     <RootNamespace>UrDatabase</RootNamespace>
     <BuiltInComInteropSupport>true</BuiltInComInteropSupport>
     <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>Assets/UrDatabase.ico</ApplicationIcon>
     <!-- Dapper and System.Text.Json rely on reflection, so trimming stays off. -->
     <PublishTrimmed>false</PublishTrimmed>
   </PropertyGroup>
@@ -50,6 +51,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <AvaloniaResource Include="Assets/UrDatabase.ico" />
     <!-- Tracked template. Always shipped so a clean checkout has working defaults. -->
     <Content Include="appsettings.example.json">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>

@@ -362,8 +362,7 @@
                     </Grid>
                 </Border>
 
-                <!-- The top bar: the wordmark, search, and the three things you
-                     can do. -->
+                <!-- The top bar: the wordmark, search, and library actions. -->
                 <Grid Height="56"
                       Margin="24,0"
                       ColumnDefinitions="Auto,16,*,16,Auto">
@@ -381,9 +380,9 @@
                          look like a text input is a desktop text input nobody
                          types in. -->
                     <Panel Grid.Column="2"
-                           HorizontalAlignment="Left"
+                           HorizontalAlignment="Stretch"
                            VerticalAlignment="Center"
-                           Width="460">
+                           MaxWidth="460">
                         <TextBox x:Name="SearchBox"
                                  Classes="field"
                                  TextChanged="SearchBox_TextChanged"/>
@@ -408,6 +407,11 @@
                                 Spacing="8"
                                 VerticalAlignment="Center">
                         <Button Classes="ghost"
+                                x:Name="RefreshButton"
+                                Content="Refresh"
+                                ToolTip.Tip="Reload this page and retry missing artwork and metadata. Does not scan folders."
+                                Click="RefreshButton_Click"/>
+                        <Button Classes="ghost"
                                 x:Name="ScanButton"
                                 Content="Scan Folders"
                                 Click="ScanButton_Click"/>
@@ -419,6 +423,7 @@
                                 IsVisible="False"
                                 Click="JellyfinSyncButton_Click"/>
                         <Button Classes="ghost"
+                                x:Name="SettingsButton"
                                 Content="Settings"
                                 Click="Settings_Click"/>
                     </StackPanel>

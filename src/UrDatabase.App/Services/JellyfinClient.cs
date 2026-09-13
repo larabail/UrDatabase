@@ -632,6 +632,40 @@ namespace UrDatabase.Services
         }
 
         /// <summary>
+        /// Reloads one movie without listing the library. Missing items and items of another kind
+        /// return null; connection and permission failures remain errors the page can report.
+        /// </summary>
+        public async Task<JellyfinMovie?> GetMovieAsync(string itemId, CancellationToken ct = default) =>
+            (await GetPageItemAsync(itemId, "Movie", ItemFields, ct))?.ToMovie();
+
+        /// <summary>Reloads a programme's description, without fetching its seasons or episodes.</summary>
+        public async Task<JellyfinSeries?> GetSeriesDetailsAsync(string itemId, CancellationToken ct = default) =>
+            (await GetPageItemAsync(itemId, "Series", SeriesFields, ct))?.ToSeries();
+
+        private async Task<JellyfinItemDto?> GetPageItemAsync(
+            string itemId, string itemType, string fields, CancellationToken ct)
+        {
+            ct.ThrowIfCancellationRequested();
+            if (string.IsNullOrWhiteSpace(itemId))
+                throw new JellyfinException("This item has no id on the server, so its details cannot be reloaded.");
+
+            var id = itemId.Trim();
+            await ConnectAsync(ct);
+            ct.ThrowIfCancellationRequested();
+            var path = $"Users/{Uri.EscapeDataString(_userId!)}/Items/{Uri.EscapeDataString(id)}?Fields={fields}";
+            var item = await GetAsync<JellyfinItemDto>(path, ct, allowMissing: true);
+            ct.ThrowIfCancellationRequested();
+
+            // Unlike a library query, the single-item endpoint has no IncludeItemTypes filter.
+            // Validate both identity and type before a DTO mapper can turn a show into a film.
+            return item is not null &&
+                   string.Equals(item.Id?.Trim(), id, StringComparison.Ordinal) &&
+                   string.Equals(item.Type?.Trim(), itemType, StringComparison.OrdinalIgnoreCase)
+                ? item
+                : null;
+        }
+
+        /// <summary>
         /// Progress is reported per page rather than per film so a slow server still says
         /// something without flooding the status line.
         /// </summary>
@@ -925,17 +959,18 @@ namespace UrDatabase.Services
 
         // ---------- plumbing ----------
 
-        private async Task<T?> GetAsync<T>(string relativePath, CancellationToken ct)
+        private async Task<T?> GetAsync<T>(string relativePath, CancellationToken ct, bool allowMissing = false)
         {
             using var request = new HttpRequestMessage(HttpMethod.Get, BuildUri(relativePath));
             request.Headers.TryAddWithoutValidation("Authorization", BuildAuthorizationHeader(_token));
 
             using var response = await SendAsync(request, ct);
+            if (allowMissing && response.StatusCode == HttpStatusCode.NotFound) return default;
 
             if (!response.IsSuccessStatusCode)
             {
-                // Every path this client asks for exists on every Jellyfin server, so a 404 here
-                // is not a missing item — it is an address that answers without being Jellyfin.
+                // The non-item endpoints exist on every Jellyfin server, so their 404 indicates
+                // an address that answers without being Jellyfin. A removed item is handled above.
                 var state = JellyfinDiagnostics.FromStatusCode(response.StatusCode);
                 throw new JellyfinException(
                     JellyfinDiagnostics.Describe(state, _settings.ServerUrl, (int)response.StatusCode));

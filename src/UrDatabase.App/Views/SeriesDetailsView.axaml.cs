@@ -36,11 +36,12 @@ namespace UrDatabase.Views
         /// <summary>The episodes of the selected season.</summary>
         public ObservableCollection<EpisodeRow> Episodes { get; } = new();
 
-        private CancellationTokenSource? _cts;
+        private SeriesRefreshSession? _session;
         private TaskCompletionSource? _closed;
 
         private SeriesLoader? _loader;
         private JellyfinClient? _jellyfin;
+        private Func<string?, CancellationToken, Task<double?>>? _loadRating;
 
         /// <summary>
         /// Which season is on screen, by name. Kept rather than an index because a refresh from
@@ -89,35 +90,45 @@ namespace UrDatabase.Views
         /// <param name="openAtSeason">
         /// The season to open on, when the caller knows which one is wanted.
         /// </param>
+        /// <param name="loadRating">Retries the IMDb lookup during a manual refresh.</param>
         public Task ShowAsync(
             SeriesDetailsVm vm,
             SeriesLoader? loader = null,
             JellyfinClient? jellyfin = null,
             CancellationToken appLifetime = default,
-            int? openAtSeason = null)
+            int? openAtSeason = null,
+            Func<string?, CancellationToken, Task<double?>>? loadRating = null)
         {
             if (_closed is not null) Close();
 
             Vm = vm;
             _loader = loader;
             _jellyfin = jellyfin;
+            _loadRating = loadRating;
             _selectedSeason = null;
             _openAtSeason = openAtSeason;
             _appLifetime = appLifetime;
 
-            _cts?.Cancel();
-            _cts = new CancellationTokenSource();
+            var session = _session = new SeriesRefreshSession(appLifetime);
             _closed = new TaskCompletionSource();
 
-            Bind(vm);
+            BindMetadata(vm);
+            Seasons.Clear();
+            Episodes.Clear();
+            SeasonRow.IsVisible = false;
+            SetEpisodeNote("Looking for episodes…");
+            NoEpisodesText.IsVisible = false;
+            SetRefreshNote("");
+            RefreshButton.Content = "Refresh";
             IsVisible = true;
 
             // Focus has to land inside this screen or Escape and the arrow keys keep going to the
             // library underneath, which is still there and still focusable.
             BackButton.Focus();
 
-            LoadArtwork(_cts.Token);
-            LoadEpisodes(_cts.Token);
+            _ = RunPageWorkAsync(session, ct => Task.WhenAll(
+                LoadArtworkAsync(vm, session, ct),
+                LoadEpisodesAsync(vm, loader, session, ct)), manual: false);
 
             return _closed.Task;
         }
@@ -130,7 +141,9 @@ namespace UrDatabase.Views
         {
             if (_closed is null) return;
 
-            _cts?.Cancel();
+            _session?.Dispose();
+            _session = null;
+            RefreshButton.IsEnabled = false;
             IsVisible = false;
 
             BackdropImage.Source = null;
@@ -142,11 +155,12 @@ namespace UrDatabase.Views
             var closed = _closed;
             _closed = null;
             Vm = null;
+            _loadRating = null;
 
             closed.TrySetResult();
         }
 
-        private void Bind(SeriesDetailsVm vm)
+        private void BindMetadata(SeriesDetailsVm vm)
         {
             TitleText.Text = vm.Title;
             FactsList.ItemsSource = DetailFacts.For(vm);
@@ -167,13 +181,6 @@ namespace UrDatabase.Views
             CastList.ItemsSource = cast;
             NoCastText.Text = MissingMetadata.CreditsNotice(isRemote: true, tmdbConfigured: false);
             NoCastText.IsVisible = cast.Count == 0;
-
-            Seasons.Clear();
-            Episodes.Clear();
-            SeasonRow.IsVisible = false;
-
-            SetEpisodeNote("Looking for episodes…");
-            NoEpisodesText.IsVisible = false;
         }
 
         /// <summary>
@@ -181,40 +188,100 @@ namespace UrDatabase.Views
         /// in <see cref="SeriesLoader"/> because only this screen knows whether it is still the
         /// screen the answer was asked for.
         /// </summary>
-        private async void LoadEpisodes(CancellationToken ct)
+        private async Task LoadEpisodesAsync(
+            SeriesDetailsVm vm, SeriesLoader? loader, SeriesRefreshSession session, CancellationToken ct)
         {
+            if (loader is null)
+            {
+                if (IsCurrent(session)) ShowEpisodes(SeriesContents.Empty, cached: false);
+                return;
+            }
+
+            var seriesId = vm.RemoteId;
+            var cached = await Task.Run(() => loader.LoadCached(seriesId), ct);
+            if (!IsCurrent(session)) return;
+            if (!cached.IsEmpty) ShowEpisodes(cached, cached: true);
+
+            var fresh = await loader.RefreshAsync(seriesId, ct);
+            if (!IsCurrent(session)) return;
+            ShowEpisodes(fresh, cached: false);
+        }
+
+        public Task RefreshAsync()
+        {
+            var session = _session;
             var vm = Vm;
             var loader = _loader;
-            if (vm is null || loader is null)
+            var client = _jellyfin;
+            var loadRating = _loadRating;
+            if (session is null || vm is null || !IsCurrent(session)) return Task.CompletedTask;
+            if (loader is null || client is null)
             {
-                ShowEpisodes(SeriesContents.Empty, cached: false);
-                return;
+                SetRefreshNote("No Jellyfin server is configured, so this programme cannot be refreshed.");
+                return Task.CompletedTask;
+            }
+
+            return RunPageWorkAsync(session, async ct =>
+            {
+                var result = await SeriesDetailsRefresh.LoadAsync(vm, loader, client, loadRating, ct);
+                if (!IsCurrent(session)) return;
+                Vm = result.Details;
+                BindMetadata(result.Details);
+                ShowEpisodes(result.Episodes, cached: false);
+                var artworkLoaded = await LoadArtworkAsync(result.Details, session, ct);
+                if (!IsCurrent(session)) return;
+                SetRefreshNote(string.Join(" ", new[]
+                {
+                    "Details refreshed.",
+                    result.Notice,
+                    artworkLoaded ? null : "Some artwork is unavailable; previous images kept."
+                }.Where(note => note is not null)));
+            }, manual: true);
+        }
+
+        private async Task RunPageWorkAsync(
+            SeriesRefreshSession session, Func<CancellationToken, Task> load, bool manual)
+        {
+            if (!IsCurrent(session) || session.IsBusy) return;
+            RefreshButton.IsEnabled = false;
+            if (manual)
+            {
+                RefreshButton.Content = "Refreshing…";
+                SetRefreshNote("Refreshing details, episodes and artwork…");
             }
 
             try
             {
-                var seriesId = vm.RemoteId;
-
-                var cached = await Task.Run(() => loader.LoadCached(seriesId), ct);
-                if (ct.IsCancellationRequested || !ReferenceEquals(Vm, vm)) return;
-
-                if (!cached.IsEmpty) ShowEpisodes(cached, cached: true);
-
-                var fresh = await loader.RefreshAsync(seriesId, ct);
-                if (ct.IsCancellationRequested || !ReferenceEquals(Vm, vm)) return;
-
-                ShowEpisodes(fresh, cached: false);
+                await session.RunAsync(load);
             }
             catch (OperationCanceledException)
             {
-                // The screen was closed, or the window is.
+                if (IsCurrent(session) && manual)
+                    SetRefreshNote("Refresh was interrupted. Try again.");
             }
             catch (Exception ex)
             {
-                AppLog.Write("jellyfin.log", JellyfinClient.Redact($"could not list the episodes: {ex.Message}"));
-                if (Seasons.Count == 0) SetEpisodeNote("The episodes of this programme could not be listed.");
+                if (!IsCurrent(session)) return;
+                AppLog.Write("jellyfin.log", JellyfinClient.Redact($"could not refresh the programme: {ex.Message}"));
+                if (manual)
+                    SetRefreshNote("Could not refresh this programme. Showing previous details; try again.");
+                else if (Seasons.Count == 0)
+                    SetEpisodeNote("The episodes of this programme could not be listed.");
+            }
+            finally
+            {
+                if (IsCurrent(session))
+                {
+                    RefreshButton.IsEnabled = true;
+                    RefreshButton.Content = "Refresh";
+                }
             }
         }
+
+        private bool IsCurrent(SeriesRefreshSession session) =>
+            ReferenceEquals(_session, session) && session.IsCurrent && IsShowing;
+
+        private async void Refresh_Click(object? sender, RoutedEventArgs e) => await RefreshAsync();
 
         /// <summary>
         /// Puts one answer on screen, keeping the season the user was reading selected when it
@@ -306,7 +373,7 @@ namespace UrDatabase.Views
 
             try
             {
-                using var deadline = CancellationTokenSource.CreateLinkedTokenSource(_cts?.Token ?? default);
+                using var deadline = CancellationTokenSource.CreateLinkedTokenSource(_session?.Token ?? default);
                 deadline.CancelAfter(TimeSpan.FromSeconds(12));
 
                 // The first point in this screen's life where the network is strictly needed: a
@@ -348,18 +415,24 @@ namespace UrDatabase.Views
             }
         }
 
-        private async void LoadArtwork(CancellationToken ct)
+        private async Task<bool> LoadArtworkAsync(
+            SeriesDetailsVm vm, SeriesRefreshSession session, CancellationToken ct)
         {
-            var vm = Vm;
-            if (vm is null) return;
-
             var poster = await ImageLoader.LoadAsync(vm.PosterPath, ct);
-            if (ct.IsCancellationRequested || !ReferenceEquals(Vm, vm)) return;
-            PosterImage.Source = poster;
+            if (!IsCurrent(session) || !ReferenceEquals(Vm, vm)) return false;
+            if (poster is not null) PosterImage.Source = poster;
 
             var backdrop = await ImageLoader.LoadAsync(vm.BackdropUrl, ct);
-            if (ct.IsCancellationRequested || !ReferenceEquals(Vm, vm)) return;
-            BackdropImage.Source = backdrop;
+            if (!IsCurrent(session) || !ReferenceEquals(Vm, vm)) return false;
+            if (backdrop is not null) BackdropImage.Source = backdrop;
+            return (poster is not null || string.IsNullOrWhiteSpace(vm.PosterPath))
+                && (backdrop is not null || string.IsNullOrWhiteSpace(vm.BackdropUrl));
+        }
+
+        private void SetRefreshNote(string text)
+        {
+            RefreshNote.Text = text;
+            RefreshNote.IsVisible = text.Length > 0;
         }
 
         private void SetEpisodeNote(string text)

@@ -86,17 +86,35 @@
         <DockPanel>
 
             <Border DockPanel.Dock="Top" Height="48" Padding="24,0">
-                <Button x:Name="BackButton"
-                        Classes="ghost"
-                        HorizontalAlignment="Left"
-                        VerticalAlignment="Center"
-                        Click="Back_Click"
-                        ToolTip.Tip="Esc">
-                    <StackPanel Orientation="Horizontal" Spacing="8">
-                        <TextBlock Text="←" FontSize="13"/>
-                        <TextBlock Text="Library"/>
-                    </StackPanel>
-                </Button>
+                <Grid ColumnDefinitions="Auto,16,*,16,Auto">
+                    <Button x:Name="BackButton"
+                            Grid.Column="0"
+                            Classes="ghost"
+                            HorizontalAlignment="Left"
+                            VerticalAlignment="Center"
+                            Click="Back_Click"
+                            ToolTip.Tip="Esc">
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <TextBlock Text="←" FontSize="13"/>
+                            <TextBlock Text="Library"/>
+                        </StackPanel>
+                    </Button>
+                    <Button x:Name="RefreshButton"
+                            Grid.Column="4"
+                            Classes="ghost"
+                            Content="Refresh"
+                            MinWidth="96"
+                            VerticalAlignment="Center"
+                            Click="Refresh_Click"
+                            ToolTip.Tip="Reload this programme's details, episodes and artwork"/>
+                    <TextBlock x:Name="RefreshNote"
+                               Grid.Column="2"
+                               Classes="dim"
+                               FontSize="11.5"
+                               VerticalAlignment="Center"
+                               TextWrapping="Wrap"
+                               IsVisible="False"/>
+                </Grid>
             </Border>
 
             <Border DockPanel.Dock="Bottom"

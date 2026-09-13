@@ -16,5 +16,8 @@
     <Application.Styles>
         <FluentTheme/>
         <StyleInclude Source="avares://UrDatabase.App/Styles/Theme.axaml"/>
+        <Style Selector=":is(Window)">
+            <Setter Property="Icon" Value="avares://UrDatabase.App/Assets/UrDatabase.ico"/>
+        </Style>
     </Application.Styles>
 </Application>
