@@ -3,6 +3,7 @@
 
 import argparse
 import copy
+from email.utils import formatdate
 import hashlib
 import json
 import os
@@ -134,7 +135,8 @@ class StoreApi:
         if size > MAX_UPLOAD_BYTES:
             raise StoreError("Upload exceeds the conservative 64 MiB single-blob limit.")
         self.send("PUT", url, {"Content-Type": "application/zip", "Content-Length": str(size),
-                              "x-ms-blob-type": "BlockBlob", "x-ms-version": "2021-12-02"},
+                              "x-ms-blob-type": "BlockBlob", "x-ms-version": "2021-12-02",
+                              "x-ms-date": formatdate(usegmt=True)},
                   path.read_bytes())
 
 

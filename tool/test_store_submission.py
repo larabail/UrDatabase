@@ -1,4 +1,5 @@
 import copy
+from email.utils import parsedate_to_datetime
 import json
 from pathlib import Path
 import tempfile
@@ -224,6 +225,7 @@ class StoreSubmissionTests(unittest.TestCase):
         self.assertEqual("Bearer fake-token", calls[1][2]["Authorization"])
         self.assertNotIn("Authorization", calls[2][2])
         self.assertEqual("BlockBlob", calls[2][2]["x-ms-blob-type"])
+        self.assertIsNotNone(parsedate_to_datetime(calls[2][2]["x-ms-date"]).tzinfo)
         with self.assertRaises(StoreError):
             api.upload("https://example.test/path?sig=fake", self.package)
 
