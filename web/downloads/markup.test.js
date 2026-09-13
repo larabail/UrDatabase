@@ -168,6 +168,11 @@ describe('what the page says', () => {
       assert.ok(html.includes(source), `no credit for ${source}`);
     }
   });
+
+  it('links to the privacy policy from the footer without JavaScript', () => {
+    const footer = html.match(/<footer\b[^>]*>([\s\S]*?)<\/footer>/)?.[1] || '';
+    assert.match(footer, /<a\b[^>]*href="privacy\.html"[^>]*>Privacy policy<\/a>/);
+  });
 });
 
 describe('the page as it is drawn', () => {
@@ -211,12 +216,13 @@ describe('the page as a document', () => {
   });
 
   it('references no file the site does not ship', () => {
-    // Three files are deployed: this page, page.js and releases.js. A local
-    // reference to anything else is a 404 that only shows up in production.
-    const shipped = new Set(['page.js', 'releases.js', 'index.html']);
+    // A local reference to anything else is a 404 that only shows up in production.
+    const shipped = new Set(['page.js', 'releases.js', 'index.html', 'privacy.html']);
     for (const match of html.matchAll(/(?:href|src)="(?!https?:|#|data:|mailto:)([^"]+)"/g)) {
-      assert.ok(shipped.has(match[1].replace(/^\.?\//, '')),
+      const file = match[1].replace(/^\.?\//, '');
+      assert.ok(shipped.has(file),
         `${match[1]} is referenced but is not one of the deployed files`);
+      assert.ok(readFileSync(join(HERE, file)).length > 0, `${file} is empty`);
     }
   });
 });
