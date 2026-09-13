@@ -1294,6 +1294,14 @@ page deployed to Firebase Hosting. Every asset is also on the
 builds as `UrDatabase-<version>-<rid>.dmg`, Windows as
 `UrDatabase-<version>-win-x64.zip`.
 
+The website's [privacy policy](web/downloads/privacy.html), linked from the
+downloads page footer, describes Firebase Hosting request data, Google Fonts,
+GitHub release requests, browser-only device detection and privacy contact
+details. The policy is a standalone static page with no scripts or external
+fonts; it covers the website rather than the desktop application's features.
+It deploys with the rest of `web/downloads/`, with no build step. Run the site's
+checks with `node --test web/downloads/*.test.js`.
+
 Once you are running a build, it tells you itself when a newer one exists: a
 banner above the library, with **Update now** to fetch the right file for the
 machine into your downloads folder and open it. Nothing installs itself — see
