@@ -100,11 +100,17 @@ namespace UrDatabase.Services
                 var configured = Expand(Environment.GetEnvironmentVariable(AppDataVariable));
                 if (configured.Length > 0) return Resolve(configured);
 
-                return Path.Combine(
-                    Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-                    AppFolderName);
+                return DefaultAppDataRoot(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData));
             }
         }
+
+        // MSIX's merged AppData view must not open the ZIP install's SQLite database or
+        // credentials. Each distribution starts independently; no implicit migration.
+        internal static string DefaultAppDataRoot(string applicationData, DistributionChannel? distribution = null) =>
+            Path.Combine(applicationData,
+                (distribution ?? AppDistribution.Current) == DistributionChannel.MicrosoftStore
+                    ? "UrDatabase.Store"
+                    : AppFolderName);
 
         private static string Resolve(string path)
         {

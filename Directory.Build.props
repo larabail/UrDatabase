@@ -1,7 +1,8 @@
 <Project>
   <!-- Single source of truth for the release version. CI reads this file. -->
   <PropertyGroup>
-    <Version>0.21.0</Version>
+    <Version>0.22.0</Version>
+    <DistributionChannel Condition="'$(DistributionChannel)' == ''">Standalone</DistributionChannel>
   </PropertyGroup>
 
   <PropertyGroup>

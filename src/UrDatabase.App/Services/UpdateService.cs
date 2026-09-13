@@ -60,6 +60,7 @@ namespace UrDatabase.Services
         private readonly string? _runtimeIdentifier;
         private readonly string? _statePath;
         private readonly Func<DateTimeOffset> _now;
+        private readonly bool _supportsGitHubUpdates;
 
         private readonly JsonSerializerOptions _json = new() { PropertyNameCaseInsensitive = true };
 
@@ -79,7 +80,8 @@ namespace UrDatabase.Services
             string? runtimeIdentifier = null,
             HttpMessageHandler? handler = null,
             string? statePath = null,
-            Func<DateTimeOffset>? now = null)
+            Func<DateTimeOffset>? now = null,
+            DistributionChannel? distribution = null)
         {
             _runningVersion = string.IsNullOrWhiteSpace(runningVersion) ? AppVersion.Current : runningVersion.Trim();
             _runtimeIdentifier = string.IsNullOrWhiteSpace(runtimeIdentifier)
@@ -87,6 +89,7 @@ namespace UrDatabase.Services
                 : runtimeIdentifier.Trim();
             _statePath = statePath;
             _now = now ?? (() => DateTimeOffset.UtcNow);
+            _supportsGitHubUpdates = AppDistribution.ShouldCheckForUpdates(true, distribution);
 
             _http = handler is null ? new HttpClient() : new HttpClient(handler);
             _http.Timeout = RequestTimeout;
@@ -115,6 +118,9 @@ namespace UrDatabase.Services
         /// </summary>
         public async Task<AvailableUpdate?> CheckAsync(CancellationToken ct = default)
         {
+            // Store updates must not replay a ZIP update cached by an unpackaged install either.
+            if (!_supportsGitHubUpdates) return null;
+
             var state = UpdateState.Load(_statePath);
             var now = _now();
 
