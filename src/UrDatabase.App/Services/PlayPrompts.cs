@@ -75,12 +75,17 @@ namespace UrDatabase.Services
         {
             if (vm is null) throw new ArgumentNullException(nameof(vm));
 
+            if (vm.IsLoadingFile)
+                return vm.IsRemote ? "Looking for a downloaded copy..." : "Finding the linked file...";
+
             if (vm.IsRemote)
             {
                 // A copy on this disk is the answer to every question the server raises, so it is
                 // said first: it plays whether or not the server is reachable.
                 if (!string.IsNullOrWhiteSpace(vm.DownloadedPath))
                     return $"Downloaded to {vm.DownloadedPath}. Plays with the server switched off.";
+
+                if (vm.IsConnecting) return "Connecting to your Jellyfin server...";
 
                 // Never the URL itself: it carries an access token.
                 if (string.IsNullOrWhiteSpace(vm.StreamUrl))
@@ -133,6 +138,9 @@ namespace UrDatabase.Services
         public static string? DescribeRefusal(MovieDetailsVm vm, Func<string, bool>? fileExists = null)
         {
             if (vm is null) throw new ArgumentNullException(nameof(vm));
+
+            if (vm.IsLoadingFile || (vm.IsConnecting && string.IsNullOrWhiteSpace(vm.DownloadedPath)))
+                return FileNote(vm);
 
             if (vm.IsRemote)
             {

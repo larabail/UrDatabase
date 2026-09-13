@@ -99,6 +99,13 @@
                 </Button>
             </Border>
 
+            <TextBlock x:Name="LoadNotice"
+                       DockPanel.Dock="Top"
+                       Margin="24,0,48,8"
+                       Foreground="{DynamicResource DimBrush}"
+                       TextWrapping="Wrap"
+                       IsVisible="False"/>
+
             <Border DockPanel.Dock="Bottom"
                     Padding="24,12,48,12"
                     Background="#B80B0A09"

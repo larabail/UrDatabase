@@ -261,7 +261,7 @@ namespace UrDatabase.Views
 
             // Runs after the poster drain in OnClosing, and has to: cancelling this first would
             // cut short the very fetches the drain is there to let finish.
-            Closed += (_, __) => { _cts.Cancel(); _progressTimer?.Stop(); _searchLoop.Dispose(); _posterLoader?.Dispose(); _ratings.Dispose(); _awards.Dispose(); _jellyfin?.Dispose(); };
+            Closed += (_, __) => { DetailsView.Close(); SeriesView.Close(); _cts.Cancel(); _progressTimer?.Stop(); _searchLoop.Dispose(); _posterLoader?.Dispose(); _ratings.Dispose(); _awards.Dispose(); _jellyfin?.Dispose(); };
 
             DataContext = this;
 
@@ -1556,14 +1556,19 @@ namespace UrDatabase.Views
         /// half of the screen. Hiding it also takes its buttons out of the tab order, which were
         /// otherwise still reachable, and still clickable, behind a screen covering them.
         /// </remarks>
-        private async Task ShowDetailsAsync(MovieDetailsVm vm, RelatedShelf? related = null)
+        private async Task ShowDetailsAsync(MovieDetailsVm vm, Func<DetailLoading, Task> enrich)
         {
             LibraryRoot.IsVisible = false;
+            using var loading = new DetailLoading(_cts.Token, message => DetailsView.ReportLoadNotice(vm, message));
+            var related = RelatedFilms.For(Array.Empty<TmdbMatch.Candidate>(), _allMovies, vm);
 
             try
             {
-                await DetailsView.ShowAsync(
-                    vm, _dbPath, _config, LoadImdbRatingAsync, _jellyfin, _cts.Token, LoadAwardsAsync, related);
+                await loading.ShowAsync(
+                    () => DetailsView.ShowAsync(
+                        vm, _dbPath, _config, LoadImdbRatingAsync, _jellyfin, _cts.Token,
+                        LoadAwardsAsync, related, loading.Cancel),
+                    enrich);
 
                 // A downloaded film is a row the library behind this screen does not have yet: it
                 // would still be shown as living only on the server until something reloaded it.
@@ -1573,6 +1578,7 @@ namespace UrDatabase.Views
             }
             finally
             {
+                if (ReferenceEquals(DetailsView.Vm, vm)) DetailsView.Close();
                 LibraryRoot.IsVisible = true;
             }
         }
@@ -1679,74 +1685,32 @@ namespace UrDatabase.Views
                     imageSize: _config.TmdbImageSize ?? "w780",
                     downloadPosters: false);
 
-                using var cts = CancellationTokenSource.CreateLinkedTokenSource(_cts.Token);
-                cts.CancelAfter(TimeSpan.FromSeconds(12));
-
-                // Asked by id when the catalogue knows which film this is, and only searched by
-                // title when it does not. Searching every time is what made a corrected match
-                // temporary: the answer was thrown away and the same wrong guess re-derived on the
-                // next open.
-                var storedTmdbId = ReadStoredTmdbId(m.Id);
-                var details = storedTmdbId is int knownId
-                    ? await tmdb.GetDetailsByIdAsync(knownId, cts.Token)
-                    : await tmdb.GetDetailsByTitleAsync(m.Title, m.Year, cts.Token);
-
-                List<string> cast = new();
-                List<string> crew = new();
-
-                if (details?.Id is int tmdbId)
-                {
-                    var credits = await tmdb.GetCreditsByIdAsync(tmdbId, cts.Token);
-                    cast = CreditLine.Cast(credits);
-                    crew = CreditLine.Crew(credits);
-                }
-
                 var vm = new MovieDetailsVm
                 {
                     LocalId = m.Id,
                     Title = m.Title,
                     Year = m.Year,
-                    TmdbId = details?.Id ?? storedTmdbId,
+                    TmdbId = m.TmdbId,
 
                     // The server's artwork when the catalogue has none of its own, which is what
                     // the card is already showing.
                     PosterPath = m.DisplayPosterPath,
-                    Overview = details?.Overview ?? "",
-                    Runtime = details?.Runtime,
-                    ImdbId = details?.ImdbId,
-                    Genres = details is null ? m.Genres ?? "" : CreditLine.Genres(details),
-                    BackdropUrl = string.IsNullOrWhiteSpace(details?.BackdropPath) ? null
-                                  : tmdb.BuildImageUrl(details!.BackdropPath!),
+                    Genres = m.Genres ?? "",
                     TmdbConfigured = !string.IsNullOrWhiteSpace(_config.TmdbApiKey),
+                    IsLoadingFile = true,
+                    IsLoadingMetadata = !string.IsNullOrWhiteSpace(_config.TmdbApiKey),
 
                     // Opened from disk, and the server has a copy too. Said on the facts row, in
                     // place of the badge the card carries.
                     IsOnServer = m.IsOnServer
                 };
-                vm.TopCast = cast;
-                vm.KeyCrew = crew;
 
-                // Anything TMDB did not answer, and the server can. Before the IMDb lookup below,
-                // because the id it is keyed on may be one of the gaps the server just filled.
                 if (m.IsOnServer) FillFromServer(vm, m.RemoteId);
 
-                vm.ImdbRating = await LoadImdbRatingAsync(vm.ImdbId, m.Id, cts.Token);
-
-                // Both halves of the merge matter here: main's play-target resolution decides
-                // which file Play opens and how sure the app is of it, and the details screen it
-                // was handed to is now a view inside this window rather than a dialog over it.
-                var target = FindPlayTargetForMovie(m);
-                vm.FilePath = target.FilePath;
-                vm.FileMatch = target.Kind;
-
-                // Read from the file Play would open, so the badges describe the copy the user is
-                // about to watch. A filename is a claim rather than a measurement and the screen
-                // says so; it is still the only thing a scanned film has.
-                vm.Media = LocalMedia.Describe(target.FilePath);
-
-                vm.Awards = await LoadAwardsAsync(vm.Title, vm.Year, cts.Token);
-
-                await ShowDetailsAsync(vm, await LoadRelatedAsync(vm, tmdb, cts.Token));
+                await ShowDetailsAsync(vm, loading => Task.WhenAll(
+                    LoadLocalFileAsync(vm, m, loading),
+                    LoadLocalMetadataAsync(vm, m, tmdb, loading),
+                    LoadMovieAwardsAsync(vm, loading)));
 
                 // The film may have been re-identified while the details screen was up, and the
                 // card behind it is still showing the poster that was wrong. Only when the screen
@@ -1756,11 +1720,93 @@ namespace UrDatabase.Views
                 if (!string.Equals(vm.PosterPath, m.DisplayPosterPath, StringComparison.Ordinal))
                     m.PosterPath = vm.PosterPath;
             }
+            catch (OperationCanceledException) when (_cts.IsCancellationRequested)
+            {
+                // The app is closing, not a metadata timeout.
+            }
             catch (Exception ex)
             {
                 await MessageBoxWindow.ShowAsync(this, "UrDatabase", $"Could not load details:{Environment.NewLine}{ex.Message}");
             }
         }
+
+        private async Task LoadLocalFileAsync(MovieDetailsVm vm, UiMovie movie, DetailLoading loading)
+        {
+            await loading.RunAsync("Local file", ct => Task.Run(() =>
+            {
+                var target = FindPlayTargetForMovie(movie);
+                return (Target: target, Media: LocalMedia.Describe(target.FilePath));
+            }, ct), found =>
+            {
+                vm.FilePath = found.Target.FilePath;
+                vm.FileMatch = found.Target.Kind;
+                vm.Media = found.Media;
+            });
+
+            if (loading.IsCancellationRequested) return;
+            vm.IsLoadingFile = false;
+            DetailsView.Refresh(vm);
+        }
+
+        private async Task LoadLocalMetadataAsync(MovieDetailsVm vm, UiMovie movie, TmdbService tmdb, DetailLoading loading)
+        {
+            // Read the persisted correction rather than re-identifying it from the title.
+            await loading.RunAsync("Catalogue match",
+                ct => Task.Run(() => ReadStoredTmdbId(movie.Id), ct),
+                id => vm.TmdbId = id);
+
+            if (vm.TmdbConfigured)
+            {
+                await loading.RunAsync("TMDB",
+                    ct => vm.TmdbId is int id
+                        ? tmdb.GetDetailsByIdAsync(id, ct)
+                        : tmdb.GetDetailsByTitleAsync(vm.Title, vm.Year, ct),
+                    details =>
+                    {
+                        if (details is null) return;
+                        vm.TmdbId = details.Id;
+                        vm.Overview = details.Overview ?? "";
+                        vm.Runtime = details.Runtime;
+                        vm.ImdbId = details.ImdbId;
+                        vm.Genres = CreditLine.Genres(details);
+                        vm.BackdropUrl = string.IsNullOrWhiteSpace(details.BackdropPath)
+                            ? null : tmdb.BuildImageUrl(details.BackdropPath);
+                        if (movie.IsOnServer) FillFromServer(vm, movie.RemoteId);
+                        DetailsView.Refresh(vm);
+                        DetailsView.RefreshRelated(vm, RelatedFilms.For(Array.Empty<TmdbMatch.Candidate>(), _allMovies, vm));
+                    });
+            }
+
+            await Task.WhenAll(
+                vm.TmdbConfigured && vm.TmdbId is int tmdbId
+                    ? loading.RunAsync("Cast and crew", ct => tmdb.GetCreditsByIdAsync(tmdbId, ct), credits =>
+                    {
+                        vm.TopCast = CreditLine.Cast(credits);
+                        vm.KeyCrew = CreditLine.Crew(credits);
+                        if (movie.IsOnServer) FillFromServer(vm, movie.RemoteId);
+                        DetailsView.Refresh(vm);
+                    })
+                    : Task.CompletedTask,
+                LoadMovieRatingAsync(vm, loading),
+                LoadMovieRelatedAsync(vm, tmdb, loading));
+
+            if (loading.IsCancellationRequested) return;
+            vm.IsLoadingMetadata = false;
+            DetailsView.Refresh(vm);
+        }
+
+        private Task LoadMovieRatingAsync(MovieDetailsVm vm, DetailLoading loading) =>
+            loading.RunAsync("IMDb rating",
+                ct => LoadImdbRatingAsync(vm.ImdbId, vm.LocalId > 0 ? vm.LocalId : null, ct),
+                rating => { vm.ImdbRating = rating; DetailsView.Refresh(vm); });
+
+        private Task LoadMovieAwardsAsync(MovieDetailsVm vm, DetailLoading loading) =>
+            loading.RunAsync("Awards", ct => LoadAwardsAsync(vm.Title, vm.Year, ct),
+                awards => { vm.Awards = awards; DetailsView.Refresh(vm); });
+
+        private Task LoadMovieRelatedAsync(MovieDetailsVm vm, TmdbService? tmdb, DetailLoading loading) =>
+            loading.RunAsync("Recommendations", ct => LoadRelatedAsync(vm, tmdb, ct),
+                related => DetailsView.RefreshRelated(vm, related));
 
         /// <summary>
         /// Lets the server describe a film this machine also has, wherever nothing else could.
@@ -1819,6 +1865,8 @@ namespace UrDatabase.Views
                     PosterPath = m.DisplayPosterPath,
                     BackdropUrl = _jellyfin.BuildBackdropUrl(film.ItemId),
                     IsRemote = true,
+                    IsConnecting = true,
+                    IsLoadingFile = true,
                     RemoteId = film.ItemId,
                     DownloadFolder = _config.DownloadFolder,
                     DatabasePath = _config.DatabasePath,
@@ -1840,30 +1888,14 @@ namespace UrDatabase.Views
                     Media = film.Media
                 };
 
-                using var cts = CancellationTokenSource.CreateLinkedTokenSource(_cts.Token);
-                cts.CancelAfter(TimeSpan.FromSeconds(12));
-
-                try
-                {
-                    await _jellyfin.ConnectAsync(cts.Token);
-                    vm.StreamUrl = _jellyfin.BuildStreamUrl(film.ItemId);
-                }
-                catch (JellyfinException ex)
-                {
-                    // Leaves StreamUrl null, which the details window explains for itself.
-                    AppLog.Write("jellyfin.log", JellyfinClient.Redact($"no stream url: {ex.Message}"));
-                }
-
-                // The IMDb id came from Jellyfin's own metadata, so this is a real IMDb rating and
-                // not the community number beside it. Keyed to the catalogue row when there is
-                // one — a film whose copy has gone still has a row that owns the rating — and to
-                // nothing at all for a film that only ever came from the server.
-                vm.ImdbRating = await LoadImdbRatingAsync(vm.ImdbId, vm.LocalId > 0 ? vm.LocalId : null, cts.Token);
-                vm.Awards = await LoadAwardsAsync(vm.Title, vm.Year, cts.Token);
-
-                await ShowDetailsAsync(vm, await LoadRelatedAsync(vm, null, cts.Token));
+                await ShowDetailsAsync(vm, loading => Task.WhenAll(
+                    LoadMovieStreamAsync(vm, loading),
+                    LoadDownloadedFileAsync(vm, loading),
+                    LoadMovieRatingAsync(vm, loading),
+                    LoadMovieAwardsAsync(vm, loading),
+                    LoadMovieRelatedAsync(vm, null, loading)));
             }
-            catch (OperationCanceledException)
+            catch (OperationCanceledException) when (_cts.IsCancellationRequested)
             {
                 // The window is closing.
             }
@@ -1871,6 +1903,30 @@ namespace UrDatabase.Views
             {
                 await MessageBoxWindow.ShowAsync(this, "UrDatabase", $"Could not load details:{Environment.NewLine}{ex.Message}");
             }
+        }
+
+        private async Task LoadMovieStreamAsync(MovieDetailsVm vm, DetailLoading loading)
+        {
+            await loading.RunAsync("Jellyfin connection", async ct =>
+            {
+                await _jellyfin!.ConnectAsync(ct);
+                return _jellyfin.BuildStreamUrl(vm.RemoteId!);
+            }, url => vm.StreamUrl = url);
+
+            if (loading.IsCancellationRequested) return;
+            vm.IsConnecting = false;
+            DetailsView.Refresh(vm);
+        }
+
+        private async Task LoadDownloadedFileAsync(MovieDetailsVm vm, DetailLoading loading)
+        {
+            await loading.RunAsync("Downloaded file",
+                ct => Task.Run(() => JellyfinDownload.FindExisting(vm.DownloadFolder, vm.Title, vm.Year), ct),
+                path => vm.DownloadedPath = path);
+
+            if (loading.IsCancellationRequested) return;
+            vm.IsLoadingFile = false;
+            DetailsView.Refresh(vm);
         }
 
         /// <summary>
@@ -1921,29 +1977,28 @@ namespace UrDatabase.Views
                     KeyCrew = show.Crew.ToList()
                 };
 
-                using var cts = CancellationTokenSource.CreateLinkedTokenSource(_cts.Token);
-                cts.CancelAfter(TimeSpan.FromSeconds(12));
-
-                // The IMDb id came from Jellyfin's own metadata, so this is a real IMDb rating and
-                // not the community number beside it. No local movie row owns it.
-                vm.ImdbRating = await LoadImdbRatingAsync(vm.ImdbId, null, cts.Token);
-
                 // Deliberately no awards lookup. The archive holds Academy Awards, a programme
                 // has never won one, and it is searched by title — so a series called "Fargo"
                 // would be handed the 1996 film's Oscars. Emmys are a different body with a
                 // different API and are not what this key buys.
                 LibraryRoot.IsVisible = false;
+                using var loading = new DetailLoading(_cts.Token, message => SeriesView.ReportLoadNotice(vm, message));
 
                 try
                 {
-                    await SeriesView.ShowAsync(vm, _series, _jellyfin, _cts.Token, openAtSeason);
+                    await loading.ShowAsync(
+                        () => SeriesView.ShowAsync(vm, _series, _jellyfin, _cts.Token, openAtSeason),
+                        load => load.RunAsync("IMDb rating",
+                            ct => LoadImdbRatingAsync(vm.ImdbId, null, ct),
+                            rating => SeriesView.UpdateRating(vm, rating)));
                 }
                 finally
                 {
+                    if (ReferenceEquals(SeriesView.Vm, vm)) SeriesView.Close();
                     LibraryRoot.IsVisible = true;
                 }
             }
-            catch (OperationCanceledException)
+            catch (OperationCanceledException) when (_cts.IsCancellationRequested)
             {
                 // The window is closing.
             }
@@ -2194,6 +2249,10 @@ namespace UrDatabase.Views
             {
                 using var conn = Database.Open(_dbPath);
                 return await _ratings.GetRatingAsync(conn, imdbId, movieId, ct);
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
             }
             catch (Exception ex)
             {
