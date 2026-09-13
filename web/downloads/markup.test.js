@@ -18,6 +18,8 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, it } from 'node:test';
+import { STORE_CONFIG } from './store-config.js';
+import { storeUrl } from './store.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const html = readFileSync(join(HERE, 'index.html'), 'utf8');
@@ -88,9 +90,13 @@ describe('the page without its script', () => {
   it('leads to the releases page from every button', () => {
     // The page is served fully written, so it is useful before page.js runs
     // and if it never does.
-    const buttons = [...html.matchAll(/<a class="button"[^>]*id="([^"]+)"[^>]*href="([^"]+)"/g)];
+    const buttons = [...html.matchAll(/<a class="button(?: [^"]+)?"[^>]*id="([^"]+)"[^>]*href="([^"]+)"/g)];
     assert.ok(buttons.length >= 4, 'expected the hero button and all three builds');
     for (const [, id, href] of buttons) {
+      if (id === 'store-win-x64') {
+        assert.equal(href, storeUrl(STORE_CONFIG));
+        continue;
+      }
       assert.ok(href.startsWith('https://github.com/larabail/UrDatabase/releases'),
         `${id} does not fall back to the releases page`);
     }

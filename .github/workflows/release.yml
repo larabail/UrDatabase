@@ -65,6 +65,8 @@ jobs:
     # the Linux rate, which is worth knowing before anybody flips this
     # repository back to private.
     runs-on: macos-14
+    outputs:
+      published: ${{ steps.gate.outputs.publish == 'true' && steps.publish.outcome == 'success' }}
     # Long, because notarization is a queue at Apple rather than work this
     # runner is doing: four submissions -- an app and a disk image for each of
     # the two macOS builds -- each usually a couple of minutes and occasionally
@@ -546,3 +548,19 @@ jobs:
               --method POST --input - --silent
 
           echo "Deployment $DEPLOYMENT closed as $STATE."
+
+  store:
+    name: Microsoft Store update
+    needs: release
+    if: >-
+      needs.release.outputs.published == 'true' && vars.STORE_PUBLISH_ENABLED == 'true' &&
+      github.ref == 'refs/heads/main' && github.repository == 'larabail/UrDatabase'
+    permissions:
+      contents: read
+    uses: ./.github/workflows/store.yml
+    with:
+      publish: true
+    secrets:
+      TMDB_API_KEY: ${{ secrets.TMDB_API_KEY }}
+      OMDB_API_KEY: ${{ secrets.OMDB_API_KEY }}
+      URACTOR_API_KEY: ${{ secrets.URACTOR_API_KEY }}

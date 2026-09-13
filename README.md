@@ -1323,7 +1323,8 @@ downloads page footer, describes Firebase Hosting request data, Google Fonts,
 GitHub release requests, browser-only device detection and privacy contact
 details. The policy is a standalone static page with no scripts or external
 fonts; it covers the website rather than the desktop application's features.
-It deploys with the rest of `web/downloads/`, with no build step. Run the site's
+It deploys with the rest of `web/downloads/`; deployment injects only the public
+Store listing configuration, with no frontend build dependencies. Run the site's
 checks with `node --test web/downloads/*.test.js`.
 
 Once you are running a build, it tells you itself when a newer one exists: a
@@ -1346,6 +1347,10 @@ certification; adding this build does not publish the app or certify it. The
 GitHub ZIP remains unsigned. See [Store packaging](docs/releases.md#microsoft-store-msix)
 for the artifact, local Windows SDK command and remaining listing/review steps.
 
+**Branch and pull-request artifacts contain no metadata API keys.** Supply your
+own keys in settings if using one of those packages. Trusted `main` builds use
+the existing optional CI metadata keys; they are the production submission path.
+
 The Store build starts with a separate profile, logically
 `%APPDATA%\UrDatabase.Store`, subject to Windows' package-data virtualization.
 It does not import, move or overwrite `%APPDATA%\UrDatabase` from a ZIP install.
@@ -1353,6 +1358,22 @@ Settings opens normally for the new profile. Package-private data may be removed
 on uninstall; back it up before uninstalling. Explicit user-configured paths and
 `URDATABASE_DATA_DIR` are still honoured, so do not point two running copies at
 the same catalogue.
+
+After the first manual Store release is live, CI can submit later releases
+automatically. This is opt-in: a successful versioned `main` release builds the
+MSIX on Windows, and a separate protected job submits it for certification.
+Existing manual/pending submissions block automation instead of being deleted.
+Microsoft still controls certification and signing; a submitted update is not
+necessarily published. [Setup and recovery](docs/releases.md#automatic-store-updates)
+cover the three Entra credentials, GitHub environment and enablement variable.
+
+The public Store ID is **`9N6B4KTL3LB2`**, configured in
+`packaging/windows/store-product.json`. After confirming the listing is public,
+set repository variable `STORE_LISTING_LIVE=true` and run **Deploy the downloads
+site** on `main`. Windows visitors then get the permanent Store link with the
+unsigned ZIP as an alternative; Mac downloads are unchanged. Until that explicit
+confirmation the Store button stays hidden. The site never guesses the Store
+version from GitHub's newest release.
 
 ### Opening it the first time
 

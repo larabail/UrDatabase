@@ -182,11 +182,17 @@ actual archive against every staged byte. It uploads
 `UrDatabase-<version>-store-x64.msix` and its `.sha256` checksum, produced under
 `dist/store/` on the runner.
 
-This workflow has read-only repository permissions. It never signs, creates a
-release, uploads to Partner Center or accepts publishing terms. Branch and PR
+This workflow has read-only repository permissions. Ordinary artifact builds
+never sign, create a release, upload to Partner Center or accept publishing terms.
+Only the opted-in release caller can start its separate submission job.
+Branch and PR
 builds are keyless; `main` builds use only the existing optional `TMDB_API_KEY`,
 `OMDB_API_KEY` and `URACTOR_API_KEY` secrets via the existing MSBuild properties.
 No signing credential or new metadata key is required.
+
+Branch/PR packages therefore need user-supplied metadata keys. Trusted `main`
+builds are the production submission path; they are not interchangeable with
+the keyless bootstrap artifact merely because the version is the same.
 
 The original four required check names and the macOS-hosted ZIP/DMG workflows
 are unchanged. Store artifacts are not attached to GitHub releases or advertised
@@ -314,7 +320,8 @@ never against a maintainer's real app data.
    appropriate test media/server access without exposing private credentials.
 6. The owner must explicitly approve submission. Store security, technical,
    content and restricted-capability review, signing and publication are still
-   Microsoft's process, not something this repository automates.
+   Microsoft's process. The first submission remains manual; opt-in CI can
+   request later updates, but cannot approve or bypass certification.
 
 Official references: [Store package/version requirements](https://learn.microsoft.com/en-us/windows/apps/publish/publish-your-app/msix/app-package-requirements),
 [desktop manifest and MakePri](https://learn.microsoft.com/en-us/windows/msix/desktop/desktop-to-uwp-manual-conversion),
@@ -322,6 +329,127 @@ Official references: [Store package/version requirements](https://learn.microsof
 [AppData virtualization](https://learn.microsoft.com/en-us/windows/msix/desktop/flexible-virtualization#default-msix-behavior),
 [restricted-capability review](https://learn.microsoft.com/en-us/windows/apps/publish/publish-your-app/msix/manage-submission-options#restricted-capabilities),
 [Store servicing and privacy policies](https://learn.microsoft.com/en-us/windows/apps/publish/store-policies).
+
+### Automatic Store updates
+
+Automation is **off by default**. `release.yml` calls the reusable `store.yml`
+only after a new version has actually been released successfully on `main`,
+and only when repository variable `STORE_PUBLISH_ENABLED` is exactly `true`.
+The existing macOS ZIP/DMG release job stays on macOS. The called workflow builds
+and inspects the self-contained MSIX on Windows, then a separate Linux job uses
+the Store submission REST API. Ordinary pushes, pull requests and direct
+**Microsoft Store package** dispatches build artifacts only.
+
+Complete these prerequisites before enabling it:
+
+1. Publish the first free MSIX submission manually. Finish the listing,
+   privacy/age ratings, desktop acceptance and `runFullTrust` approval above.
+   Prefer a trusted `main` artifact with the existing optional metadata defaults.
+   If the keyless branch package was already published, a later key-equipped
+   package needs a new product version: the updater refuses equal/older x64
+   versions rather than silently substituting different bytes.
+2. Associate an Entra tenant with Partner Center. Register an Entra application,
+   add it to Partner Center account users, and assign the **Manager** role.
+   Create a client secret and record its expiry for rotation. This REST flow
+   requires no Seller ID and no code-signing certificate.
+3. In GitHub, create environment **`microsoft-store`**, restrict its deployment
+   branches to `main`, and add its secrets: `AZURE_AD_TENANT_ID`,
+   `AZURE_AD_APPLICATION_CLIENT_ID`, and `AZURE_AD_APPLICATION_SECRET`.
+   Enter values directly in GitHub, never in source, issues, command examples or
+   chat. These credentials never enter the app, MSIX, website or artifacts.
+   Required reviewers are optional; enabling them makes submission and status
+   jobs wait for approval instead of operating unattended.
+4. Set repository Actions variable **`STORE_PUBLISH_ENABLED=true`**. The next
+   successful new-version release can submit an update. Removing the variable
+   or setting it to `false` disables submission and scheduled status checks,
+   without changing ordinary releases or artifact builds.
+
+`packaging/windows/store-product.json` is the public product-ID source:
+**`9N6B4KTL3LB2`**. The API response must also match the manifest's identity name
+and publisher. The tool requires a `Published` baseline, ordinary free pricing
+and recognizable individual x64 packages. It clones the published submission,
+preserves listings/pricing and other architectures, marks only old x64 packages
+for replacement, uploads a ZIP containing the new MSIX, and requests immediate
+publication **after successful certification**. Advanced pricing, ambiguous
+bundles/architectures and unsupported states fail closed for manual handling.
+The single-blob upload is capped at 64 MiB to work with older SAS service
+versions; larger packages need a manual upload or separately tested block-upload
+support, and are refused before creating a draft.
+
+**Draft safety and concurrency.** Publishing runs share a non-canceling lock,
+separate from cancelable artifact-only builds. A pending submission, including
+an unfinished manual draft or one still in certification, stops CI before it
+creates anything. The tool never sends DELETE, never adopts an existing draft,
+and never blindly retries a create/commit after a timeout. It checks ownership
+and unchanged draft contents before updating and committing its new draft.
+We deliberately do not use `msstore publish`: it deletes an existing pending
+draft before recreating one.
+
+Do not edit Partner Center, or run another publisher outside this workflow,
+while submission CI is running. Microsoft's REST API does not document an
+ETag/conditional-create contract, so CI serialization and rechecks cannot
+guarantee an atomic lock against a human editing the portal. Microsoft also
+warns that portal edits to an API-created draft can make it uncommittable.
+On conflict or uncertainty this implementation stops, leaves the draft intact,
+and asks for operator investigation rather than destructive recovery.
+
+The submitting run saves **`Store-submission-state-<run_number>-<run_attempt>`**
+for 90 days, including the returned submission ID, commit, package version,
+checksum and last phase, but never access tokens or upload SAS URLs. A
+`creating` phase without an ID means the create response was lost: inspect
+Partner Center instead of blindly rerunning. A `committing` phase likewise
+requires checking the known submission's status before any retry. Do not
+delete/recreate drafts automatically to make a red run green.
+
+The submit job waits up to ten minutes for commit processing. `PreProcessing`
+or `Certification` is **not** a claim that the app is live. **Microsoft Store
+status** (`store-status.yml`) checks the current pending/latest published
+submission every six hours, or by manual dispatch on `main`; it performs only
+GETs after authentication. It reports processing versus `Published` in the
+Actions summary and fails on certification/publishing failures or cancellation.
+Status checks do not resume, edit, commit or delete a draft. Follow failures
+in Partner Center; the published GitHub release remains available even when its
+separate Store update is blocked. A full release rerun with an existing tag
+does not manufacture another release; after investigation, use failed-job
+reruns where safe or publish a higher version.
+
+Offline coverage: `python3 -m unittest discover -s tool -p '*store*.py'`.
+Tests inject a fake HTTP transport and fixture submission data; no credentials,
+live API calls or local app-data access are required. Live authentication,
+ingestion and certification still need the owner's configured account and
+cannot be established by these tests.
+
+Official references: [submission API prerequisites and OAuth](https://learn.microsoft.com/en-us/windows/uwp/monetize/create-and-manage-submissions-using-windows-store-services),
+[submission lifecycle and portal-edit warning](https://learn.microsoft.com/en-us/windows/uwp/monetize/manage-app-submissions),
+[create a submission](https://learn.microsoft.com/en-us/windows/uwp/monetize/create-an-app-submission),
+[update its packages](https://learn.microsoft.com/en-us/windows/uwp/monetize/update-an-app-submission),
+[commit status](https://learn.microsoft.com/en-us/windows/uwp/monetize/get-status-for-an-app-submission),
+[CLI draft replacement behavior](https://learn.microsoft.com/en-us/windows/apps/publish/msstore-dev-cli/commands#publish-command).
+
+### Enable the website Store link
+
+The permanent destination is
+`https://apps.microsoft.com/detail/9N6B4KTL3LB2`, not an unsigned artifact URL.
+It is configured but **hidden by default**, because an assigned ID does not
+prove the first listing is public. After verifying it is live, set repository
+Actions variable **`STORE_LISTING_LIVE=true`** and dispatch **Deploy the downloads
+site** on `main`. Variable changes alone do not redeploy the site.
+
+Deployment runs `node tool/configure_store_site.mjs` before the existing site
+tests. It generates `web/downloads/store-config.js` from the public product JSON
+and updates the static HTML Store link, so the Windows card also works without
+JavaScript. Only the product ID and live flag enter the site, never publishing
+credentials. Invalid enabled IDs or flag values fail deployment. To preview
+locally: `STORE_LISTING_LIVE=true node tool/configure_store_site.mjs`; run the
+same command with `false` to restore the disabled configuration.
+
+With the link enabled, Windows visitors get a Store hero and card link;
+the GitHub ZIP stays an unsigned alternative and macOS is unchanged. The
+Store link works even when GitHub has no releases, fails or does not respond,
+and never labels the Store build with GitHub's version. Each Store update
+continues to use the same URL after certification; no redeploy is needed for
+each release. The card explains the separate first-run setup/catalogue.
+Set `STORE_LISTING_LIVE=false` and redeploy to hide it again.
 
 ## Why the builds are made on macOS
 
@@ -669,10 +797,13 @@ pass before merging**, and select, by these exact names:
 
 Without this the version check is advisory, and a pull request can merge red.
 
-### 4. Complete the Store submission separately
+### 4. Complete the first Store submission, then opt in to updates
 
 Follow [Microsoft Store MSIX](#microsoft-store-msix) for the package and manual
 certification steps. Generating an artifact does not submit or publish it.
+[Automatic Store updates](#automatic-store-updates) and
+[the public website link](#enable-the-website-store-link) have separate opt-in
+variables; neither is activated just by adding a product ID.
 
 No Firestore, no Cloud Functions, no emulators, no Firebase Authentication. The
 application uses no Firebase at runtime at all; Hosting serves one static page

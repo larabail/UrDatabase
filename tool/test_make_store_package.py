@@ -179,7 +179,8 @@ class StorePackageTests(unittest.TestCase):
         self.assertIn('"verify", "--package"', script)
         self.assertNotIn("Invoke-Checked signtool", script)
         self.assertNotIn("gh release", workflow)
-        self.assertNotIn("secrets.", workflow[workflow.index("run: ./scripts/package-store.ps1"):])
+        artifact_steps = workflow[workflow.index("run: ./scripts/package-store.ps1"):].split("\n  submit:")[0]
+        self.assertNotIn("secrets.", artifact_steps)
         for name in ("pr.yml", "release.yml"):
             original = (ROOT / ".github/workflows" / name).read_text()
             self.assertIn("runs-on: macos-14", original)
