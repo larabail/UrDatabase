@@ -108,7 +108,7 @@ namespace UrDatabase.Services
         }
 
         private string FailureNotice() => _failures.Count == 0 ? ""
-            : string.Join(" ", _failures) + " Other details remain available. Reopen the page to retry.";
+            : string.Join(" ", _failures) + " Other details remain available. Use Refresh to retry.";
 
         public void Cancel() => _cts.Cancel();
 

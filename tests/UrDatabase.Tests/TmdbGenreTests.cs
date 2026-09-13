@@ -43,6 +43,27 @@ namespace UrDatabase.Tests
                 ("/genre/movie/list", HttpStatusCode.OK, GenreList),
                 ("/search/movie", HttpStatusCode.OK, searchJson));
 
+        [Fact]
+        public async Task Explicit_refresh_retries_a_failed_genre_list_without_discarding_a_success()
+        {
+            var online = false;
+            using var handler = new FakeHttpMessageHandler(_ => new HttpResponseMessage(online ? HttpStatusCode.OK : HttpStatusCode.ServiceUnavailable)
+            {
+                Content = new StringContent(GenreList)
+            });
+            using var tmdb = Service(handler);
+            Assert.Empty(await tmdb.GenreNamesAsync(default));
+            online = true;
+            Assert.Empty(await tmdb.GenreNamesAsync(default));
+            Assert.Single(handler.Requests);
+
+            await tmdb.RetryGenreListAsync(default);
+            Assert.NotEmpty(await tmdb.GenreNamesAsync(default));
+            await tmdb.RetryGenreListAsync(default);
+            Assert.NotEmpty(await tmdb.GenreNamesAsync(default));
+            Assert.Equal(2, handler.Requests.Count);
+        }
+
         // ---------- naming the ids ----------
 
         [Fact]

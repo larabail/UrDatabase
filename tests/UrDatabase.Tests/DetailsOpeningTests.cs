@@ -48,6 +48,37 @@ namespace UrDatabase.Tests
             Assert.True(bind.IndexOf("UpdatePlaybackControls();", StringComparison.Ordinal) >= 0);
             Assert.True(bind.IndexOf("UpdatePlaybackControls();", StringComparison.Ordinal)
                         < bind.IndexOf("if (_downloadCts is null", StringComparison.Ordinal));
+            Assert.Contains("UpdateRefreshButton();", bind);
+        }
+
+        [Theory]
+        [InlineData("MovieDetailsView.axaml.cs", "private async void Refresh_Click", "await refresh.LoadAsync")]
+        [InlineData("SeriesDetailsView.axaml.cs", "public Task RefreshAsync()", "return RunPageWorkAsync")]
+        public void Manual_refresh_cancels_initial_enrichment_before_starting_new_requests(
+            string file, string method, string request)
+        {
+            var source = File.ReadAllText(Path.Combine(RepositoryRoot(), "src", "UrDatabase.App", "Views", file));
+            var start = source.IndexOf(method, StringComparison.Ordinal);
+            var end = source.IndexOf("\n        private ", start + method.Length, StringComparison.Ordinal);
+            var body = source[start..end];
+            var cancel = body.IndexOf("_cancelEnrichment?.Invoke();", StringComparison.Ordinal);
+            Assert.True(cancel >= 0 && cancel < body.IndexOf(request, StringComparison.Ordinal));
+            Assert.Contains("_cancelEnrichment = null;", body);
+        }
+
+        [Fact]
+        public void Both_pages_keep_initial_loading_and_manual_refresh_callbacks()
+        {
+            var source = File.ReadAllText(Path.Combine(RepositoryRoot(), "src", "UrDatabase.App",
+                "Views", "MainWindow.axaml.cs"));
+            Assert.Equal(2, source.Split("cancelEnrichment: loading.Cancel").Length - 1);
+            Assert.Contains("relatedLookup: (movie, ct) => LoadRelatedAsync(movie, null, ct)", source);
+            Assert.Contains("loadRating: RetryMissingSeriesRatingAsync", source);
+
+            var movie = File.ReadAllText(Path.Combine(RepositoryRoot(), "src", "UrDatabase.App",
+                "Views", "MovieDetailsView.axaml.cs"));
+            Assert.Contains("Vm is { IsLoadingFile: false, IsConnecting: false }", movie);
+            Assert.Contains("!busy && Vm?.IsLoadingFile == false", movie);
         }
 
         private static string RepositoryRoot()

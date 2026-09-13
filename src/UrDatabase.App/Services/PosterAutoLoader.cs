@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.Diagnostics;
+using System.IO;
 using System.Linq;
 using System.Net.Http;
 using System.Threading;
@@ -43,7 +45,7 @@ namespace UrDatabase.Services
         private readonly SemaphoreSlim _gate;
         private readonly Action<string>? _onFailure;
         /// <summary>
-        /// Films this loader has already taken on, and it never forgets one.
+        /// Films this loader has already taken on since the last explicit refresh.
         /// </summary>
         /// <remarks>
         /// It stopped being a record of what is in flight when the shelves began rebuilding
@@ -53,11 +55,12 @@ namespace UrDatabase.Services
         /// thousands of requests for an answer already known to be "no", and the surest way to be
         /// rate limited out of the ones that would have succeeded.
         ///
-        /// So a film is asked about at most once per loader. That is not forever: the loader is
-        /// rebuilt whenever the configuration changes, and the next launch asks again, which is
-        /// the right interval for something that only changes when TMDB's catalogue does.
+        /// Refresh forgets completed attempts, but not work still in flight. Regrouping alone
+        /// never retries a failed lookup.
         /// </remarks>
-        private readonly ConcurrentDictionary<long, byte> _attempted = new();
+        private readonly object _attemptLock = new();
+        private readonly HashSet<long> _attempted = new();
+        private readonly HashSet<long> _inFlight = new();
         private readonly ConcurrentDictionary<Task, byte> _queued = new();
         private readonly CancellationTokenSource _stopping = new();
 
@@ -136,6 +139,24 @@ namespace UrDatabase.Services
 
         /// <summary>How many queued fetches have not finished yet. For tests.</summary>
         internal int Pending => Volatile.Read(ref _outstanding);
+
+        /// <summary>Allows another attempt at missing metadata without replacing running workers.</summary>
+        public async Task RetryMissingAsync(CancellationToken ct = default)
+        {
+            await _tmdb.RetryGenreListAsync(ct);
+            lock (_attemptLock)
+                _attempted.IntersectWith(_inFlight);
+        }
+
+        private bool BeginAttempt(long movieId)
+        {
+            lock (_attemptLock)
+            {
+                if (!_attempted.Add(movieId)) return false;
+                _inFlight.Add(movieId);
+                return true;
+            }
+        }
 
         /// <summary>
         /// Takes a film to look up. Returns immediately: this is called from the UI thread, once
@@ -291,6 +312,7 @@ namespace UrDatabase.Services
             // that was never taken — inflating the gate past maxConcurrency and letting the next
             // library warm as many concurrent fetches as it liked.
             var acquired = false;
+            var attempted = false;
 
             // The loader's own token joins the caller's, so a shutdown that has run out of
             // patience can cut a fetch short without the caller having to know it exists.
@@ -320,23 +342,39 @@ namespace UrDatabase.Services
                 // A guard that returned silently here would drop those, so the artwork reached
                 // the database and never the card: posters that only appeared after a restart,
                 // which is most of the bug this set out to fix, reintroduced by the fix for it.
-                if (known.HasPoster)
+                var hasArtwork = HasArtwork(known.PosterPath);
+                if (hasArtwork)
                 {
                     onFetched(known);
-                    return;
+                    if (!string.IsNullOrWhiteSpace(known.Genres)) return;
                 }
 
                 // Only now is a request being considered, so only now does it count as an attempt.
                 // A film already asked about stops here: there is nothing stored to report and
-                // nothing left to learn until the next launch. See the field for why asking again
+                // nothing left to learn until Refresh. See the field for why asking again
                 // instead would spend the key on answers already known to be "no".
-                if (!_attempted.TryAdd(movieId, 0)) return;
+                if (!BeginAttempt(movieId)) return;
+                attempted = true;
 
                 // The search that finds the artwork also says what kind of film it is, so genres
                 // cost nothing extra here. Before this, nothing in the app ever wrote the genres
                 // column for a scanned film, and every one of them sat in a single Uncategorised
                 // bucket for the life of the library.
-                var (tmdbId, posterPath, genres) = await _tmdb.SearchFilmAsync(title, year, token);
+                int? tmdbId = MovieMatch.ReadTmdbId(conn, movieId);
+                string? posterPath;
+                string? genres;
+                if (tmdbId is int knownId)
+                {
+                    var details = await _tmdb.GetDetailsByIdAsync(knownId, token);
+                    if (details is null)
+                        throw new HttpRequestException("TMDB did not return this film. Press Refresh to retry.");
+                    posterPath = details.PosterPath;
+                    genres = CreditLine.Genres(details);
+                }
+                else
+                {
+                    (tmdbId, posterPath, genres) = await _tmdb.SearchFilmAsync(title, year, token);
+                }
 
                 // Identification is what this turns on, not artwork. TMDB confidently knows plenty
                 // of films it holds no poster for, and the guard here used to refuse those outright
@@ -345,9 +383,9 @@ namespace UrDatabase.Services
                 // good: the column would never be written on this launch or any other.
                 if (tmdbId is null) return;
 
-                string? pathToStore = null;
+                string? pathToStore = hasArtwork ? known.PosterPath : null;
 
-                if (!string.IsNullOrWhiteSpace(posterPath))
+                if (!hasArtwork && !string.IsNullOrWhiteSpace(posterPath))
                 {
                     var url = _tmdb.BuildImageUrlPublic(posterPath!);
 
@@ -369,7 +407,12 @@ namespace UrDatabase.Services
                 // chose by hand.
                 await MovieMatch.SaveAsync(conn, movieId, tmdbId.Value, pathToStore, genres: genres, ct: token);
 
-                onFetched(new Enrichment(pathToStore, genres));
+                onFetched(new Enrichment(pathToStore,
+                    string.IsNullOrWhiteSpace(known.Genres) ? genres : known.Genres)
+                {
+                    ArtworkRepaired = !hasArtwork && known.HasPoster
+                        && string.Equals(known.PosterPath, pathToStore, StringComparison.Ordinal)
+                });
             }
             catch (OperationCanceledException)
             {
@@ -392,13 +435,21 @@ namespace UrDatabase.Services
             {
                 if (acquired) _gate.Release();
 
-                // Deliberately not removed from _attempted. A film is asked about once per loader,
-                // including one that failed: see the field for why forgetting it turns every
-                // regrouping into a fresh sweep of TMDB for answers already known to be "no".
+                if (attempted)
+                {
+                    lock (_attemptLock)
+                        _inFlight.Remove(movieId);
+                }
 
                 if (Interlocked.Decrement(ref _active) == 0 && _disposed) ReleaseClient();
             }
         }
+
+        private static bool HasArtwork(string? path) =>
+            !string.IsNullOrWhiteSpace(path)
+            && ((Uri.TryCreate(path, UriKind.Absolute, out var uri)
+                 && (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps))
+                || File.Exists(PlatformPaths.Expand(path)));
 
         /// <summary>
         /// The artwork and genres the catalogue already holds for a film.

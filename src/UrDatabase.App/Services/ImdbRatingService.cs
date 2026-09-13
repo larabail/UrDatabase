@@ -23,6 +23,18 @@ namespace UrDatabase.Services
 
         public bool IsConfigured => _lookup.IsAvailable;
 
+        public static Task ForgetMissingAsync(SqliteConnection conn, string imdbId, CancellationToken ct = default)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(imdbId);
+            return DatabaseWriteLane.RunAsync(conn, async token =>
+            {
+                using var cmd = conn.CreateCommand();
+                cmd.CommandText = "DELETE FROM imdb_ratings WHERE imdb_id=@id AND rating IS NULL";
+                cmd.Parameters.AddWithValue("@id", imdbId);
+                await cmd.ExecuteNonQueryAsync(token).ConfigureAwait(false);
+            }, ct);
+        }
+
         public async Task<double?> GetRatingAsync(SqliteConnection conn, string? imdbId, long? movieId = null, CancellationToken ct = default)
         {
             // No IMDb id means no exact match is possible, so the lookup is skipped entirely

@@ -89,14 +89,7 @@ namespace UrDatabase.Services
 
             try
             {
-                var seasons = await _client.GetSeasonsAsync(seriesId, ct);
-                var episodes = await _client.GetEpisodesAsync(seriesId, ct);
-
-                ct.ThrowIfCancellationRequested();
-
-                Remember(seriesId, seasons, episodes);
-
-                return new SeriesContents(seasons, episodes);
+                return await RefreshFromServerAsync(seriesId, ct);
             }
             catch (OperationCanceledException)
             {
@@ -105,6 +98,7 @@ namespace UrDatabase.Services
             }
             catch (JellyfinException ex)
             {
+                ct.ThrowIfCancellationRequested();
                 AppLog.Write("jellyfin.log", JellyfinClient.Redact($"could not list {seriesId}: {ex.Message}"));
 
                 var cached = LoadCached(seriesId);
@@ -115,6 +109,22 @@ namespace UrDatabase.Services
 
                 return cached;
             }
+        }
+
+        /// <summary>A deliberate refresh must report failure, not disguise the cache as a fresh answer.</summary>
+        public async Task<SeriesContents> RefreshFromServerAsync(string? seriesId, CancellationToken ct = default)
+        {
+            ct.ThrowIfCancellationRequested();
+            if (string.IsNullOrWhiteSpace(seriesId))
+                throw new ArgumentException("A series id is required.", nameof(seriesId));
+            if (_client is null)
+                throw new JellyfinException("No Jellyfin server is configured.");
+
+            var seasons = await _client.GetSeasonsAsync(seriesId, ct);
+            var episodes = await _client.GetEpisodesAsync(seriesId, ct);
+            ct.ThrowIfCancellationRequested();
+            Remember(seriesId, seasons, episodes);
+            return new SeriesContents(seasons, episodes);
         }
 
         /// <summary>

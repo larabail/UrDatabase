@@ -11,6 +11,8 @@ using Avalonia.Controls.Primitives;
 using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Threading;
+using Avalonia.VisualTree;
+using UrDatabase.Controls;
 using UrDatabase.Models;
 using UrDatabase.Services;
 
@@ -214,6 +216,7 @@ namespace UrDatabase.Views
         private readonly CancellationTokenSource _cts = new();
         private bool _scanning;
         private bool _syncing;
+        private bool _refreshing;
 
         /// <summary>
         /// The release the banner is offering, or null when there is nothing to offer — which is
@@ -464,29 +467,8 @@ namespace UrDatabase.Views
             _statusStale = false;
 
             SetStatus(view.Status, isLibrarySummary: view.Tally is not null);
-            WarmPosters(_allMovies);
-
-            // searching → flat view
-            if (view.IsSearch)
-            {
-                ShowSearchResults();
-                return;
-            }
-
-            // not searching → grouped view
-            BuildGenres();
-
-            // A genre that no longer exists — because the source changed while a search was up,
-            // or because the library did — would otherwise stay selected, match no shelf and
-            // render a blank page that looks like the library having emptied itself.
-            if (!GenreChips.Any(c => string.Equals(c.Name, SelectedGenre, StringComparison.OrdinalIgnoreCase)))
-            {
-                SelectedGenre = LibraryGrouping.AllGenres;
-                BuildGenres();
-            }
-
-            RebuildGroups();
-            ShowAllGenres();
+            WarmPosters(_allMovies, includeKnown: _refreshing);
+            ReapplyFilters();
         }
 
         /// <summary>
@@ -947,7 +929,7 @@ namespace UrDatabase.Views
             RebuildGrid(SearchRows, FlatResults);
         }
 
-        private void WarmPosters(IEnumerable<UiMovie> movies)
+        private void WarmPosters(IEnumerable<UiMovie> movies, bool includeKnown = false)
         {
             var loader = _posterLoader;
             if (loader is null) return;
@@ -964,7 +946,8 @@ namespace UrDatabase.Views
                 // copy has since gone is skipped again, because there is no longer a local copy
                 // for that artwork to belong to — it keeps whatever poster it already had.
                 if (m.IsRemote) continue;
-                if (!string.IsNullOrWhiteSpace(m.PosterPath)) continue;
+                if (!includeKnown && !string.IsNullOrWhiteSpace(m.PosterPath)
+                    && !string.IsNullOrWhiteSpace(m.Genres)) continue;
 
                 // Queued rather than discarded. The task used to be dropped on the floor here,
                 // which is what let a closing window walk away from work it had started: nothing
@@ -1006,6 +989,7 @@ namespace UrDatabase.Views
             var gained = string.IsNullOrWhiteSpace(m.PosterPath) && found.HasPoster;
 
             if (found.PosterPath is not null) m.PosterPath = found.PosterPath;
+            if (found.ArtworkRepaired) RetryVisibleArtwork(movieId);
 
             // Only onto a film that has none. A server's genres are already on the card by this
             // point and are the better answer — they describe the copy the server actually holds
@@ -1096,6 +1080,11 @@ namespace UrDatabase.Views
         /// </summary>
         private async void ScanButton_Click(object? sender, RoutedEventArgs e)
         {
+            if (_refreshing)
+            {
+                SetStatus("Wait for the refresh to finish before scanning.");
+                return;
+            }
             if (_scanning) return;
 
             // Scanning nothing would report success and change nothing, which reads as a broken
@@ -1111,6 +1100,7 @@ namespace UrDatabase.Views
             }
 
             _scanning = true;
+            RefreshButton.IsEnabled = false;
             if (ScanButton is not null) ScanButton.IsEnabled = false;
             SetBusy(true);
 
@@ -1119,7 +1109,7 @@ namespace UrDatabase.Views
                 SetStatus("Scanning…");
                 var result = await RunScanAsync(_cts.Token);
 
-                await _searchLoop.RefreshAsync();
+                await _searchLoop.RefreshAsync(SearchBox.Text);
 
                 // The scan's own sentence, not a rewrite of it. It is the one thing that knows
                 // whether it finished, what it added and what it could no longer find; a status
@@ -1143,6 +1133,7 @@ namespace UrDatabase.Views
             finally
             {
                 _scanning = false;
+                RefreshButton.IsEnabled = !_refreshing && !_syncing;
                 if (ScanButton is not null) ScanButton.IsEnabled = true;
                 SetBusy(false);
             }
@@ -1164,6 +1155,59 @@ namespace UrDatabase.Views
         private async void JellyfinSyncButton_Click(object? sender, RoutedEventArgs e)
             => await SyncJellyfinAsync(announceFailure: true);
 
+        private void RetryVisibleArtwork(long? movieId = null)
+        {
+            foreach (var card in LibraryRoot.GetVisualDescendants().OfType<PosterCard>())
+            {
+                if (movieId is null || card.DataContext is UiMovie movie && movie.Id == movieId)
+                    card.RetryArtwork();
+            }
+        }
+
+        private async void RefreshButton_Click(object? sender, RoutedEventArgs e)
+        {
+            if (_refreshing || _scanning || _syncing)
+            {
+                SetStatus("A library update is already running.");
+                return;
+            }
+
+            _refreshing = true;
+            RefreshButton.IsEnabled = false;
+            ScanButton.IsEnabled = false;
+            JellyfinButton.IsEnabled = false;
+            SettingsButton.IsEnabled = false;
+            SetBusy(true);
+            SetStatus("Refreshing the library...");
+            try
+            {
+                _posterFailuresReported = 0;
+                if (_posterLoader is not null)
+                    await _posterLoader.RetryMissingAsync(_cts.Token);
+                await _searchLoop.RefreshAsync(SearchBox.Text);
+                RetryVisibleArtwork();
+                if (_jellyfin is not null)
+                    await SyncJellyfinAsync(announceFailure: false);
+            }
+            catch (OperationCanceledException) when (_cts.IsCancellationRequested)
+            {
+            }
+            catch (Exception ex)
+            {
+                AppLog.Write("startup.log", $"refresh failed: {ex}");
+                SetStatus($"Refresh failed: {ex.Message}");
+            }
+            finally
+            {
+                _refreshing = false;
+                RefreshButton.IsEnabled = !_scanning && !_syncing;
+                ScanButton.IsEnabled = !_scanning;
+                JellyfinButton.IsEnabled = !_syncing;
+                SettingsButton.IsEnabled = true;
+                SetBusy(_scanning || _syncing);
+            }
+        }
+
         /// <summary>
         /// Refreshes the cached server library.
         /// </summary>
@@ -1177,6 +1221,7 @@ namespace UrDatabase.Views
             if (_jellyfin is null || _syncing) return;
 
             _syncing = true;
+            RefreshButton.IsEnabled = false;
             if (JellyfinButton is not null) JellyfinButton.IsEnabled = false;
             SetBusy(true);
 
@@ -1193,7 +1238,8 @@ namespace UrDatabase.Views
                 }, _cts.Token);
 
                 LoadRemoteCache();
-                await _searchLoop.RefreshAsync();
+                await _searchLoop.RefreshAsync(SearchBox.Text);
+                if (_refreshing) RetryVisibleArtwork();
 
                 SetStatus(count.Describe());
             }
@@ -1229,8 +1275,9 @@ namespace UrDatabase.Views
             finally
             {
                 _syncing = false;
-                if (JellyfinButton is not null) JellyfinButton.IsEnabled = true;
-                SetBusy(false);
+                RefreshButton.IsEnabled = !_refreshing && !_scanning;
+                if (JellyfinButton is not null) JellyfinButton.IsEnabled = !_refreshing;
+                SetBusy(_refreshing || _scanning);
             }
         }
 
@@ -1317,6 +1364,11 @@ namespace UrDatabase.Views
         /// </summary>
         private async void Settings_Click(object? sender, RoutedEventArgs e)
         {
+            if (_refreshing)
+            {
+                SetStatus("Wait for the refresh to finish before changing settings.");
+                return;
+            }
             var saved = await SetupWindow.ShowDialogAsync(this);
             if (saved is null) return;
 
@@ -1325,7 +1377,7 @@ namespace UrDatabase.Views
             // A server that has just been switched off leaves a cached library behind in SQLite.
             // Reloading with no client drops it from view, which is what turning it off meant.
             LoadRemoteCache();
-            await _searchLoop.RefreshAsync();
+            await _searchLoop.RefreshAsync(SearchBox.Text);
 
             if (_jellyfin is not null)
                 await SyncJellyfinAsync(announceFailure: true);
@@ -1567,14 +1619,16 @@ namespace UrDatabase.Views
                 await loading.ShowAsync(
                     () => DetailsView.ShowAsync(
                         vm, _dbPath, _config, LoadImdbRatingAsync, _jellyfin, _cts.Token,
-                        LoadAwardsAsync, related, loading.Cancel),
+                        LoadAwardsAsync, related,
+                        relatedLookup: (movie, ct) => LoadRelatedAsync(movie, null, ct),
+                        cancelEnrichment: loading.Cancel),
                     enrich);
 
                 // A downloaded film is a row the library behind this screen does not have yet: it
                 // would still be shown as living only on the server until something reloaded it.
                 // A renamed one is a row whose name, sort position and genre shelf have all moved.
                 if (DetailsView.DownloadedSomething || DetailsView.RenamedSomething)
-                    await _searchLoop.RefreshAsync();
+                    await _searchLoop.RefreshAsync(SearchBox.Text);
             }
             finally
             {
@@ -1702,7 +1756,8 @@ namespace UrDatabase.Views
 
                     // Opened from disk, and the server has a copy too. Said on the facts row, in
                     // place of the badge the card carries.
-                    IsOnServer = m.IsOnServer
+                    IsOnServer = m.IsOnServer,
+                    RemoteId = m.RemoteId
                 };
 
                 if (m.IsOnServer) FillFromServer(vm, m.RemoteId);
@@ -1987,7 +2042,8 @@ namespace UrDatabase.Views
                 try
                 {
                     await loading.ShowAsync(
-                        () => SeriesView.ShowAsync(vm, _series, _jellyfin, _cts.Token, openAtSeason),
+                        () => SeriesView.ShowAsync(vm, _series, _jellyfin, _cts.Token, openAtSeason,
+                            loadRating: RetryMissingSeriesRatingAsync, cancelEnrichment: loading.Cancel),
                         load => load.RunAsync("IMDb rating",
                             ct => LoadImdbRatingAsync(vm.ImdbId, null, ct),
                             rating => SeriesView.UpdateRating(vm, rating)));
@@ -2241,6 +2297,15 @@ namespace UrDatabase.Views
         /// optional: no id, no key or no network simply means no rating, never a substitute from
         /// another source.
         /// </summary>
+        private async Task<double?> RetryMissingSeriesRatingAsync(string? imdbId, CancellationToken ct)
+        {
+            if (string.IsNullOrWhiteSpace(imdbId)) return null;
+            using var conn = Database.Open(_dbPath);
+            if (_ratings.IsConfigured)
+                await ImdbRatingService.ForgetMissingAsync(conn, imdbId, ct);
+            return await _ratings.GetRatingAsync(conn, imdbId, ct: ct);
+        }
+
         private async Task<double?> LoadImdbRatingAsync(string? imdbId, long? movieId, CancellationToken ct)
         {
             if (string.IsNullOrWhiteSpace(imdbId)) return null;

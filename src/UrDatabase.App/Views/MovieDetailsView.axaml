@@ -79,8 +79,9 @@
 
             <!-- Back, top left, where the eye already is. Escape does the same
                  thing and the button says so. -->
-            <Border DockPanel.Dock="Top" Height="48" Padding="24,0">
-                <Button x:Name="BackButton"
+            <Border DockPanel.Dock="Top" MinHeight="48" Padding="24,8">
+                <Grid ColumnDefinitions="Auto,*,Auto">
+                    <Button x:Name="BackButton"
                         Classes="ghost"
                         HorizontalAlignment="Left"
                         VerticalAlignment="Center"
@@ -90,7 +91,23 @@
                         <TextBlock Text="←" FontSize="13"/>
                         <TextBlock Text="Library"/>
                     </StackPanel>
-                </Button>
+                    </Button>
+                    <TextBlock x:Name="RefreshStatus"
+                               Grid.Column="1"
+                               Margin="16,0"
+                               VerticalAlignment="Center"
+                               Foreground="{DynamicResource DimBrush}"
+                               FontSize="12"
+                               TextWrapping="Wrap"
+                               AutomationProperties.LiveSetting="Polite"/>
+                    <Button x:Name="RefreshButton"
+                            Grid.Column="2"
+                            Classes="ghost"
+                            Content="Refresh"
+                            VerticalAlignment="Center"
+                            Click="Refresh_Click"
+                            ToolTip.Tip="Reload this movie and retry artwork. Does not scan folders."/>
+                </Grid>
             </Border>
 
             <TextBlock x:Name="LoadNotice"
