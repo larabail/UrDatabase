@@ -25,7 +25,7 @@ MAX_MEMBER_SIZE = 128 * 1024 * 1024
 
 def safe_name(name):
     parts = name.rstrip("/").split("/")
-    if (not name or name.startswith("/") or "\\" in name or ":" in name
+    if (not name or name.startswith("/") or "\\" in name or ":" in name or "\0" in name
             or any(part in ("", ".", "..") for part in parts)):
         raise ValueError(f"Unsafe archive or payload path: {name!r}")
     return PurePosixPath(*parts).as_posix()
@@ -139,7 +139,8 @@ def extract_selected(path, members, output):
         index = {}
         folded = set()
         for entry in entries:
-            name = safe_name(entry.filename if is_zip else entry.name)
+            # ZipInfo.filename has already normalized Windows separators and truncated NULs.
+            name = safe_name(entry.orig_filename if is_zip else entry.name)
             if name.casefold() in folded:
                 raise ValueError(f"Duplicate archive path: {name}")
             folded.add(name.casefold())

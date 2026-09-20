@@ -49,7 +49,14 @@ def seed_fixture(root, rid="win-x64", extra=None):
         archive.writestr("ffmpeg.exe", b"must never ship")
         archive.writestr("COPYING", b"fixture license")
         if extra:
-            archive.writestr(*extra)
+            name, data = extra
+            if isinstance(name, str):
+                info = zipfile.ZipInfo()
+                # Preserve hostile names verbatim; ZipInfo's constructor sanitizes them on Windows.
+                info.filename = info.orig_filename = name
+            else:
+                info = name
+            archive.writestr(info, data)
     archive = buffer.getvalue()
     (cache / digest(archive)).write_bytes(archive)
     sources = b"opaque matching source archive"
@@ -115,7 +122,7 @@ class PrepareTests(unittest.TestCase):
         self.assertFalse((path / "stale.exe").exists())
 
     def test_rejects_traversal_absolute_windows_paths_and_links_even_if_not_selected(self):
-        names = ("../escape", "/absolute", "C:/drive", "a\\b", "a/../b", "a/./b", "a//b", "a:stream")
+        names = ("../escape", "/absolute", "C:/drive", "a\\b", "a/../b", "a/./b", "a//b", "a:stream", "a\0b")
         for name in names:
             with self.subTest(name=name):
                 bundle, _ = seed_fixture(self.root, extra=(name, b"bad"))
@@ -128,6 +135,18 @@ class PrepareTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "link|regular"):
             self.prepare(bundle)
         self.assertFalse((self.root / "escape").exists())
+
+    def test_rejects_raw_zip_names_before_windows_separator_normalization(self):
+        bundle, _ = seed_fixture(self.root, extra=("a\\b", b"bad"))
+        archive_path = self.cache / bundle["archives"][0]["sha256"]
+        with patch("zipfile.os.sep", "\\"):
+            with zipfile.ZipFile(archive_path) as archive:
+                entry = archive.infolist()[-1]
+                self.assertEqual("a\\b", entry.orig_filename)
+                self.assertEqual("a/b", entry.filename)
+            with self.assertRaisesRegex(ValueError, "Unsafe"):
+                self.prepare(bundle)
+        self.assertFalse((self.output / "win-x64").exists())
 
     def test_rejects_missing_members_wrong_architecture_and_duplicate_destination(self):
         for change in ("missing", "architecture", "destination"):
