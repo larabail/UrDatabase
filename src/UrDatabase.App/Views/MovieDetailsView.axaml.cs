@@ -42,6 +42,11 @@ namespace UrDatabase.Views
         private Action? _cancelEnrichment;
         private string? _posterSource;
         private string? _backdropSource;
+        private readonly LocalMediaReader _localMedia = new();
+        private MovieMediaLoad? _mediaLoad;
+        private Task? _mediaTask;
+        private string _loadingNotice = "";
+        private string _mediaNotice = "";
 
         /// <summary>
         /// Where to record a file the user links by hand. Null when the screen was shown without
@@ -190,6 +195,8 @@ namespace UrDatabase.Views
             _cts?.Dispose();
             _cts = CancellationTokenSource.CreateLinkedTokenSource(appLifetime);
             _closed = new TaskCompletionSource();
+            _loadingNotice = "";
+            _mediaNotice = "";
             LoadNotice.IsVisible = false;
             _posterSource = null;
             _backdropSource = null;
@@ -226,6 +233,9 @@ namespace UrDatabase.Views
             _cancelEnrichment?.Invoke();
             _cancelEnrichment = null;
             _cts?.Cancel();
+            _mediaLoad?.Dispose();
+            _mediaLoad = null;
+            _mediaTask = null;
             _pageRefresh?.Dispose();
             _pageRefresh = null;
             _artworkCts?.Cancel();
@@ -247,8 +257,14 @@ namespace UrDatabase.Views
         public void ReportLoadNotice(MovieDetailsVm vm, string message)
         {
             if (!ReferenceEquals(Vm, vm)) return;
-            LoadNotice.Text = message;
-            LoadNotice.IsVisible = message.Length > 0;
+            _loadingNotice = message;
+            UpdateLoadNotice();
+        }
+
+        private void UpdateLoadNotice()
+        {
+            LoadNotice.Text = string.Join(" ", new[] { _loadingNotice, _mediaNotice }.Where(text => text.Length > 0));
+            LoadNotice.IsVisible = !string.IsNullOrWhiteSpace(LoadNotice.Text);
         }
 
         public void Refresh(MovieDetailsVm vm)
@@ -265,6 +281,8 @@ namespace UrDatabase.Views
 
         private void Bind(MovieDetailsVm vm)
         {
+            // Server enrichment describes a different copy. Reapply the local result after it.
+            _mediaLoad?.TryApply(vm);
             TitleText.Text = vm.Title;
             FactsList.ItemsSource = DetailFacts.For(vm);
             FlagsList.ItemsSource = MediaFlags.For(vm.Media);
@@ -311,6 +329,59 @@ namespace UrDatabase.Views
             UpdatePlaybackControls();
             if (_downloadCts is null && _uploadCts is null)
                 FileNote.Text = PlayPrompts.FileNote(vm, MediaPlayerLauncher.CanResumeHere());
+            _ = RefreshLocalMediaAsync(vm);
+        }
+
+        private Task RefreshLocalMediaAsync(MovieDetailsVm vm, bool force = false)
+        {
+            if (!ReferenceEquals(Vm, vm) || vm.IsLoadingFile || _cts?.IsCancellationRequested != false)
+                return Task.CompletedTask;
+            if (!force && _mediaLoad?.Matches(vm) == true)
+                return _mediaTask ?? Task.CompletedTask;
+
+            var previous = _mediaLoad?.Matches(vm) == true ? _mediaLoad.Result : null;
+            _mediaLoad?.Dispose();
+            _mediaLoad = null;
+            _mediaTask = null;
+            var path = MovieMediaLoad.PathFor(vm);
+            if (string.IsNullOrWhiteSpace(path))
+            {
+                _mediaNotice = "";
+                UpdateLoadNotice();
+                return Task.CompletedTask;
+            }
+
+            vm.Media = previous?.Info ?? LocalMedia.Describe(path, _ => null);
+            FlagsList.ItemsSource = MediaFlags.For(vm.Media);
+            _mediaNotice = "Reading local media tracks…";
+            UpdateLoadNotice();
+            var load = new MovieMediaLoad(vm, _localMedia, _cts.Token, force, previous);
+            _mediaLoad = load;
+            _mediaTask = CompleteLocalMediaAsync(load);
+            return _mediaTask;
+        }
+
+        private async Task CompleteLocalMediaAsync(MovieMediaLoad load)
+        {
+            try
+            {
+                await load.LoadAsync();
+                if (!ReferenceEquals(_mediaLoad, load) || !load.TryApply(Vm)) return;
+                FlagsList.ItemsSource = MediaFlags.For(Vm!.Media);
+                _mediaNotice = load.Result!.Notice ?? "";
+                UpdateLoadNotice();
+            }
+            catch (OperationCanceledException)
+            {
+                // Navigation, a replacement file, or a newer probe owns the screen now.
+            }
+            catch (Exception ex)
+            {
+                await Task.Run(() => AppLog.Write("media.log", $"local media loading failed: {ex.GetType().Name}"));
+                if (!ReferenceEquals(_mediaLoad, load) || !load.Matches(Vm)) return;
+                _mediaNotice = "Local media tracks could not be loaded. Use Refresh to retry.";
+                UpdateLoadNotice();
+            }
         }
 
         /// <summary>
@@ -505,6 +576,7 @@ namespace UrDatabase.Views
             }
             try
             {
+                var mediaRefresh = RefreshLocalMediaAsync(vm, force: true);
                 var result = await refresh.LoadAsync(vm, cts.Token);
                 cts.Token.ThrowIfCancellationRequested();
                 if (result is null || !result.TryApply(Vm, cts.Token))
@@ -518,6 +590,7 @@ namespace UrDatabase.Views
                 // Always load again, even when the source string is unchanged: a failed image is
                 // not cached, and assigning the same bound path would never retry that request.
                 var artworkNotices = await LoadArtworkAsync(cts.Token, keepCurrent: true, previousSources: previousSources);
+                await mediaRefresh;
                 cts.Token.ThrowIfCancellationRequested();
                 if (!ReferenceEquals(Vm, vm)) return;
                 _posterSource = vm.PosterPath;
@@ -793,6 +866,7 @@ namespace UrDatabase.Views
 
                 if (ReferenceEquals(Vm, vm))
                 {
+                    Bind(vm);
                     FileNote.Text = result.AlreadyExisted
                         ? $"Already downloaded to {result.Path}."
                         : $"Downloaded {JellyfinDownload.DescribeSize(result.Bytes)} to {result.Path}. Plays with the server switched off.";
@@ -1034,7 +1108,7 @@ namespace UrDatabase.Views
                 vm.FilePath = path;
                 vm.FileMatch = PlayTargetKind.Linked;
                 RememberLink(path);
-                UpdateFileNote();
+                Bind(vm);
             }
             finally
             {

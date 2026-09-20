@@ -175,7 +175,8 @@ namespace UrDatabase.Tests
             Seed(films);
 
             using var handler = new CountingHandler();
-            using var loader = new PosterAutoLoader(Configured(), DbPath, maxConcurrency: 4, handler: handler);
+            using var loader = new PosterAutoLoader(Configured(), DbPath, maxConcurrency: 4, handler: handler,
+                requests: new TmdbRequestScheduler(TimeSpan.Zero));
 
             var clock = Stopwatch.StartNew();
 
@@ -204,7 +205,8 @@ namespace UrDatabase.Tests
             Seed(films);
 
             using var handler = new CountingHandler();
-            using var loader = new PosterAutoLoader(Configured(), DbPath, maxConcurrency: 4, handler: handler);
+            using var loader = new PosterAutoLoader(Configured(), DbPath, maxConcurrency: 4, handler: handler,
+                requests: new TmdbRequestScheduler(TimeSpan.Zero));
 
             for (var id = 1; id <= films; id++)
                 loader.Queue(id, $"Film {id}", 1999, _ => { }, CancellationToken.None);
@@ -227,7 +229,8 @@ namespace UrDatabase.Tests
             Seed(films);
 
             using var handler = new CountingHandler();
-            using var loader = new PosterAutoLoader(Configured(), DbPath, maxConcurrency: 3, handler: handler);
+            using var loader = new PosterAutoLoader(Configured(), DbPath, maxConcurrency: 3, handler: handler,
+                requests: new TmdbRequestScheduler(TimeSpan.Zero));
 
             for (var id = 1; id <= films; id++)
                 loader.Queue(id, $"Film {id}", 1999, _ => { }, CancellationToken.None);
@@ -247,7 +250,8 @@ namespace UrDatabase.Tests
             Seed(films);
 
             using var handler = new CountingHandler();
-            using var loader = new PosterAutoLoader(Configured(), DbPath, maxConcurrency: 4, handler: handler);
+            using var loader = new PosterAutoLoader(Configured(), DbPath, maxConcurrency: 4, handler: handler,
+                requests: new TmdbRequestScheduler(TimeSpan.Zero));
 
             for (var round = 0; round < 3; round++)
             {
@@ -279,7 +283,8 @@ namespace UrDatabase.Tests
             Seed(1);
 
             using var handler = new CountingHandler();
-            using var loader = new PosterAutoLoader(Configured(), DbPath, maxConcurrency: 4, handler: handler);
+            using var loader = new PosterAutoLoader(Configured(), DbPath, maxConcurrency: 4, handler: handler,
+                requests: new TmdbRequestScheduler(TimeSpan.Zero));
 
             // The first pass, standing in for the library read that warmed the card now gone.
             loader.Queue(1, "Film 1", 1999, _ => { }, CancellationToken.None);
@@ -307,7 +312,8 @@ namespace UrDatabase.Tests
             Seed(1);
 
             using var handler = new CountingHandler(genreIds: "18", genreNames: @"{ ""id"": 18, ""name"": ""Drama"" }");
-            using var loader = new PosterAutoLoader(Configured(), DbPath, maxConcurrency: 4, handler: handler);
+            using var loader = new PosterAutoLoader(Configured(), DbPath, maxConcurrency: 4, handler: handler,
+                requests: new TmdbRequestScheduler(TimeSpan.Zero));
 
             // A first pass that genuinely goes to TMDB, so the film is in _attempted and the
             // second pass has to answer from the catalogue rather than from the network.
@@ -344,7 +350,8 @@ namespace UrDatabase.Tests
                 genreNames: @"{ ""id"": 18, ""name"": ""Drama"" }",
                 posterPath: null);
 
-            using var loader = new PosterAutoLoader(Configured(), DbPath, maxConcurrency: 4, handler: handler);
+            using var loader = new PosterAutoLoader(Configured(), DbPath, maxConcurrency: 4, handler: handler,
+                requests: new TmdbRequestScheduler(TimeSpan.Zero));
 
             var reported = new List<Enrichment>();
             loader.Queue(1, "Film 1", 1999, reported.Add, CancellationToken.None);

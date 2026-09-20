@@ -183,6 +183,8 @@ namespace UrDatabase.Views
 
         private PosterAutoLoader? _posterLoader;
         private int _posterFailuresReported;
+        private MetadataProgress _metadataProgress = new();
+        private string _statusMessage = "";
 
         /// <summary>Rebuilt whenever the configuration changes; never null once the window exists.</summary>
         private ImdbRatingService _ratings = null!;
@@ -542,8 +544,31 @@ namespace UrDatabase.Views
         private void SetStatus(string message, bool isLibrarySummary)
         {
             _statusIsLibrarySummary = isLibrarySummary;
+            _statusMessage = message;
+            _metadataProgress = _posterLoader?.Progress ?? new MetadataProgress();
             Title = $"UrDatabase — {message}";
-            if (StatusText is not null) StatusText.Text = message;
+            RenderStatusText();
+        }
+
+        private void RenderStatusText()
+        {
+            if (StatusText is null) return;
+            StatusText.Text = _metadataProgress.WithStatus(_statusMessage);
+            ToolTip.SetTip(StatusText, _metadataProgress.Total == 0 ? null :
+                $"{_metadataProgress.Matched} films matched in this pass, including existing catalogue matches. " +
+                $"{_metadataProgress.Pending} pending, {_metadataProgress.Unmatched} unmatched, {_metadataProgress.Failed} failed. " +
+                "Pending includes queued and active lookups. " +
+                "A TMDB rate limit pauses lookups; they resume automatically without skipping films. " +
+                "Unmatched means no confident match: use Wrong film? on the film's details. " +
+                "Failed means a request or save failed: press Refresh to retry. Poster count is artwork, not completed lookups.");
+        }
+
+        private void RefreshMetadataProgress()
+        {
+            var progress = _posterLoader?.Progress ?? new MetadataProgress();
+            if (progress == _metadataProgress) return;
+            _metadataProgress = progress;
+            RenderStatusText();
         }
 
         /// <summary>
@@ -571,10 +596,11 @@ namespace UrDatabase.Views
         /// </summary>
         private void ApplyProgress()
         {
+            RefreshMetadataProgress();
             RefreshLibrarySummary();
             RegroupForNewGenres();
 
-            if (!_statusStale && !_genresStale) _progressTimer?.Stop();
+            if (!_statusStale && !_genresStale && _metadataProgress.Pending == 0) _progressTimer?.Stop();
         }
 
         /// <summary>
@@ -969,6 +995,9 @@ namespace UrDatabase.Views
                     onFetched: found => ShowOnUiThread(() => ApplyEnrichment(id, found)),
                     ct: _cts.Token);
             }
+
+            RefreshMetadataProgress();
+            if (_metadataProgress.Pending > 0) _progressTimer?.Start();
         }
 
         /// <summary>
@@ -1787,15 +1816,10 @@ namespace UrDatabase.Views
 
         private async Task LoadLocalFileAsync(MovieDetailsVm vm, UiMovie movie, DetailLoading loading)
         {
-            await loading.RunAsync("Local file", ct => Task.Run(() =>
+            await loading.RunAsync("Local file", ct => Task.Run(() => FindPlayTargetForMovie(movie), ct), target =>
             {
-                var target = FindPlayTargetForMovie(movie);
-                return (Target: target, Media: LocalMedia.Describe(target.FilePath));
-            }, ct), found =>
-            {
-                vm.FilePath = found.Target.FilePath;
-                vm.FileMatch = found.Target.Kind;
-                vm.Media = found.Media;
+                vm.FilePath = target.FilePath;
+                vm.FileMatch = target.Kind;
             });
 
             if (loading.IsCancellationRequested) return;
@@ -1937,9 +1961,7 @@ namespace UrDatabase.Views
                     TopCast = film.Cast.ToList(),
                     KeyCrew = film.Crew.ToList(),
 
-                    // Measured by the server rather than read off a filename — the one path in
-                    // this app where the resolution and the languages are facts about the file
-                    // instead of a claim somebody typed into its name.
+                    // Used until a downloaded copy is found and its own tracks are read.
                     Media = film.Media
                 };
 

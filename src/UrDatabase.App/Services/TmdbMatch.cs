@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Text.Json.Serialization;
+using System.Text.RegularExpressions;
 
 namespace UrDatabase.Services
 {
@@ -88,17 +89,18 @@ namespace UrDatabase.Services
         /// <param name="title">The catalogued title, however it is spelt.</param>
         /// <param name="year">
         /// The catalogued year, when there is one. Without it a title match is accepted on its
-        /// own, which is all the evidence there is.
+        /// own, unless matching titles point to different release years.
         /// </param>
         public static Candidate? ChooseBest(IReadOnlyList<Candidate>? results, string? title, int? year)
         {
             if (results is null || results.Count == 0) return null;
 
-            var wanted = MovieIndex.NormalizeTitle(title);
+            var wanted = NormalizeTitle(title);
             if (wanted.Length == 0) return null;
 
             Candidate? best = null;
             var bestRank = Rejected;
+            var ambiguous = false;
 
             foreach (var candidate in results)
             {
@@ -106,31 +108,31 @@ namespace UrDatabase.Services
 
                 var rank = Rank(candidate, wanted, year);
 
-                // Strictly greater, so a tie leaves the earlier result standing. Everything that
-                // reaches the winning rank has the same normalised title and a year that agrees,
-                // which makes a tie two records of one film rather than two films; TMDB orders by
-                // popularity, so its first is the one people mean. This is the one place the rules
-                // differ from MovieFileMatcher, which discards ties — there a tie meant opening the
-                // wrong film, and here it means the same film's other poster, which a person can
-                // now change.
                 if (rank > bestRank)
                 {
                     best = candidate;
                     bestRank = rank;
+                    ambiguous = false;
                 }
+                else if (rank != Rejected && rank == bestRank && best is not null
+                    && candidate.Id != best.Id && candidate.Year != best.Year)
+                    ambiguous = true;
             }
 
-            return bestRank == Rejected ? null : best;
+            return bestRank == Rejected || ambiguous ? null : best;
         }
 
         private static int Rank(Candidate candidate, string wantedTitle, int? wantedYear)
         {
-            if (!TitlesAgree(candidate, wantedTitle)) return Rejected;
+            if (candidate.Id <= 0) return Rejected;
 
             var candidateYear = candidate.Year;
-            if (wantedYear is null || candidateYear is null) return TitleOnly;
+            var titlesAgree = TitlesAgree(candidate, wantedTitle);
+            if (wantedYear is null || candidateYear is null) return titlesAgree ? TitleOnly : Rejected;
 
             var distance = Math.Abs(candidateYear.Value - wantedYear.Value);
+            if (!titlesAgree && !(distance <= YearTolerance && InitialsAgree(candidate, wantedTitle)))
+                return Rejected;
             if (distance == 0) return TitleAndYear;
             if (distance <= YearTolerance) return TitleAndNearYear;
 
@@ -140,8 +142,26 @@ namespace UrDatabase.Services
         }
 
         private static bool TitlesAgree(Candidate candidate, string wantedTitle) =>
-            string.Equals(MovieIndex.NormalizeTitle(candidate.Title), wantedTitle, StringComparison.Ordinal) ||
-            string.Equals(MovieIndex.NormalizeTitle(candidate.OriginalTitle), wantedTitle, StringComparison.Ordinal);
+            string.Equals(NormalizeTitle(candidate.Title), wantedTitle, StringComparison.Ordinal) ||
+            string.Equals(NormalizeTitle(candidate.OriginalTitle), wantedTitle, StringComparison.Ordinal);
+
+        internal static string NormalizeTitle(string? title)
+        {
+            var reordered = Regex.Replace(title ?? "", @"^(.+),\s*(the|an|a)\s*$", "$2 $1",
+                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+            return MovieIndex.NormalizeTitle(reordered);
+        }
+
+        // Only join runs of initials, not arbitrary word boundaries ("Therapist" != "The Rapist").
+        private static string JoinInitials(string title) =>
+            Regex.Replace(title, @"(?<!\S)(?:\p{L} ){1,}\p{L}(?!\S)", match => match.Value.Replace(" ", ""));
+
+        private static bool InitialsAgree(Candidate candidate, string wantedTitle)
+        {
+            var wanted = JoinInitials(wantedTitle);
+            return wanted == JoinInitials(NormalizeTitle(candidate.Title))
+                || wanted == JoinInitials(NormalizeTitle(candidate.OriginalTitle));
+        }
 
         /// <summary>
         /// The year out of a TMDB release date. TMDB sends <c>yyyy-MM-dd</c>, but also sends an

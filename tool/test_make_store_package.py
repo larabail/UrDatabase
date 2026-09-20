@@ -6,7 +6,7 @@ import unittest
 import zipfile
 
 from make_store_package import (
-    ASSETS, IDENTITY, NS, ROOT, package_version, stage_package, verify_package, verify_resources,
+    ASSETS, FFPROBE_FILES, IDENTITY, NS, ROOT, package_version, stage_package, verify_package, verify_resources,
 )
 
 
@@ -32,6 +32,10 @@ class StorePackageTests(unittest.TestCase):
             "runtimeOptions": {"tfm": "net8.0", "includedFrameworks": [
                 {"name": "Microsoft.NETCore.App", "version": "8.0.0"}]}}))
         (self.publish / "distribution-channel.txt").write_text("MicrosoftStore\n")
+        for name in FFPROBE_FILES:
+            target = self.publish / name
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(b"prepared ffprobe fixture")
         for name in ("Data/schema.sql", "appsettings.example.json"):
             target = self.publish / name
             target.parent.mkdir(parents=True, exist_ok=True)
@@ -80,6 +84,8 @@ class StorePackageTests(unittest.TestCase):
         self.assertFalse((self.output / "UrDatabase.App.pdb").exists())
         self.assertTrue((self.output / "Data/schema.sql").is_file())
         self.assertTrue((self.output / "coreclr.dll").is_file())
+        for name in FFPROBE_FILES:
+            self.assertTrue((self.output / name).is_file(), name)
         verify_package(self.archive(), self.output)
 
     def test_refuses_private_data_or_unexpected_files_before_copying(self):
@@ -124,6 +130,20 @@ class StorePackageTests(unittest.TestCase):
         self.output.mkdir()
         with self.assertRaises(FileExistsError):
             self.stage()
+
+    def test_requires_the_bundled_offline_probe_before_staging(self):
+        (self.publish / "tools/ffprobe/ffprobe.exe").unlink()
+        with self.assertRaisesRegex(ValueError, "ffprobe"):
+            self.stage()
+
+    def test_requires_every_probe_notice_and_corresponding_source(self):
+        for name in FFPROBE_FILES:
+            file = self.publish / name
+            before = file.read_bytes()
+            file.unlink()
+            with self.subTest(name=name), self.assertRaisesRegex(ValueError, "ffprobe"):
+                self.stage()
+            file.write_bytes(before)
 
     def test_refuses_symlinks(self):
         (self.publish / "link.dll").symlink_to(self.publish / "coreclr.dll")

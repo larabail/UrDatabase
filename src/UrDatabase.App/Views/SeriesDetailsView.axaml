@@ -1,6 +1,7 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:models="clr-namespace:UrDatabase.Models"
+             xmlns:ctrls="clr-namespace:UrDatabase.Controls"
              x:Class="UrDatabase.Views.SeriesDetailsView">
 
     <!--
@@ -302,7 +303,7 @@
                             BorderBrush="{StaticResource EdgeBrush}"
                             BorderThickness="0,0,0,1"
                             Margin="0,0,0,10">
-                        <ScrollViewer Classes="shelf" Height="40">
+                        <ctrls:ScrollableShelf Height="40">
                             <ItemsControl x:Name="SeasonChipsList" ItemsSource="{Binding Seasons}">
                                 <ItemsControl.ItemsPanel>
                                     <ItemsPanelTemplate>
@@ -330,7 +331,7 @@
                                     </DataTemplate>
                                 </ItemsControl.ItemTemplate>
                             </ItemsControl>
-                        </ScrollViewer>
+                        </ctrls:ScrollableShelf>
                     </Border>
 
                     <Grid Grid.Row="5" Margin="0,0,0,16">

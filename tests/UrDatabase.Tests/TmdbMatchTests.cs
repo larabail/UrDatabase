@@ -100,6 +100,29 @@ namespace UrDatabase.Tests
         }
 
         [Fact]
+        public void A_missing_year_does_not_choose_between_a_film_and_its_remake()
+        {
+            var results = new[] { Result(1, "Dune", "2021"), Result(2, "Dune", "1984") };
+            Assert.Null(TmdbMatch.ChooseBest(results, "Dune", null));
+        }
+
+        [Theory]
+        [InlineData("Matrix, The", "The Matrix")]
+        [InlineData("S W A T", "SWAT")]
+        [InlineData("WALL E", "WALL·E")]
+        public void Release_title_variations_match_with_a_corroborating_year(string requested, string actual)
+        {
+            Assert.Equal(1, TmdbMatch.ChooseBest(new[] { Result(1, actual, "1999") }, requested, 1999)!.Id);
+        }
+
+        [Fact]
+        public void Whitespace_compaction_needs_a_corroborating_year()
+        {
+            Assert.Null(TmdbMatch.ChooseBest(new[] { Result(1, "The Rapist", "1999") }, "Therapist", null));
+            Assert.Null(TmdbMatch.ChooseBest(new[] { Result(1, "SWAT", "2003") }, "S W A T", 2011));
+        }
+
+        [Fact]
         public void A_result_tmdb_cannot_date_is_accepted_on_its_title()
         {
             var results = new List<TmdbMatch.Candidate> { Result(1, "Fight Club"), Result(2, "Fight Club", "1999") };

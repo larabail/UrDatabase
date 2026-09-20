@@ -5,8 +5,7 @@ using UrDatabase.Models;
 namespace UrDatabase.Services
 {
     /// <summary>
-    /// Describes the copy of a film on this disk: whatever its name claims, plus the one thing
-    /// about it that is not a claim — how big it is.
+    /// The inexpensive filename fallback. Details pages use LocalMediaReader for actual tracks.
     /// </summary>
     /// <remarks>
     /// Split from <see cref="FilenameMediaInfo"/> because that one is pure and this one touches
@@ -26,6 +25,7 @@ namespace UrDatabase.Services
 
             var info = FilenameMediaInfo.Parse(path);
             info.SizeBytes = (sizeOf ?? SizeOnDisk)(path);
+            info.IsFilenameEstimate = true;
 
             return info.HasAnything ? info : null;
         }

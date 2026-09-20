@@ -11,7 +11,42 @@
     a parse error rather than a fallback.
 -->
 <Styles xmlns="https://github.com/avaloniaui"
-        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:ctrls="clr-namespace:UrDatabase.Controls">
+
+    <Styles.Resources>
+        <ControlTheme x:Key="{x:Type ctrls:ScrollableShelf}" TargetType="ctrls:ScrollableShelf">
+            <Setter Property="Template">
+                <ControlTemplate>
+                    <!-- Buttons sit outside the viewport, never on top of a clickable card. -->
+                    <Grid ColumnDefinitions="38,*,38" Margin="{TemplateBinding Padding}">
+                        <Button x:Name="PART_Left"
+                                Classes="ghost shelfNav"
+                                Width="30" Height="30" MinWidth="0" Padding="0"
+                                HorizontalAlignment="Left" VerticalAlignment="Center"
+                                AutomationProperties.Name="Scroll left"
+                                ToolTip.Tip="Scroll left">
+                            <PathIcon Width="12" Height="12" Data="M 8,0 L 2,6 L 8,12 L 10,10 L 6,6 L 10,2 Z"/>
+                        </Button>
+                        <ScrollViewer x:Name="PART_Scroller"
+                                      Grid.Column="1"
+                                      Classes="shelf"
+                                      Content="{TemplateBinding Content}"
+                                      ContentTemplate="{TemplateBinding ContentTemplate}"/>
+                        <Button x:Name="PART_Right"
+                                Grid.Column="2"
+                                Classes="ghost shelfNav"
+                                Width="30" Height="30" MinWidth="0" Padding="0"
+                                HorizontalAlignment="Right" VerticalAlignment="Center"
+                                AutomationProperties.Name="Scroll right"
+                                ToolTip.Tip="Scroll right">
+                            <PathIcon Width="12" Height="12" Data="M 2,0 L 8,6 L 2,12 L 0,10 L 4,6 L 0,2 Z"/>
+                        </Button>
+                    </Grid>
+                </ControlTemplate>
+            </Setter>
+        </ControlTheme>
+    </Styles.Resources>
 
     <!-- ============================================================== -->
     <!--  text                                                          -->
@@ -444,10 +479,12 @@
     <!--  scrolling                                                     -->
     <!-- ============================================================== -->
 
-    <!-- A shelf is dragged or wheeled, not scrolled with a visible bar; a bar
-         under every row would put twenty grey rectangles on the screen. The
-         vertical bar on the hall stays, because that one is the only clue to
-         how much library is left. -->
+    <!-- ScrollableShelf adds mouse buttons alongside the native scroller. Keep
+         gestures and vertical scroll chaining intact, without a bar under every row. -->
+    <Style Selector="Button.shelfNav:disabled">
+        <Setter Property="Opacity" Value="0.3"/>
+    </Style>
+
     <Style Selector="ScrollViewer.shelf">
         <Setter Property="HorizontalScrollBarVisibility" Value="Hidden"/>
         <Setter Property="VerticalScrollBarVisibility" Value="Disabled"/>

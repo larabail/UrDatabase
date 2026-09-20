@@ -88,6 +88,9 @@ namespace UrDatabase.Tests
         [InlineData("the.matrix.mkv", "The Matrix")]
         [InlineData("the.matrix.1080p.bluray.x264-GROUP.mkv", "The Matrix")]
         [InlineData("The Matrix - 1080p.mkv", "The Matrix")]
+        [InlineData("The.Matrix.1080p [YTS].mkv", "The Matrix")]
+        [InlineData("The.Matrix.1080p.BluRay.x264 [YTS].mkv", "The Matrix")]
+        [InlineData("The.Matrix 1080p.BluRay.x264.mkv", "The Matrix")]
         public void A_name_with_no_year_still_yields_a_clean_title(string name, string expected)
         {
             var parsed = FilenameParser.Parse(name);

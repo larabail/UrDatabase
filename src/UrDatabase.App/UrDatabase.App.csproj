@@ -73,6 +73,27 @@
     <InternalsVisibleTo Include="UrDatabase.Tests" />
   </ItemGroup>
 
+  <!-- Preparation is explicit: build/test never acquire native tools from the network. -->
+  <PropertyGroup>
+    <FfprobeRuntimeIdentifier Condition="'$(RuntimeIdentifier)' != ''">$(RuntimeIdentifier)</FfprobeRuntimeIdentifier>
+    <FfprobeRuntimeIdentifier Condition="'$(FfprobeRuntimeIdentifier)' == ''">$(NETCoreSdkRuntimeIdentifier)</FfprobeRuntimeIdentifier>
+    <FfprobeDirectory>$(MSBuildProjectDirectory)/../../artifacts/ffprobe/$(FfprobeRuntimeIdentifier)</FfprobeDirectory>
+    <FfprobeExecutable Condition="'$(FfprobeRuntimeIdentifier)' == 'win-x64'">ffprobe.exe</FfprobeExecutable>
+    <FfprobeExecutable Condition="'$(FfprobeRuntimeIdentifier)' != 'win-x64'">ffprobe</FfprobeExecutable>
+  </PropertyGroup>
+  <ItemGroup Condition="Exists('$(FfprobeDirectory)/bundle.json')">
+    <Content Include="$(FfprobeDirectory)/**/*">
+      <Link>tools/ffprobe/%(RecursiveDir)%(Filename)%(Extension)</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
+  </ItemGroup>
+  <Target Name="RequirePreparedFfprobe" BeforeTargets="PrepareForPublish"
+          Condition="'$(RequireBundledFfprobe)' == 'true'">
+    <Error Condition="!Exists('$(FfprobeDirectory)/$(FfprobeExecutable)') or !Exists('$(FfprobeDirectory)/bundle.json') or !Exists('$(FfprobeDirectory)/NOTICE.txt') or !Exists('$(FfprobeDirectory)/sources')"
+           Text="Prepare the bundled ffprobe first: python3 tool/prepare_ffprobe.py --runtime $(FfprobeRuntimeIdentifier)" />
+  </Target>
+
   <Target Name="ValidateDistributionChannel" BeforeTargets="PrepareForBuild">
     <Error Condition="'$(DistributionChannel)' != 'Standalone' and '$(DistributionChannel)' != 'MicrosoftStore'"
            Text="DistributionChannel must be Standalone or MicrosoftStore." />

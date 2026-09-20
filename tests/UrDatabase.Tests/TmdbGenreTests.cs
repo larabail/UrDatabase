@@ -55,13 +55,13 @@ namespace UrDatabase.Tests
             Assert.Empty(await tmdb.GenreNamesAsync(default));
             online = true;
             Assert.Empty(await tmdb.GenreNamesAsync(default));
-            Assert.Single(handler.Requests);
+            Assert.Equal(3, handler.Requests.Count);
 
             await tmdb.RetryGenreListAsync(default);
             Assert.NotEmpty(await tmdb.GenreNamesAsync(default));
             await tmdb.RetryGenreListAsync(default);
             Assert.NotEmpty(await tmdb.GenreNamesAsync(default));
-            Assert.Equal(2, handler.Requests.Count);
+            Assert.Equal(4, handler.Requests.Count);
         }
 
         // ---------- naming the ids ----------
@@ -162,10 +162,10 @@ namespace UrDatabase.Tests
 
         /// <summary>
         /// A library warming with no network would otherwise retry this once per film. The failure
-        /// is not per-film information, so it is remembered until the app is restarted.
+        /// is not per-film information, so it is remembered during a short cooldown.
         /// </summary>
         [Fact]
-        public async Task A_genre_list_that_could_not_be_read_is_not_asked_for_again()
+        public async Task A_genre_list_that_could_not_be_read_is_not_retried_for_every_film()
         {
             using var handler = FakeHttpMessageHandler.Routed(
                 ("/genre/movie/list", HttpStatusCode.InternalServerError, "{}"),
@@ -182,7 +182,7 @@ namespace UrDatabase.Tests
                 Assert.Null(genres);
             }
 
-            Assert.Equal(1, handler.Requests.Count(r => r.Contains("/genre/movie/list", StringComparison.Ordinal)));
+            Assert.Equal(3, handler.Requests.Count(r => r.Contains("/genre/movie/list", StringComparison.Ordinal)));
         }
 
         /// <summary>

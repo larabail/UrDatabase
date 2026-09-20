@@ -234,9 +234,10 @@ namespace UrDatabase.Services
 
             var text = AnyBracket.Replace(raw, " ").Replace('_', ' ');
 
-            // Full stops only separate words in a name that has no spaces of its own. Converting
-            // them unconditionally would turn "Mr. Nobody" into "Mr Nobody" for no reason.
-            if (!text.Contains(' ')) text = text.Replace('.', ' ');
+            // Bracket removal and mixed release separators can introduce spaces into a dotted
+            // filename. Split internal dots, but keep "Mr. Nobody" and audio tags such as DD5.1.
+            text = string.Join(' ', text.Split(' ', StringSplitOptions.RemoveEmptyEntries)
+                .Select(token => IsNoiseToken(token) ? token : Regex.Replace(token, @"(?<=\S)\.(?=\S)", " ")));
 
             var tokens = text.Split(' ', StringSplitOptions.RemoveEmptyEntries).ToList();
             while (tokens.Count > 0 && IsNoiseToken(tokens[^1]))

@@ -123,6 +123,21 @@ tested alongside the bump check by the same command.
 
 ## What runs, and when
 
+### Bundled offline media inspector
+
+The shared package action and Store packaging script explicitly prepare ffprobe
+with `python3 tool/prepare_ffprobe.py --runtime <RID>` (`python` on Windows),
+publish with `-p:RequireBundledFfprobe=true`, and verify the published
+`tools/ffprobe/` directory before archiving or signing. Ordinary builds and tests
+never download native tools. Missing or modified payload files fail packaging.
+
+`packaging/ffprobe/manifest.json` pins the supported binaries, source archives
+and hashes. Ship the whole helper directory: its LGPL notices, corresponding
+source and rebuild instructions are part of the distribution, not optional
+development files. Only ffprobe is included, not the ffmpeg transcoder. macOS
+signing covers the helper too, so original upstream checksums are verified
+before signatures change.
+
 ### `pr.yml` — on every pull request to `main`
 
 | Job | What it does |

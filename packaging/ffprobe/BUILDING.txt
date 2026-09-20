@@ -1,0 +1,89 @@
+Rebuilding the separate LGPL ffprobe executable
+===============================================
+
+All source archives named below accompany this document in sources/. They are
+unmodified upstream sources, with their original build systems and licenses.
+Their exact URLs and SHA-256 digests are recorded in bundle.json. You can
+modify these sources and rebuild the whole helper; proprietary object files
+from UrDatabase are not needed because the application and helper do not link.
+
+WINDOWS x64 (FFmpeg 9.0.2)
+
+Unpack windows-build-recipe.tar.gz. It contains the complete MIT-licensed
+gpslab/ffprobe-win-build recipe at commit
+05eb77e81c9e95c4d4b4da5ad6cecf3bf4a6680e, including its GitHub Actions workflow,
+expected/configure-flags.txt, validation scripts and synthetic media fixtures.
+Follow .github/workflows/build-ffprobe.yml with the included ffmpeg-9.0.2.tar.xz
+instead of downloading it. The workflow records every compiler/dependency
+package; the versions that produced this binary are also in versions.txt.
+Use MSYS2 UCRT64, GCC and the static zlib library (source: zlib-1.3.2.tar.xz).
+Configure FFmpeg with the flags in expected/configure-flags.txt, plus
+--extra-ldflags=-static --pkg-config-flags=--static, then make ffprobe.
+The upstream workflow's license/import/field gates are useful for a rebuild.
+Replace tools/ffprobe/ffprobe.exe in a writable standalone app directory.
+
+macOS Intel / Apple silicon (FFmpeg 7.1)
+
+Original build provenance (reference, not a required download):
+https://github.com/EricEngineering/ffmpeg-macos-lgpl/tree/f7432c50c3c5a3a866fc595ddb72e54bf297dc5d
+The upstream compiler was Apple clang 15.0.0 (clang-1500.3.9.4), SDK 14.5.
+The release is universal2; rebuilding a native executable for your own Mac is
+also sufficient to replace it. The following native-build recipe uses the
+same component versions and feature choices. A newer compiler may naturally
+produce different bytes. Use Xcode Command Line Tools, make, nasm, CMake and
+pkg-config. Build in a new, writable work directory, not inside an installed app.
+
+Unpack ffmpeg-7.1.tar.xz, libvpx-1.14.1.tar.gz and libwebp-1.4.0.tar.gz into it.
+Use absolute PREFIX and WORK paths in the commands below:
+
+  export WORK="$PWD"
+  export PREFIX="$WORK/prefix"
+  export ARCH="$(uname -m)"
+  export MACOSX_DEPLOYMENT_TARGET=11.0
+  export PKG_CONFIG_PATH="$PREFIX/lib/pkgconfig"
+
+In libvpx-1.14.1:
+
+  CFLAGS="-arch $ARCH" LDFLAGS="-arch $ARCH" ./configure \
+    --prefix="$PREFIX" --target="$ARCH-darwin20-gcc" --enable-pic \
+    --enable-vp8 --enable-vp9 --enable-static --disable-shared \
+    --disable-examples --disable-tools --disable-docs --disable-unit-tests
+  make && make install
+
+In libwebp-1.4.0:
+
+  cmake -B build -DCMAKE_INSTALL_PREFIX="$PREFIX" \
+    -DCMAKE_OSX_ARCHITECTURES="$ARCH" -DCMAKE_BUILD_TYPE=Release \
+    -DBUILD_SHARED_LIBS=OFF -DWEBP_BUILD_ANIM_UTILS=OFF \
+    -DWEBP_BUILD_CWEBP=OFF -DWEBP_BUILD_DWEBP=OFF -DWEBP_BUILD_GIF2WEBP=OFF \
+    -DWEBP_BUILD_IMG2WEBP=OFF -DWEBP_BUILD_VWEBP=OFF -DWEBP_BUILD_WEBPINFO=OFF \
+    -DWEBP_BUILD_WEBPMUX=ON -DWEBP_BUILD_EXTRAS=OFF
+  cmake --build build && cmake --install build
+
+In ffmpeg-7.1:
+
+  ./configure --prefix="$PREFIX" --disable-gpl --disable-nonfree \
+    --enable-static --disable-shared --pkg-config-flags=--static \
+    --disable-doc --disable-debug --disable-programs --enable-ffmpeg \
+    --enable-ffprobe --enable-libvpx --enable-libwebp \
+    --disable-xlib --disable-libxcb \
+    --extra-cflags="-arch $ARCH -I$PREFIX/include" \
+    --extra-ldflags="-arch $ARCH -L$PREFIX/lib"
+  make ffprobe
+
+The original Intel slice was cross-built on arm64. To reproduce that layout,
+use separate source/build/prefix directories for each architecture, set
+ARCH=x86_64 for the Intel pass, and add these FFmpeg configure arguments:
+--enable-cross-compile --arch=x86_64 --target-os=darwin --cc="clang -arch x86_64".
+Combine the resulting binaries with:
+
+  lipo -create arm64/ffprobe x86_64/ffprobe -output ffprobe
+  chmod 755 ffprobe
+  codesign --force --sign - ffprobe
+
+Check `ffprobe -L` reports LGPL and `otool -L ffprobe` refers only to /usr/lib
+and /System libraries. Replace Contents/MacOS/tools/ffprobe/ffprobe inside a
+writable local UrDatabase.app; changing signed contents invalidates its former
+signature. Use a locally built app, or re-sign your modified bundle according
+to Apple's local-development signing guidance. No publisher signing key or
+online license server is required to build or use your modified helper.

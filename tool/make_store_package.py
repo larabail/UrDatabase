@@ -11,6 +11,7 @@ from xml.etree import ElementTree as ET
 import zipfile
 
 from check_version_bump import parse_version, version_from_props
+from prepare_ffprobe import expected_files, read_bundle
 
 ROOT = Path(__file__).resolve().parent.parent
 NS = {
@@ -38,7 +39,8 @@ ASSETS = {
     "StoreLogo.scale-400.png": 200,
 }
 CONTENT = {"Data/schema.sql", "appsettings.example.json"}
-REQUIRED = CONTENT | {
+FFPROBE_FILES = {f"tools/ffprobe/{name}" for name in expected_files(read_bundle("win-x64"))}
+REQUIRED = CONTENT | FFPROBE_FILES | {
     "UrDatabase.App.exe", "UrDatabase.App.dll", "UrDatabase.App.deps.json",
     "UrDatabase.App.runtimeconfig.json", "distribution-channel.txt",
     "coreclr.dll", "hostfxr.dll", "hostpolicy.dll", "e_sqlite3.dll",
