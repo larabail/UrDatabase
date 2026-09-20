@@ -191,7 +191,7 @@ namespace UrDatabase.Tests
         /// already known, and the surest way to be rate limited out of the ones that would work.
         /// </summary>
         [Fact]
-        public async Task A_film_is_only_ever_asked_about_once()
+        public async Task A_film_is_only_identified_once_between_explicit_refreshes()
         {
             Seed(1);
 
@@ -219,7 +219,8 @@ namespace UrDatabase.Tests
             }
 
             Assert.Null(StoredPoster(1));
-            Assert.Equal(1, handler.Requests.Count(r => r.Contains("/search/movie", StringComparison.Ordinal)));
+            // One attempt, with an exact-year query followed by the near-year fallback.
+            Assert.Equal(2, handler.Requests.Count(r => r.Contains("/search/movie", StringComparison.Ordinal)));
         }
     }
 }

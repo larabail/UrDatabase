@@ -41,7 +41,8 @@ namespace UrDatabase.Tests
             {
                 var document = XDocument.Load(file, LoadOptions.SetLineInfo);
 
-                foreach (var scroller in document.Descendants().Where(e => e.Name.LocalName == "ScrollViewer"))
+                foreach (var scroller in document.Descendants().Where(e =>
+                    e.Name.LocalName is "ScrollViewer" or "ScrollableShelf"))
                 {
                     var padding = (string?)scroller.Attribute("Padding");
                     if (string.IsNullOrWhiteSpace(padding)) continue;
@@ -82,6 +83,7 @@ namespace UrDatabase.Tests
         /// </summary>
         private static bool ScrollsHorizontallyByClass(XElement scroller)
         {
+            if (scroller.Name.LocalName == "ScrollableShelf") return true;
             var classes = (string?)scroller.Attribute("Classes") ?? "";
             return classes.Split(' ', StringSplitOptions.RemoveEmptyEntries).Contains("shelf");
         }

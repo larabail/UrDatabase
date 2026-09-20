@@ -61,6 +61,9 @@ namespace UrDatabase.Services
         private readonly object _attemptLock = new();
         private readonly HashSet<long> _attempted = new();
         private readonly HashSet<long> _inFlight = new();
+        private enum LookupOutcome { Pending, Matched, Unmatched, Failed }
+        private readonly Dictionary<long, LookupOutcome> _outcomes = new();
+        private MetadataProgress _progress = new();
         private readonly ConcurrentDictionary<Task, byte> _queued = new();
         private readonly CancellationTokenSource _stopping = new();
 
@@ -118,7 +121,8 @@ namespace UrDatabase.Services
             string dbPath,
             int maxConcurrency = 4,
             Action<string>? onFailure = null,
-            HttpMessageHandler? handler = null)
+            HttpMessageHandler? handler = null,
+            TmdbRequestScheduler? requests = null)
         {
             _cfg = cfg;
             _dbPath = dbPath;
@@ -131,7 +135,8 @@ namespace UrDatabase.Services
                 posterCacheDir: cfg.PosterCacheDir ?? "",
                 imageSize: cfg.TmdbImageSize ?? "w342",
                 downloadPosters: cfg.DownloadPosters,
-                handler: handler);
+                handler: handler,
+                requests: requests);
         }
 
         /// <summary>How many fetches could start right now. For tests; the gate itself stays private.</summary>
@@ -140,12 +145,56 @@ namespace UrDatabase.Services
         /// <summary>How many queued fetches have not finished yet. For tests.</summary>
         internal int Pending => Volatile.Read(ref _outstanding);
 
+        public MetadataProgress Progress
+        {
+            get
+            {
+                lock (_attemptLock)
+                    return _progress with
+                    {
+                        RetryAfterSeconds = _progress.Pending > 0 ? _tmdb.RateLimitRetryAfterSeconds : 0
+                    };
+            }
+        }
+
         /// <summary>Allows another attempt at missing metadata without replacing running workers.</summary>
         public async Task RetryMissingAsync(CancellationToken ct = default)
         {
             await _tmdb.RetryGenreListAsync(ct);
             lock (_attemptLock)
+            {
                 _attempted.IntersectWith(_inFlight);
+                foreach (var id in _outcomes.Where(entry => entry.Value != LookupOutcome.Pending
+                                 && !_inFlight.Contains(entry.Key))
+                             .Select(entry => entry.Key).ToArray())
+                    _outcomes.Remove(id);
+                _progress = new MetadataProgress(
+                    _outcomes.Count(entry => entry.Value == LookupOutcome.Pending),
+                    _outcomes.Count(entry => entry.Value == LookupOutcome.Matched),
+                    _outcomes.Count(entry => entry.Value == LookupOutcome.Unmatched),
+                    _outcomes.Count(entry => entry.Value == LookupOutcome.Failed));
+            }
+        }
+
+        private void RegisterProgress(long movieId)
+        {
+            lock (_attemptLock)
+                if (_outcomes.TryAdd(movieId, LookupOutcome.Pending))
+                    _progress = _progress with { Pending = _progress.Pending + 1 };
+        }
+
+        private void CompleteProgress(long movieId, LookupOutcome outcome)
+        {
+            lock (_attemptLock)
+            {
+                if (!_outcomes.TryGetValue(movieId, out var previous) || previous != LookupOutcome.Pending) return;
+                _outcomes[movieId] = outcome;
+                _progress = new MetadataProgress(
+                    _progress.Pending - 1,
+                    _progress.Matched + (outcome == LookupOutcome.Matched ? 1 : 0),
+                    _progress.Unmatched + (outcome == LookupOutcome.Unmatched ? 1 : 0),
+                    _progress.Failed + (outcome == LookupOutcome.Failed ? 1 : 0));
+            }
         }
 
         private bool BeginAttempt(long movieId)
@@ -153,6 +202,7 @@ namespace UrDatabase.Services
             lock (_attemptLock)
             {
                 if (!_attempted.Add(movieId)) return false;
+                RegisterProgress(movieId);
                 _inFlight.Add(movieId);
                 return true;
             }
@@ -170,8 +220,9 @@ namespace UrDatabase.Services
         /// </remarks>
         public void Queue(long movieId, string title, int? year, Action<Enrichment> onFetched, CancellationToken ct)
         {
-            if (_disposed) return;
+            if (_disposed || string.IsNullOrWhiteSpace(_cfg.TmdbApiKey)) return;
 
+            RegisterProgress(movieId);
             Interlocked.Increment(ref _outstanding);
             _pending.Enqueue(new Request(movieId, title, year, onFetched, ct));
 
@@ -286,8 +337,9 @@ namespace UrDatabase.Services
         /// </summary>
         public Task EnsurePosterAsync(long movieId, string title, int? year, Action<Enrichment> onFetched, CancellationToken ct)
         {
-            if (_disposed) return Task.CompletedTask;
+            if (_disposed || string.IsNullOrWhiteSpace(_cfg.TmdbApiKey)) return Task.CompletedTask;
 
+            RegisterProgress(movieId);
             return FetchAsync(new Request(movieId, title, year, onFetched, ct));
         }
 
@@ -343,10 +395,12 @@ namespace UrDatabase.Services
                 // the database and never the card: posters that only appeared after a restart,
                 // which is most of the bug this set out to fix, reintroduced by the fix for it.
                 var hasArtwork = HasArtwork(known.PosterPath);
-                if (hasArtwork)
+                if (hasArtwork || !string.IsNullOrWhiteSpace(known.Genres))
+                    onFetched(new Enrichment(hasArtwork ? known.PosterPath : null, known.Genres));
+                if (hasArtwork && !string.IsNullOrWhiteSpace(known.Genres))
                 {
-                    onFetched(known);
-                    if (!string.IsNullOrWhiteSpace(known.Genres)) return;
+                    CompleteProgress(movieId, LookupOutcome.Matched);
+                    return;
                 }
 
                 // Only now is a request being considered, so only now does it count as an attempt.
@@ -381,7 +435,11 @@ namespace UrDatabase.Services
                 // — throwing away an id and a set of genres that had already been fetched and paid
                 // for. Since a film is only ever asked about once, that left it uncategorised for
                 // good: the column would never be written on this launch or any other.
-                if (tmdbId is null) return;
+                if (tmdbId is null)
+                {
+                    CompleteProgress(movieId, LookupOutcome.Unmatched);
+                    return;
+                }
 
                 string? pathToStore = hasArtwork ? known.PosterPath : null;
 
@@ -406,6 +464,7 @@ namespace UrDatabase.Services
                 // which is what a film with no artwork wants — it must not blank a poster somebody
                 // chose by hand.
                 await MovieMatch.SaveAsync(conn, movieId, tmdbId.Value, pathToStore, genres: genres, ct: token);
+                CompleteProgress(movieId, LookupOutcome.Matched);
 
                 onFetched(new Enrichment(pathToStore,
                     string.IsNullOrWhiteSpace(known.Genres) ? genres : known.Genres)
@@ -414,12 +473,22 @@ namespace UrDatabase.Services
                         && string.Equals(known.PosterPath, pathToStore, StringComparison.Ordinal)
                 });
             }
-            catch (OperationCanceledException)
+            catch (OperationCanceledException) when (token.IsCancellationRequested)
             {
-                // ignore on window close / app exit
+                lock (_attemptLock)
+                {
+                    if (attempted) _attempted.Remove(movieId);
+                    if ((attempted || !_inFlight.Contains(movieId))
+                        && _outcomes.TryGetValue(movieId, out var outcome) && outcome == LookupOutcome.Pending)
+                    {
+                        _outcomes.Remove(movieId);
+                        _progress = _progress with { Pending = _progress.Pending - 1 };
+                    }
+                }
             }
             catch (Exception ex)
             {
+                CompleteProgress(movieId, LookupOutcome.Failed);
                 AppLog.Write("posters.log", $"movieId={movieId} {ex}");
 
                 // Nothing is said about a failure that is only the app closing. The shared client

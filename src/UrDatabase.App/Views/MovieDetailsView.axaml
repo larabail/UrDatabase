@@ -442,7 +442,7 @@
                         <Rectangle Height="1"
                                    Fill="{StaticResource EdgeBrush}"
                                    Margin="0,0,0,10"/>
-                        <ScrollViewer Classes="shelf" Padding="0,0,0,4">
+                        <ctrls:ScrollableShelf Padding="0,0,0,4">
                             <ItemsControl x:Name="RelatedList">
                                 <ItemsControl.ItemsPanel>
                                     <ItemsPanelTemplate>
@@ -477,7 +477,7 @@
                                     </DataTemplate>
                                 </ItemsControl.ItemTemplate>
                             </ItemsControl>
-                        </ScrollViewer>
+                        </ctrls:ScrollableShelf>
                     </StackPanel>
 
                     <Grid Grid.Row="5"

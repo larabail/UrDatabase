@@ -549,7 +549,7 @@
                              matter how far it was scrolled. It read as a clipping
                              bug in the label rather than as a scroller that would
                              not travel, which is why it survived a first look. -->
-                        <ScrollViewer Grid.Column="4" Classes="shelf" Height="40">
+                        <ctrls:ScrollableShelf Grid.Column="4" Height="40">
                             <ItemsControl x:Name="GenreChipsList"
                                           Margin="24,0"
                                           ItemsSource="{Binding GenreChips}">
@@ -579,7 +579,7 @@
                                     </DataTemplate>
                                 </ItemsControl.ItemTemplate>
                             </ItemsControl>
-                        </ScrollViewer>
+                        </ctrls:ScrollableShelf>
                     </Grid>
                 </Border>
             </StackPanel>
@@ -732,7 +732,7 @@
                                              back. The plain panel measures every child
                                              it is given; this one measures what the
                                              viewport can show. -->
-                                        <ScrollViewer Classes="shelf">
+                                        <ctrls:ScrollableShelf>
                                             <ItemsControl ItemsSource="{Binding Items}"
                                                           ItemTemplate="{StaticResource MovieCardTemplate}">
                                                 <ItemsControl.ItemsPanel>
@@ -741,7 +741,7 @@
                                                     </ItemsPanelTemplate>
                                                 </ItemsControl.ItemsPanel>
                                             </ItemsControl>
-                                        </ScrollViewer>
+                                        </ctrls:ScrollableShelf>
                                     </StackPanel>
                                 </DataTemplate>
                             </ItemsControl.ItemTemplate>

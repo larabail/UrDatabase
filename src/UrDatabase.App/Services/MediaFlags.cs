@@ -89,14 +89,14 @@ namespace UrDatabase.Services
                 {
                     Text = range,
                     Kind = MediaFlagKind.Picture,
-                    Tip = range == "DV" ? "Dolby Vision" : "High dynamic range"
+                    Tip = TrackTip(range == "DV" ? "Dolby Vision" : "High dynamic range", info)
                 });
             }
 
             var codec = VideoCodecName(info.VideoCodec);
             if (codec is not null)
             {
-                flags.Add(new MediaFlag { Text = codec, Kind = MediaFlagKind.Picture, Tip = "Video codec" });
+                flags.Add(new MediaFlag { Text = codec, Kind = MediaFlagKind.Picture, Tip = TrackTip("Video codec", info) });
             }
 
             if (!string.IsNullOrWhiteSpace(info.Source))
@@ -105,14 +105,14 @@ namespace UrDatabase.Services
                 {
                     Text = info.Source.Trim().ToUpperInvariant(),
                     Kind = MediaFlagKind.Picture,
-                    Tip = "Where this copy came from"
+                    Tip = "Where this copy came from, according to the filename"
                 });
             }
 
             var audio = AudioLabel(info);
             if (audio is not null)
             {
-                flags.Add(new MediaFlag { Text = audio, Kind = MediaFlagKind.Sound, Tip = "Audio track" });
+                flags.Add(new MediaFlag { Text = audio, Kind = MediaFlagKind.Sound, Tip = TrackTip("Audio track", info) });
             }
 
             var size = FileSize(info.SizeBytes);
@@ -121,8 +121,8 @@ namespace UrDatabase.Services
                 flags.Add(new MediaFlag { Text = size, Kind = MediaFlagKind.Picture, Tip = "Size on disk" });
             }
 
-            AddLanguages(flags, info.AudioLanguages, MediaFlagKind.Language, "Audio", "HEARD IN");
-            AddLanguages(flags, info.SubtitleLanguages, MediaFlagKind.Subtitle, "Subtitles", "SUBS");
+            AddLanguages(flags, info.AudioLanguages, MediaFlagKind.Language, "Audio", "HEARD IN", info);
+            AddLanguages(flags, info.SubtitleLanguages, MediaFlagKind.Subtitle, "Subtitles", "SUBS", info);
 
             return flags;
         }
@@ -132,7 +132,8 @@ namespace UrDatabase.Services
             IEnumerable<string>? languages,
             MediaFlagKind kind,
             string what,
-            string groupLabel)
+            string groupLabel,
+            MediaInfo info)
         {
             var codes = Codes(languages);
             if (codes.Count == 0) return;
@@ -145,7 +146,7 @@ namespace UrDatabase.Services
                 {
                     Text = code.Code,
                     Kind = kind,
-                    Tip = $"{what}: {code.Name}",
+                    Tip = TrackTip($"{what}: {code.Name}", info),
                     GroupLabel = first ? groupLabel : ""
                 });
 
@@ -159,10 +160,14 @@ namespace UrDatabase.Services
                 {
                     Text = $"+{remaining.ToString(CultureInfo.InvariantCulture)}",
                     Kind = kind,
-                    Tip = $"{what}: {string.Join(", ", codes.Skip(MaxLanguages).Select(c => c.Name))}"
+                    Tip = TrackTip($"{what}: {string.Join(", ", codes.Skip(MaxLanguages).Select(c => c.Name))}", info)
                 });
             }
+
         }
+
+        private static string TrackTip(string tip, MediaInfo info) =>
+            info.IsFilenameEstimate ? $"{tip}, according to the filename" : tip;
 
         /// <summary>
         /// The distinct languages in a list, in the order the source gave them. Distinct by code
@@ -336,6 +341,10 @@ namespace UrDatabase.Services
                 return $"{quality} — {info.Width.Value.ToString(CultureInfo.InvariantCulture)}" +
                        $"×{info.Height.Value.ToString(CultureInfo.InvariantCulture)}";
             }
+            if (info.Width is > 0)
+                return $"{quality} — {info.Width.Value.ToString(CultureInfo.InvariantCulture)} pixels wide";
+            if (info.Height is > 0)
+                return $"{quality} — {info.Height.Value.ToString(CultureInfo.InvariantCulture)} pixels high";
 
             // No measurement means this came off a filename, and a filename is a claim.
             return $"{quality}, according to the filename";

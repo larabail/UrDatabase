@@ -180,6 +180,10 @@ runs:
 
           rm -rf "$PUBLISH"
 
+          # Pinned LGPL helper, notices and corresponding source. No build/test
+          # target downloads anything; this explicit packaging step owns it.
+          python3 tool/prepare_ffprobe.py --runtime "$RID"
+
           # -p:Version is passed as well as being set in Directory.Build.props
           # so the assembly, the bundle's CFBundleVersion and the filename
           # cannot disagree, including on a branch where the props file does
@@ -211,7 +215,14 @@ runs:
             -p:OmdbApiKey="$OMDB_API_KEY" \
             -p:UrActorApiKey="$URACTOR_API_KEY" \
             -p:ContinuousIntegrationBuild=true \
+            -p:RequireBundledFfprobe=true \
             --output "$PUBLISH"
+
+          python3 tool/prepare_ffprobe.py --runtime "$RID" \
+            --verify "$PUBLISH/tools/ffprobe"
+          if [[ "$RID" == osx-* ]]; then
+            "$PUBLISH/tools/ffprobe/ffprobe" -version
+          fi
 
           echo "::endgroup::"
 

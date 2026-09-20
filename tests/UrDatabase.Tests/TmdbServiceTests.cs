@@ -1,6 +1,7 @@
 using System;
 using System.Linq;
 using System.Net;
+using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
 using UrDatabase.Services;
@@ -171,13 +172,13 @@ namespace UrDatabase.Tests
         }
 
         [Fact]
-        public async Task Search_returns_nothing_on_an_http_error()
+        public async Task Search_reports_an_http_error_instead_of_claiming_no_match()
         {
             using var svc = Create(FakeHttpMessageHandler.Json("{}", HttpStatusCode.InternalServerError));
 
-            var (id, _) = await svc.SearchPosterAsync("Fight Club", null, CancellationToken.None);
-
-            Assert.Null(id);
+            var error = await Assert.ThrowsAsync<HttpRequestException>(
+                () => svc.SearchPosterAsync("Fight Club", null, CancellationToken.None));
+            Assert.Equal(HttpStatusCode.InternalServerError, error.StatusCode);
         }
 
         [Fact]

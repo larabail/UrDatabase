@@ -9,19 +9,18 @@ namespace UrDatabase.Models
     /// languages it can be heard and read in.
     /// </summary>
     /// <remarks>
-    /// One shape for two very different sources, which is the point of it existing at all. A
-    /// Jellyfin film comes with measured streams: real pixel dimensions, real language tags, a
-    /// real channel count. A scanned file comes with nothing but its own name, and a name is a
-    /// claim rather than a measurement — "1080p" in a filename is whatever the person who encoded
-    /// it typed. Both end up here so the screen has one thing to render and one thing to test,
-    /// and every field is optional because the honest answer for most of them, most of the time,
-    /// is that nobody knows.
+    /// Both local ffprobe streams and Jellyfin streams use this shape. Filename fallback is
+    /// explicitly marked: a release name is a claim rather than a measurement. Every field is
+    /// optional because a missing track tag is unknown, not a reason to guess.
     ///
     /// Deliberately not a record: it is deserialised from the Jellyfin cache, and a mutable class
     /// with property initialisers is what <c>System.Text.Json</c> handles without ceremony.
     /// </remarks>
     public sealed class MediaInfo
     {
+        /// <summary>Track badges came from the filename, not a successful local or server probe.</summary>
+        public bool IsFilenameEstimate { get; set; }
+
         /// <summary>Picture width in pixels, when it was measured rather than claimed.</summary>
         public int? Width { get; set; }
 
@@ -57,7 +56,7 @@ namespace UrDatabase.Models
         /// <summary>Size of the file on disk, in bytes. Local films only; a server never reports one.</summary>
         public long? SizeBytes { get; set; }
 
-        /// <summary>Container extension, lower case and without the dot — <c>mkv</c>, <c>mp4</c>.</summary>
+        /// <summary>Container name from ffprobe, or the extension for a filename fallback.</summary>
         public string? Container { get; set; }
 
         /// <summary>Every language the film can be heard in, in the order the source listed them.</summary>

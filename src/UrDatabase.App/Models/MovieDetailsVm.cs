@@ -150,9 +150,8 @@ namespace UrDatabase.Models
 
         /// <summary>
         /// What is known about the copy itself — picture size, codecs, audio and subtitle
-        /// languages. Measured by the server for a Jellyfin film and read off the filename for a
-        /// scanned one, which is a claim rather than a measurement; <c>MediaFlags</c> knows the
-        /// difference and says so in the tooltip. Null for a film nothing has described.
+        /// languages. Local tracks take priority over server metadata for a downloaded copy.
+        /// Filename fallback is marked as a claim in the badges. Null if nothing has described it.
         /// </summary>
         public MediaInfo? Media { get; set; }
 

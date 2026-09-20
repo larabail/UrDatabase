@@ -20,7 +20,7 @@ namespace UrDatabase.Tests
         {
             var vm = Local(PlayTargetKind.Linked, "/movies/It (2017).mkv");
 
-            Assert.Equal("File: It (2017).mkv", PlayPrompts.FileNote(vm));
+            Assert.Equal("File: /movies/It (2017).mkv", PlayPrompts.FileNote(vm));
             Assert.False(PlayPrompts.NeedsConfirmation(vm));
         }
 
@@ -32,9 +32,19 @@ namespace UrDatabase.Tests
             var note = PlayPrompts.FileNote(vm);
 
             Assert.Contains("No file is linked", note);
-            Assert.Contains("It Follows (2014).mkv", note);
+            Assert.Contains("/movies/It Follows (2014).mkv", note);
             Assert.Contains("will ask", note);
             Assert.True(PlayPrompts.NeedsConfirmation(vm));
+        }
+
+        [Theory]
+        [InlineData("/Volumes/Films/Drama/Arrival (2016)/Arrival.mkv")]
+        [InlineData(@"D:\Films\Drama\Arrival (2016)\Arrival.mkv")]
+        [InlineData(@"\\media-server\films\Arrival (2016)\Arrival.mkv")]
+        public void File_notes_preserve_the_entire_path_on_every_platform(string path)
+        {
+            Assert.Equal($"File: {path}", PlayPrompts.FileNote(Local(PlayTargetKind.Linked, path)));
+            Assert.Contains(path, PlayPrompts.FileNote(Local(PlayTargetKind.Suggested, path)));
         }
 
         [Fact]

@@ -1,0 +1,44 @@
+FFprobe / FFmpeg third-party notice
+==================================
+
+UrDatabase runs ffprobe as an independent command-line process. It does not
+link to FFmpeg libraries. FFprobe and its dependencies are NOT licensed under
+UrDatabase's license: their original licenses, copyright notices and patent
+notices apply. FFmpeg is a trademark of Fabrice Bellard.
+
+Windows: FFmpeg 9.0.2, LGPL-2.1-or-later, from gpslab/ffprobe-win-build release
+ffprobe-9.0.2_1. This unofficial build disables networking, GPL and nonfree
+components. THIRD-PARTY-LICENSES contains the complete upstream notices for
+FFmpeg, zlib, MinGW-w64, winpthreads, and the GCC Runtime Library Exception.
+versions.txt records the actual compiler, runtime versions and configuration.
+
+macOS: FFmpeg 7.1, LGPL-2.1-or-later, from EricEngineering/ffmpeg-macos-lgpl
+release ffmpeg-7.1-r2. The universal2 executable contains Intel and Apple
+silicon slices targeting macOS 11; it needs no Homebrew libraries. libvpx
+1.14.1 and libwebp 1.4.0 are linked statically under their BSD-style licenses.
+Their license, author and patent notices, including libvpx's bundled libyuv
+and x86inc notices, are in licenses/. The build disables GPL and nonfree code.
+
+This software is based in part on the work of the Independent JPEG Group.
+FFmpeg's JPEG-derived code is modified from the IJG originals; those upstream
+modifications, copyrights and no-warranty notices are preserved in the source.
+UrDatabase makes no modifications to FFmpeg, libvpx, libwebp or zlib sources.
+Release signing may change the macOS executable's embedded signature only.
+
+Every distributed copy includes the corresponding source archives in sources/,
+not just an offer or a link to another server. BUILDING.txt describes rebuilding
+the executable, including how to replace its statically linked libraries.
+bundle.json identifies this platform's exact upstream URLs, checksums, source
+archives, build-recipe revision and licenses. The hashes describe the original
+upstream files before UrDatabase's macOS Developer ID signing.
+
+You may modify and rebuild the LGPL components and replace the separate
+ffprobe executable. Nothing in UrDatabase checks its hash at runtime. For a
+read-only Microsoft Store installation, use the standalone distribution or
+build UrDatabase from source, replacing tools/ffprobe/ffprobe.exe there.
+Reverse engineering for debugging modifications to these LGPL components is
+permitted. The LGPL components are supplied WITHOUT ANY WARRANTY, including
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE; see the license texts.
+
+Neither builder nor the FFmpeg project endorses UrDatabase. Only ffprobe is
+installed: the ffmpeg transcoder is not part of the application payload.

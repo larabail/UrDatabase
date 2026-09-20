@@ -126,13 +126,13 @@ public sealed class PosterRefreshTests : IDisposable
         await loader.EnsurePosterAsync(1, "Film", 1999, _ => { }, default);
         online = true;
         await loader.EnsurePosterAsync(1, "Film", 1999, _ => { }, default);
-        Assert.Single(handler.Requests);
+        Assert.Equal(3, handler.Requests.Count);
 
         await loader.RetryMissingAsync();
         Enrichment result = default;
         await loader.EnsurePosterAsync(1, "Film", 1999, found => result = found, default);
 
-        Assert.Equal(2, handler.Requests.Count);
+        Assert.Equal(4, handler.Requests.Count);
         Assert.EndsWith("/fresh.jpg", result.PosterPath);
         Assert.Equal("Drama", result.Genres);
     }

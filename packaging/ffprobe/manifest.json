@@ -1,0 +1,106 @@
+{
+  "schema": 1,
+  "runtimes": {
+    "osx-arm64": "macos",
+    "osx-x64": "macos",
+    "win-x64": "windows"
+  },
+  "bundles": {
+    "macos": {
+      "version": "7.1",
+      "license": "LGPL-2.1-or-later",
+      "executable": "ffprobe",
+      "build_recipe": "https://github.com/EricEngineering/ffmpeg-macos-lgpl/tree/f7432c50c3c5a3a866fc595ddb72e54bf297dc5d",
+      "archives": [
+        {
+          "url": "https://github.com/EricEngineering/ffmpeg-macos-lgpl/releases/download/ffmpeg-7.1-r2/ffmpeg-macos-lgpl-universal2.tar.gz",
+          "sha256": "c725431e0b073bad12619d53c6d759b399ee84450790a8d681ecbb4066bf1194",
+          "size": 45509759,
+          "members": {
+            "ffprobe": ["ffprobe", "88f899ebb93bc100d7ce604ad74ebbde4d37bb1e5886a23aa36a129760bb8a14"]
+          }
+        },
+        {
+          "url": "https://ffmpeg.org/releases/ffmpeg-7.1.tar.xz",
+          "sha256": "40973d44970dbc83ef302b0609f2e74982be2d85916dd2ee7472d30678a7abe6",
+          "size": 11011364,
+          "save_as": "sources/ffmpeg-7.1.tar.xz",
+          "members": {
+            "ffmpeg-7.1/COPYING.LGPLv2.1": ["licenses/COPYING.LGPLv2.1", "b634ab5640e258563c536e658cad87080553df6f34f62269a21d554844e58bfe"],
+            "ffmpeg-7.1/LICENSE.md": ["licenses/FFmpeg-LICENSE.md", "cb48bf09a11f5fb576cddb0431c8f5ed0a60157a9ec942adffc13907cbe083f2"]
+          }
+        },
+        {
+          "url": "https://github.com/webmproject/libvpx/archive/refs/tags/v1.14.1.tar.gz",
+          "sha256": "901747254d80a7937c933d03bd7c5d41e8e6c883e0665fadcb172542167c7977",
+          "size": 5614104,
+          "save_as": "sources/libvpx-1.14.1.tar.gz",
+          "members": {
+            "libvpx-1.14.1/LICENSE": ["licenses/libvpx-LICENSE", "8267348d5af1262c11d1a08de2f5afc77457755f1ac658627dd9acf71011d615"],
+            "libvpx-1.14.1/PATENTS": ["licenses/libvpx-PATENTS", "cc3273e0694ea5896145e0677699b53471b03ea43021ddc50e7923fbb9f5023c"],
+            "libvpx-1.14.1/AUTHORS": ["licenses/libvpx-AUTHORS", "79706c9cea2e0b09e350af1af60f7adbd3cf6cb3cea5423a9640b5051921bb22"],
+            "libvpx-1.14.1/third_party/libyuv/LICENSE": ["licenses/libyuv-LICENSE", "2b2cc1180c7e6988328ad2033b04b80117419db9c4c584918bbb3cfec7e9364f"],
+            "libvpx-1.14.1/third_party/x86inc/LICENSE": ["licenses/x86inc-LICENSE", "719d8fa235f2068e0ae6d6a7dceb0a7720d7840f0f0ebed29957989e6ded3cd8"]
+          }
+        },
+        {
+          "url": "https://github.com/webmproject/libwebp/archive/refs/tags/v1.4.0.tar.gz",
+          "sha256": "12af50c45530f0a292d39a88d952637e43fb2d4ab1883c44ae729840f7273381",
+          "size": 3800514,
+          "save_as": "sources/libwebp-1.4.0.tar.gz",
+          "members": {
+            "libwebp-1.4.0/COPYING": ["licenses/libwebp-COPYING", "5aec868f669e384a22372a4e8a1a6cd7d44c64cd451f960ca69cc170d1e13acf"],
+            "libwebp-1.4.0/PATENTS": ["licenses/libwebp-PATENTS", "cc3273e0694ea5896145e0677699b53471b03ea43021ddc50e7923fbb9f5023c"],
+            "libwebp-1.4.0/AUTHORS": ["licenses/libwebp-AUTHORS", "f9681940f35ab74858ac2717a511fa6237b67f65e99f457c21223e60a851c85a"]
+          }
+        }
+      ]
+    },
+    "windows": {
+      "version": "9.0.2",
+      "license": "LGPL-2.1-or-later",
+      "executable": "ffprobe.exe",
+      "build_recipe": "https://github.com/gpslab/ffprobe-win-build/tree/05eb77e81c9e95c4d4b4da5ad6cecf3bf4a6680e",
+      "archives": [
+        {
+          "url": "https://github.com/gpslab/ffprobe-win-build/releases/download/ffprobe-9.0.2_1/ffprobe-9.0.2-win-x64.zip",
+          "sha256": "54bb5ce2e199c3ca06662bb7e9619695bfa4dfdc6f5e4b2e953a1f75fbaaedf7",
+          "size": 4427812,
+          "members": {
+            "ffprobe.exe": ["ffprobe.exe", "1d2a1ddbacca86edef39019ed289ddd13b7fa369db414a7d84268a96d026dcac"],
+            "versions.txt": ["versions.txt", "c70ff4d841eb74ac4dec19b71fc7ce496bc703df4b0963eed596f814dd0de34f"],
+            "BUNDLE-README.txt": ["BUNDLE-README.txt", "92dd1261ec2e1cd7022b21a9376c0fbe294e0dcb4b36a1a86b38ed2918ed5fad"],
+            "THIRD-PARTY-LICENSES/README.md": ["THIRD-PARTY-LICENSES/README.md", "c797c6e57197deafa431b67580545e828c58893be332b379dadbf97098b9ff13"],
+            "THIRD-PARTY-LICENSES/texts/COPYING.LGPLv2.1": ["THIRD-PARTY-LICENSES/texts/COPYING.LGPLv2.1", "246041b6ecf9bc32d718a62c57877c78b5eb397b6467e74ed7ae2626ab189c30"],
+            "THIRD-PARTY-LICENSES/texts/FFmpeg-LICENSE.md": ["THIRD-PARTY-LICENSES/texts/FFmpeg-LICENSE.md", "2e1d16c72fd74e12063776371da757322f8b77589386532f4fd8634bde7de1af"],
+            "THIRD-PARTY-LICENSES/texts/COPYING.MinGW-w64-runtime.txt": ["THIRD-PARTY-LICENSES/texts/COPYING.MinGW-w64-runtime.txt", "1db8da07b436c68833c0673ffee3d9fcb2526047f3820b81661865dfedc79a1f"],
+            "THIRD-PARTY-LICENSES/texts/RUNTIME.LIBRARY.EXCEPTION": ["THIRD-PARTY-LICENSES/texts/RUNTIME.LIBRARY.EXCEPTION", "9d6b43ce4d8de0c878bf16b54d8e7a10d9bd42b75178153e3af6a815bdc90f74"],
+            "THIRD-PARTY-LICENSES/texts/winpthreads-LICENSE.txt": ["THIRD-PARTY-LICENSES/texts/winpthreads-LICENSE.txt", "63263614cdd29f2f93cba85e992f041b31f9fc7b4033692f31269489a8a1b177"],
+            "THIRD-PARTY-LICENSES/texts/zlib-LICENSE.txt": ["THIRD-PARTY-LICENSES/texts/zlib-LICENSE.txt", "e32ff4e00d9d94930537635291da39e7e612703334bf6fde8c7f1686fe8a45a2"]
+          }
+        },
+        {
+          "url": "https://github.com/gpslab/ffprobe-win-build/releases/download/ffprobe-9.0.2_1/ffmpeg-9.0.2.tar.xz",
+          "sha256": "8c3850283eb25fa026482078a04051e0be17347b09ef81a0849bec15a96e002e",
+          "size": 12040788,
+          "save_as": "sources/ffmpeg-9.0.2.tar.xz"
+        },
+        {
+          "url": "https://zlib.net/zlib-1.3.2.tar.xz",
+          "sha256": "d7a0654783a4da529d1bb793b7ad9c3318020af77667bcae35f95d0e42a792f3",
+          "size": 1320064,
+          "save_as": "sources/zlib-1.3.2.tar.xz"
+        },
+        {
+          "url": "https://github.com/gpslab/ffprobe-win-build/archive/05eb77e81c9e95c4d4b4da5ad6cecf3bf4a6680e.tar.gz",
+          "sha256": "2c9e7bc70c58b81bbe6274d2d5be11116db32d464698a9936399d996c752d2d5",
+          "size": 1287848,
+          "save_as": "sources/windows-build-recipe.tar.gz",
+          "members": {
+            "ffprobe-win-build-05eb77e81c9e95c4d4b4da5ad6cecf3bf4a6680e/LICENSE": ["THIRD-PARTY-LICENSES/build-recipe-LICENSE", "949c5ef74fb177e32f1fdf743958f0d63575a986c0b9c57ccecbbc8efa350521"]
+          }
+        }
+      ]
+    }
+  }
+}

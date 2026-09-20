@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Net;
 using System.Net.Http;
 using System.Text.Json;
@@ -38,12 +39,15 @@ namespace UrDatabase.Services
         private readonly string _posterCacheDir;
         private readonly string _imageSize;
         private readonly bool _downloadPosters;
+        private readonly TimeProvider _timeProvider;
+        private readonly TmdbRequestScheduler _requests;
 
         /// <summary>
         /// TMDB's film genres by id, once anybody has asked. Volatile because the fetches that
         /// read it run on several threads at once and the first of them publishes it.
         /// </summary>
         private volatile IReadOnlyDictionary<int, string>? _genreNames;
+        private DateTimeOffset _retryGenresAfter;
 
         private readonly SemaphoreSlim _genreGate = new(1, 1);
         private readonly JsonSerializerOptions _json = new JsonSerializerOptions
@@ -61,16 +65,22 @@ namespace UrDatabase.Services
         public sealed class TmdbCast { public string Name { get; set; } = ""; public string? Character { get; set; } }
         public sealed class TmdbCrew { public string Name { get; set; } = ""; public string? Job { get; set; } }
 
-        public TmdbService(string apiKey, string posterCacheDir, string imageSize, bool downloadPosters, HttpMessageHandler? handler = null)
+        public TmdbService(string apiKey, string posterCacheDir, string imageSize, bool downloadPosters,
+            HttpMessageHandler? handler = null, TimeProvider? timeProvider = null,
+            TmdbRequestScheduler? requests = null)
         {
             _apiKey = apiKey ?? "";
             _posterCacheDir = ResolveCacheDir(posterCacheDir);
             _imageSize = string.IsNullOrWhiteSpace(imageSize) ? "w342" : imageSize.Trim();
             _downloadPosters = downloadPosters;
+            _timeProvider = timeProvider ?? TimeProvider.System;
+            _requests = requests ?? TmdbRequestScheduler.Shared;
 
             _http = handler is null ? new HttpClient() : new HttpClient(handler);
             _http.Timeout = TimeSpan.FromSeconds(15);
         }
+
+        internal int RateLimitRetryAfterSeconds => _requests.RetryAfterSeconds;
 
         /// <summary>
         /// Posters are only cached to disk on request, so the directory is created lazily —
@@ -136,7 +146,7 @@ namespace UrDatabase.Services
                 return Array.Empty<TmdbMatch.Candidate>();
 
             using var resp = await GetWithRetryAsync(BuildSearchUrl(title, year), ct);
-            if (resp is null || !resp.IsSuccessStatusCode) return Array.Empty<TmdbMatch.Candidate>();
+            RequireSuccess(resp, "search");
 
             await using var stream = await resp.Content.ReadAsStreamAsync(ct);
             var doc = await JsonSerializer.DeserializeAsync<TmdbSearchResult>(stream, _json, ct);
@@ -180,8 +190,7 @@ namespace UrDatabase.Services
         /// </summary>
         public async Task<(int? TmdbId, string? PosterPath)> SearchPosterAsync(string title, int? year, CancellationToken ct)
         {
-            var results = await SearchAsync(title, year, ct);
-            var hit = TmdbMatch.ChooseBest(results, title, year);
+            var hit = await FindFilmAsync(title, year, ct);
             return hit is null ? (null, null) : (hit.Id, hit.PosterPath);
         }
 
@@ -202,12 +211,78 @@ namespace UrDatabase.Services
         /// </remarks>
         public async Task<(int? TmdbId, string? PosterPath, string? Genres)> SearchFilmAsync(string title, int? year, CancellationToken ct)
         {
-            var results = await SearchAsync(title, year, ct);
-            var hit = TmdbMatch.ChooseBest(results, title, year);
+            var hit = await FindFilmAsync(title, year, ct);
 
             if (hit is null) return (null, null, null);
 
             return (hit.Id, hit.PosterPath, await NameGenresAsync(hit.GenreIds, ct));
+        }
+
+        private async Task<TmdbMatch.Candidate?> FindFilmAsync(string title, int? year, CancellationToken ct)
+        {
+            if (string.IsNullOrWhiteSpace(_apiKey) || string.IsNullOrWhiteSpace(title)) return null;
+
+            var candidates = new List<TmdbMatch.Candidate>();
+            var queries = new[] { title.Trim(), FilenameParser.CleanText(title) }
+                .Where(query => TmdbMatch.NormalizeTitle(query).Length > 0)
+                .Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+
+            foreach (var query in queries)
+            {
+                var results = await SearchAsync(query, year, ct);
+                candidates.AddRange(results);
+                var match = TmdbMatch.ChooseBest(results, query, year);
+                if (match is not null) return match;
+
+                // The matcher's one-year tolerance is useless if TMDB never returns that year.
+                // Broaden the query, not the evidence needed to accept a result.
+                if (year.HasValue)
+                {
+                    results = await SearchAsync(query, null, ct);
+                    candidates.AddRange(results);
+                    match = TmdbMatch.ChooseBest(results, query, year);
+                    if (match is not null) return match;
+                }
+            }
+
+            if (year is null) return null;
+
+            // Search also indexes translated/alternative names not present in title/original_title.
+            // Verify them, rather than trusting a lone result. Bound the extra API work on misses.
+            var plausible = candidates.Where(candidate => candidate.Id > 0 && candidate.Year.HasValue
+                    && Math.Abs(candidate.Year.Value - year.Value) <= 1)
+                .DistinctBy(candidate => candidate.Id).Take(4).ToArray();
+            if (plausible.Length > 3) return null;
+
+            var verified = new List<TmdbMatch.Candidate>();
+            foreach (var candidate in plausible)
+            {
+                using var response = await GetWithRetryAsync(
+                    $"{ApiBaseUrl}/movie/{candidate.Id}/alternative_titles?api_key={Uri.EscapeDataString(_apiKey)}", ct);
+                if (response.StatusCode == HttpStatusCode.NotFound) continue;
+                RequireSuccess(response, "alternative titles");
+                await using var stream = await response.Content.ReadAsStreamAsync(ct);
+                var aliases = await JsonSerializer.DeserializeAsync<TmdbAlternativeTitles>(stream, _json, ct);
+                if (aliases?.Titles is null) continue;
+
+                if (aliases.Titles.Any(alias => queries.Any(query =>
+                    TmdbMatch.NormalizeTitle(alias.Title) == TmdbMatch.NormalizeTitle(query))))
+                    verified.Add(candidate);
+            }
+
+            // Two candidates sharing an alias need a person, not a popularity tie-break.
+            var exact = verified.Where(candidate => candidate.Year == year).ToArray();
+            return exact.Length == 1 ? exact[0] : verified.Count == 1 ? verified[0] : null;
+        }
+
+        private sealed class TmdbAlternativeTitles
+        {
+            public List<TmdbAlternativeTitle>? Titles { get; set; }
+        }
+
+        private sealed class TmdbAlternativeTitle
+        {
+            public string? Title { get; set; }
         }
 
         /// <summary>
@@ -247,7 +322,9 @@ namespace UrDatabase.Services
         /// The list is about twenty entries and changes perhaps once a year, so asking for it per
         /// film would be the same answer several thousand times over. Cached even when the request
         /// fails, deliberately: a library warming with no network would otherwise retry this once
-        /// per film, and the failure is not per-film information. Refresh allows another attempt.
+        /// per film, and the failure is not per-film information. Failures cool down for a minute,
+        /// rather than leaving an entire large library uncategorised after one brief outage.
+        /// Refresh allows an immediate attempt.
         ///
         /// The gate makes the several fetches running at once share one request rather than each
         /// making their own — without it, the first four films of every launch each asked.
@@ -255,14 +332,17 @@ namespace UrDatabase.Services
         internal async Task<IReadOnlyDictionary<int, string>> GenreNamesAsync(CancellationToken ct)
         {
             var known = _genreNames;
-            if (known is not null) return known;
+            if (known is { Count: > 0 }) return known;
 
             await _genreGate.WaitAsync(ct);
             try
             {
-                if (_genreNames is not null) return _genreNames;
+                if (_genreNames is not null
+                    && (_genreNames.Count > 0 || _timeProvider.GetUtcNow() < _retryGenresAfter))
+                    return _genreNames;
 
                 _genreNames = await FetchGenreNamesAsync(ct);
+                _retryGenresAfter = _timeProvider.GetUtcNow() + TimeSpan.FromMinutes(1);
                 return _genreNames;
             }
             finally
@@ -293,7 +373,7 @@ namespace UrDatabase.Services
             try
             {
                 using var resp = await GetWithRetryAsync(BuildGenreListUrl(), ct);
-                if (resp is null || !resp.IsSuccessStatusCode) return empty;
+                RequireSuccess(resp, "genre list");
 
                 await using var stream = await resp.Content.ReadAsStreamAsync(ct);
                 var doc = await JsonSerializer.DeserializeAsync<TmdbGenreList>(stream, _json, ct);
@@ -323,18 +403,57 @@ namespace UrDatabase.Services
         }
 
         /// <summary>
-        /// One GET, retried once after a pause when TMDB rate limits it. Null when even the retry
-        /// failed, which callers treat as "TMDB had nothing" rather than as an error: a missing
-        /// poster is not worth interrupting somebody over.
+        /// Rate limits pause the shared queue without spending a film's retry budget.
+        /// Other transient failures are bounded and never become a cached "no match".
         /// </summary>
-        private async Task<HttpResponseMessage?> GetWithRetryAsync(string url, CancellationToken ct)
+        private async Task<HttpResponseMessage> GetWithRetryAsync(string url, CancellationToken ct)
         {
-            var resp = await _http.GetAsync(url, ct);
-            if (resp.StatusCode != (HttpStatusCode)429) return resp;
+            const int attempts = 3;
+            var consecutiveLimits = 0;
+            for (var attempt = 0; ;)
+            {
+                // Outside HttpClient's 15-second timeout: waiting for permission is not a failed request.
+                await _requests.WaitAsync(ct);
+                var delay = TimeSpan.FromMilliseconds(500 * (1 << attempt));
+                try
+                {
+                    var response = await _http.GetAsync(url, ct);
+                    if (response.StatusCode == HttpStatusCode.TooManyRequests)
+                    {
+                        consecutiveLimits = Math.Min(consecutiveLimits + 1, 6);
+                        var seconds = _requests.Pause(response.Headers.RetryAfter, consecutiveLimits);
+                        response.Dispose();
+                        AppLog.Write("posters.log", $"TMDB rate limited (HTTP 429); pausing requests for {seconds}s before retrying.");
+                        continue;
+                    }
+                    var transient = response.StatusCode == HttpStatusCode.RequestTimeout
+                        || (int)response.StatusCode >= 500;
+                    if (!transient || attempt == attempts - 1) return response;
 
-            resp.Dispose();
-            await Task.Delay(2000, ct);
-            return await _http.GetAsync(url, ct);
+                    delay = response.Headers.RetryAfter?.Delta
+                        ?? (response.Headers.RetryAfter?.Date is { } date ? date - DateTimeOffset.UtcNow : delay);
+                    response.Dispose();
+                }
+                catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+                {
+                    if (attempt == attempts - 1)
+                        throw new TimeoutException("TMDB timed out. Press Refresh to retry.");
+                }
+                catch (HttpRequestException) when (attempt < attempts - 1)
+                {
+                }
+
+                attempt++;
+                if (delay > TimeSpan.Zero) await Task.Delay(delay, ct);
+            }
+        }
+
+        private static void RequireSuccess(HttpResponseMessage response, string operation)
+        {
+            if (!response.IsSuccessStatusCode)
+                throw new HttpRequestException(
+                    $"TMDB {operation} failed (HTTP {(int)response.StatusCode}). Press Refresh to retry.",
+                    null, response.StatusCode);
         }
 
         /// <summary>
@@ -591,7 +710,7 @@ namespace UrDatabase.Services
         /// </summary>
         public async Task<TmdbDetails?> GetDetailsByIdAsync(int tmdbId, CancellationToken ct)
         {
-            using var resp = await _http.GetAsync(BuildDetailsUrl(tmdbId), ct);
+            using var resp = await GetWithRetryAsync(BuildDetailsUrl(tmdbId), ct);
             if (!resp.IsSuccessStatusCode) return null;
 
             await using var s = await resp.Content.ReadAsStreamAsync(ct);

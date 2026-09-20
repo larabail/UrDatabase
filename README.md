@@ -28,10 +28,14 @@ It runs on Windows and macOS from one codebase, built with
   genre, newest first within each row, each shelf headed by the genre and the
   number of films on it. The genre row across the top carries those counts too,
   and picking one narrows the whole view to that genre. A server library brings
-  about twenty genres and a window fits roughly fifteen, so the row is wheeled
-  or dragged sideways, and it travels the whole way — the last genre on it can
-  be read in full. `Cmd+F` — `Ctrl+F` on Windows — puts the cursor in the
-  search field, and the field says so (`Views/MainWindow`).
+  about twenty genres and a window fits roughly fifteen, so the row travels
+  sideways. Left/right buttons work with an ordinary mouse, on the genre row,
+  poster shelves (including Continue watching), recommendations and season
+  selectors. Each click moves most of a screen with some overlap; a button
+  disables at its end. Touchpad gestures still work, and the ordinary mouse
+  wheel still scrolls the page vertically. The last item can be read in full.
+  `Cmd+F` — `Ctrl+F` on Windows — puts the cursor in the
+  search field, and the field says so (`Controls/ScrollableShelf`, `Views/MainWindow`).
 - **Filter by where a film is.** When the library draws on both this computer
   and a server, a row above the genres offers **Everywhere**, **Offline** and
   **On the server**, each with a count. Genre and location are different
@@ -112,7 +116,9 @@ It runs on Windows and macOS from one codebase, built with
   server details straight away, then fills the
   whole window — not a dialog inside it — with the backdrop, overview, runtime,
   genres, the top ten billed cast set as name over character, and up to three
-  directors and three writers. Escape or **Library** goes back.
+  directors and three writers. The file note shows the complete local path,
+  including its folders, for linked files and suggested matches. Escape or
+  **Library** goes back.
 
   Network lookups no longer stand between the click and the page. Ratings,
   awards and recommendations load independently where their inputs are already
@@ -148,20 +154,21 @@ It runs on Windows and macOS from one codebase, built with
   than flag emoji, because Windows has no flag glyphs and the same build would
   show `GB` there and 🇬🇧 on macOS.
 
-  The two sources of that are not equally trustworthy and the screen does not
-  pretend otherwise. A film on a Jellyfin server is *measured*: the sync asks for
-  `MediaStreams` and gets real pixel dimensions, real language tags and a real
-  channel count. A scanned file has nothing but its own name, and a name is
-  whatever the person who encoded it typed — so its badges are read from the
-  filename and the tooltip says "according to the filename". Where both exist,
-  the measurement wins.
+  Offline films are inspected with **bundled ffprobe**: the badges come from
+  the actual video, audio and subtitle tracks, not just the filename. Inspection
+  happens in the background when details open, when a file is linked or
+  downloaded, and on **Refresh**. It does not scan thousands of media files
+  eagerly or require a metadata API key. Unchanged results are cached in memory;
+  Refresh bypasses that cache.
 
-  Nothing is read from a filename until the film's own title is behind us,
-  which is the whole difficulty: "Italian", "Dual", "4K" and "Atmos" are all
-  words that appear in titles. The tags are taken from after the year, or from
-  the first token no title could contain — so *The Italian Job* is not an
-  Italian-language release and *Casablanca.mkv* claims nothing at all
-  (`Services/MediaFlags`, `Services/FilenameMediaInfo`, `Services/LanguageTag`).
+  Jellyfin films use the server's measured streams until a downloaded copy is
+  found. The local copy then wins, because it is the file Play will open.
+  Languages come from track tags: missing tags are shown as **UND**, not guessed
+  from the film's original language. A file that cannot be inspected falls back
+  to filename hints with a visible notice and a `media.log` entry; those badges
+  explicitly say "according to the filename" in their tooltips
+  (`Services/LocalMediaReader`, `Services/FfprobeRunner`, `Services/MediaFlags`,
+  `Services/LanguageTag`).
 - **What to put on next, and you already own it.** Where a series lists its
   episodes, a film gets a shelf of other films — and every poster on it is one
   already in this library, so every one of them plays. TMDB supplies the
@@ -226,7 +233,25 @@ It runs on Windows and macOS from one codebase, built with
   references to cached poster files that have been deleted. An identified film
   is fetched by its stored TMDB id rather than searched again, so a corrected
   match stays corrected; existing artwork is preserved when only genres are
-  missing.
+  missing. If an exact-year search misses, the lookup retries without that
+  filter but still requires a matching title and a release year within one year.
+  It also cleans release-name noise and verifies translated titles against
+  TMDB's alternative titles rather than blindly accepting a lone result.
+
+  TMDB requests share a ten-per-second pace across the app. An HTTP 429 pauses
+  all TMDB metadata lookups for the provider's `Retry-After` period, or uses
+  increasing backoff when none is supplied. Rate-limited films stay pending
+  and resume automatically rather than exhausting retries and being skipped;
+  the footer shows the retry countdown. Closing the app cancels the wait.
+  Other transient connection failures and server errors get bounded retries;
+  a failed genre-list request can recover during the same pass.
+  Metadata progress reports **checked**, **pending**, **unmatched** and **failed**
+  films separately from poster availability. **Posters present** counts
+  artwork, not completed lookups. There is no local 648-film cutoff, but a
+  stalled count alone cannot rule out upstream throttling or failed requests;
+  `posters.log` records those failures and rate-limit pauses. **Refresh**
+  retries missing metadata without bypassing the provider's cooldown; an
+  uncertain match still needs **Wrong film?**.
 - **Say which film it actually is.** Two films share a title, a translation
   renames one, and a filename spells one wrongly, so some films are matched to
   the wrong TMDB record however careful the rules are. **Wrong film?** on the
@@ -387,8 +412,8 @@ offline, with metadata, ratings and the update check simply absent.
 
 ### Prerequisites
 
-The [.NET 8 SDK](https://dotnet.microsoft.com/download/dotnet/8.0), and nothing
-else. `dotnet --version` should print `8.` something. Avalonia needs no
+The [.NET 8 SDK](https://dotnet.microsoft.com/download/dotnet/8.0) is enough for
+ordinary builds and tests. `dotnet --version` should print `8.` something. Avalonia needs no
 platform workload, no Visual Studio and no Xcode: any editor and the `dotnet`
 CLI are enough on both operating systems.
 
@@ -408,14 +433,39 @@ dotnet test
 dotnet run --project src/UrDatabase.App
 ```
 
+To enable actual offline track inspection in a development build, prepare the
+bundled helper once, then build or run again:
+
+```bash
+python3 tool/prepare_ffprobe.py --runtime osx-arm64
+```
+
+Use `osx-x64` on Intel Macs or `win-x64` on Windows (`python` rather than
+`python3` where that is the installed command). Preparation needs Python 3 and
+internet access, verifies pinned SHA-256 hashes, and writes only to ignored
+`artifacts/ffprobe/` and `artifacts/ffprobe-cache/`. Normal `dotnet build` and
+`dotnet test` never download it. Without preparation, the development app says
+inspection is unavailable and uses filename hints. Official downloads already
+include the helper and require no separate installation.
+
 ### Publish a standalone build
 
 CI does this for you on release, but to produce one by hand, pick a runtime
 identifier — `win-x64`, `osx-arm64` or `osx-x64`:
 
 ```bash
-dotnet publish src/UrDatabase.App -c Release -r osx-arm64
+python3 tool/prepare_ffprobe.py --runtime osx-arm64
+dotnet publish src/UrDatabase.App -c Release -r osx-arm64 -p:RequireBundledFfprobe=true -o artifacts/publish/osx-arm64
+python3 tool/prepare_ffprobe.py --runtime osx-arm64 --verify artifacts/publish/osx-arm64/tools/ffprobe
 ```
+
+Keep the entire `tools/ffprobe/` directory with a distributed build, including
+its licenses, corresponding source archives and rebuild instructions. The
+LGPL helper runs as a separate process; it is not linked into the application.
+Pins and provenance are in `packaging/ffprobe/manifest.json`. The current helper
+payload is about 68 MB on macOS and 24 MB on Windows before outer archive
+compression; no ffmpeg transcoder is shipped. The macOS helper supports Intel
+and Apple silicon on macOS 11 or later.
 
 ## Configuration
 
@@ -1412,6 +1462,10 @@ release jobs or their required check names. Its Store-only identity version is
 component. The product version, tags and normal download names are unchanged.
 The Store distinction is compiled with `-p:DistributionChannel=MicrosoftStore`;
 ordinary builds default to `Standalone`, and an unknown value fails the build.
+PR, release and Store packaging explicitly prepare and verify the pinned
+ffprobe payload for each runtime. Missing binaries, source archives, licenses
+or checksum mismatches fail packaging instead of producing a download without
+offline inspection. The macOS helper is signed with the rest of the bundle.
 
 - **On a pull request**, the workflows restore, build and test, then publish
   each runtime identifier and attach the results to the run. You can download
@@ -1476,7 +1530,7 @@ src/UrDatabase.App/          the application: one cross-platform project
   Models/                    what the views bind to
   Services/                  config, SQLite, scanning, search, TMDB, OMDb,
                              UrActor, Jellyfin, posters, playback reporting,
-                             the update check
+                             local media-track inspection, the update check
   Assets/UrDatabase.icns     the macOS application icon
   Assets/UrDatabase.ico      multi-resolution Windows executable and window icon,
                              embedded in the app rather than loaded from a loose file
@@ -1490,8 +1544,10 @@ tests/UrDatabase.Tests/      xUnit suite; TempLog is how a test class stays out
                              stops it forgetting
 tool/                        Python helpers with their own unittest suite:
                              the version-bump check, the release gate and the
-                             macOS bundler and Store payload/archive validation
+                             macOS bundler, Store payload/archive validation,
+                             checksum-locked ffprobe preparation
 packaging/windows/           Store manifest and PNG assets derived from the app icon
+packaging/ffprobe/            helper pins, notices and source/rebuild provenance
 Directory.Build.props        the single <Version> for the whole solution
 web/                         the downloads site served by Firebase Hosting
 docs/                        design notes
@@ -1544,12 +1600,11 @@ the real directory exactly as it always has.
 
 Stated plainly, so nobody has to find out by using it:
 
-- **A film TMDB cannot confirm has no poster until you pick one.** The automatic
-  match refuses a result whose title or year does not corroborate the film, so a
-  title TMDB spells differently, or one the filename parser mangled, now comes
-  back with nothing rather than with the wrong film's artwork. The card stays
-  blank until you open it and use **Wrong film?**. That is the trade: an empty
-  frame invites the fix, and a confidently wrong one does not.
+- **A film TMDB cannot confirm still needs a manual choice.** Automatic matching
+  now retries cleaned titles and unfiltered-year searches, and verifies
+  alternative titles, but refuses conflicting years and ambiguous remakes.
+  A lone result is not proof of identity. If a film is still unmatched, open it
+  and use **Wrong film?** rather than accepting another film's metadata.
 - **Correcting a match does not correct the year, and there is still no way to
   rename a film by hand.** Choosing the right TMDB film now renames it — a film
   catalogued as `S W A T` becomes `S.W.A.T.` in the library, in search and on the
@@ -1594,15 +1649,11 @@ Stated plainly, so nobody has to find out by using it:
   has not identified stays undescribed. TMDB's television catalogue is a separate
   one from its films, and using the film endpoints for it would be worse than
   using nothing.
-- **A scanned film's badges are only as good as its filename.** A copy on this
-  disk is described by its own name, so `Casablanca.mkv` gets no badges at all
-  and a file whose name says `1080p` is badged `1080p` whatever is actually
-  inside it. Nothing opens the container to check, and nothing reads a
-  `.nfo` beside it. Only a Jellyfin film is measured. A film in both places is
-  described by the copy on this disk and not by the server's, deliberately —
-  Play opens the local file, and badging it with the server's 4K remux would
-  describe a copy nobody is about to watch — so such a film can show fewer
-  badges than the same film opened from the server.
+- **Track metadata is only as good as the tags inside the file.** Offline files
+  are now measured, but ffprobe does not recognise spoken language by listening:
+  an untagged track is **UND**. Embedded subtitle tracks are read; external
+  subtitle files and `.nfo` sidecars are not. Unsupported, unavailable or damaged
+  files fall back to clearly labelled filename hints.
 - **The watch-next shelf needs films TMDB has identified.** It matches
   recommendations against the catalogue on `movies.tmdb_id`, which the poster
   loader writes for every film it can match — so a film with no poster usually

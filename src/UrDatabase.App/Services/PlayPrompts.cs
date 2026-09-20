@@ -106,9 +106,9 @@ namespace UrDatabase.Services
 
             return vm.FileMatch switch
             {
-                PlayTargetKind.Linked when vm.HasFile => $"File: {FileName(vm.FilePath)}",
+                PlayTargetKind.Linked when vm.HasFile => $"File: {vm.FilePath}",
                 PlayTargetKind.Suggested when vm.HasFile =>
-                    $"No file is linked to this film. {FileName(vm.FilePath)} looks like it, so Play " +
+                    $"No file is linked to this film. {vm.FilePath} looks like it, so Play " +
                     "will ask before opening it. Link File… settles it for good.",
                 _ => "No file is linked to this film. Use Link File… to choose one."
             };

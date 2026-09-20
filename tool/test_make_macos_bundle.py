@@ -128,6 +128,20 @@ class MakeBundleTests(unittest.TestCase):
         launcher = app / 'Contents' / 'MacOS' / 'UrDatabase.App'
         self.assertTrue(os.access(launcher, os.X_OK))
 
+    def test_preserves_probe_sources_and_permissions_relative_to_base_directory(self):
+        publish = fake_publish(self.root)
+        helper = publish / "tools/ffprobe"
+        (helper / "sources").mkdir(parents=True)
+        (helper / "ffprobe").write_bytes(b"native ffprobe fixture")
+        (helper / "ffprobe").chmod(0o755)
+        (helper / "NOTICE.txt").write_text("LGPL")
+        (helper / "sources/ffmpeg.tar.xz").write_bytes(b"corresponding source")
+        app = make_bundle(publish, self.root / "stage", version="0.2.1")
+        bundled = app / "Contents/MacOS/tools/ffprobe"
+        self.assertTrue(os.access(bundled / "ffprobe", os.X_OK))
+        self.assertEqual("LGPL", (bundled / "NOTICE.txt").read_text())
+        self.assertEqual(b"corresponding source", (bundled / "sources/ffmpeg.tar.xz").read_bytes())
+
     def test_writes_a_plist_macos_can_read(self):
         publish = fake_publish(self.root)
         app = make_bundle(publish, self.root / 'stage', version='0.2.1')

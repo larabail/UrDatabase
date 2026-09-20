@@ -34,14 +34,19 @@ try {
     $publish = Join-Path $scratch "publish"
     $layout = Join-Path $scratch "layout"
 
+    Invoke-Checked python @("tool/prepare_ffprobe.py", "--runtime", "win-x64")
+
     # A fresh publish, never an existing developer output tree or the normal ZIP build.
     Invoke-Checked dotnet @(
         "publish", "src/UrDatabase.App/UrDatabase.App.csproj",
         "--configuration", "Release", "--runtime", "win-x64", "--self-contained", "true",
         "-p:DistributionChannel=MicrosoftStore", "-p:ContinuousIntegrationBuild=true",
+        "-p:RequireBundledFfprobe=true",
         "-p:TmdbApiKey=$env:TMDB_API_KEY", "-p:OmdbApiKey=$env:OMDB_API_KEY",
         "-p:UrActorApiKey=$env:URACTOR_API_KEY", "--output", $publish
     )
+    Invoke-Checked python @("tool/prepare_ffprobe.py", "--runtime", "win-x64", "--verify", (Join-Path $publish "tools/ffprobe"), "--smoke-test")
+    Invoke-Checked (Join-Path $publish "tools/ffprobe/ffprobe.exe") @("-version")
     Invoke-Checked python @("tool/make_store_package.py", "stage", "--publish-dir", $publish, "--output", $layout)
     $priConfig = Join-Path $scratch "priconfig.xml"
     Invoke-Checked $makePri @("createconfig", "/cf", $priConfig, "/dq", "en-US")
