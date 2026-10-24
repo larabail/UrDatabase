@@ -23,5 +23,11 @@ namespace UrDatabase.Models
 
         /// <summary>The file was restored at the same path, so string bindings will not reload it.</summary>
         public bool ArtworkRepaired { get; init; }
+
+        /// <summary>
+        /// The film's length, rating and people, when this lookup fetched them. Null when it did
+        /// not, which leaves whatever the card already says alone.
+        /// </summary>
+        public FilmFacts? Facts { get; init; }
     }
 }

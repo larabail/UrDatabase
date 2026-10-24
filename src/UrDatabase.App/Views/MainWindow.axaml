@@ -582,6 +582,119 @@
                         </ctrls:ScrollableShelf>
                     </Grid>
                 </Border>
+
+                <!-- The filter row: what a film is like, as opposed to what it is
+                     filed under. Narrows whatever the rows above are showing, and
+                     the genre counts above then describe what is left, so the
+                     genre row is the genre filter and is not repeated here. Drawn
+                     in the same typed-label idiom as those rows, so it reads as
+                     more of the same rather than as a form. -->
+                <Border x:Name="FilterBar"
+                        BorderBrush="{StaticResource EdgeBrush}"
+                        BorderThickness="0,0,0,1">
+                    <Grid Margin="24,0"
+                          Height="44"
+                          ColumnDefinitions="Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto,*">
+
+                        <TextBlock Grid.Column="0"
+                                   Classes="label"
+                                   Text="LENGTH"
+                                   Margin="0,0,14,0"
+                                   VerticalAlignment="Center"/>
+                        <ItemsControl Grid.Column="1"
+                                      ItemsSource="{Binding RuntimeChips}"
+                                      VerticalAlignment="Center">
+                            <ItemsControl.ItemsPanel>
+                                <ItemsPanelTemplate>
+                                    <StackPanel Orientation="Horizontal"/>
+                                </ItemsPanelTemplate>
+                            </ItemsControl.ItemsPanel>
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate DataType="models:RuntimeChip">
+                                    <ToggleButton Classes="genre"
+                                                  IsChecked="{Binding IsSelected}"
+                                                  Margin="0,0,18,0"
+                                                  VerticalAlignment="Center"
+                                                  Click="RuntimeChip_Click">
+                                        <TextBlock Classes="genreLabel"
+                                                   Text="{Binding Name}"
+                                                   FontSize="12.5"/>
+                                    </ToggleButton>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+
+                        <Rectangle Grid.Column="2"
+                                   Width="1"
+                                   Height="16"
+                                   Margin="4,0,20,0"
+                                   Fill="{StaticResource EdgeBrush}"
+                                   VerticalAlignment="Center"/>
+
+                        <TextBlock Grid.Column="3"
+                                   Classes="label"
+                                   Text="RATING"
+                                   Margin="0,0,14,0"
+                                   VerticalAlignment="Center"/>
+                        <ItemsControl Grid.Column="4"
+                                      ItemsSource="{Binding RatingChips}"
+                                      VerticalAlignment="Center">
+                            <ItemsControl.ItemsPanel>
+                                <ItemsPanelTemplate>
+                                    <StackPanel Orientation="Horizontal"/>
+                                </ItemsPanelTemplate>
+                            </ItemsControl.ItemsPanel>
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate DataType="models:RatingChip">
+                                    <ToggleButton Classes="genre"
+                                                  IsChecked="{Binding IsSelected}"
+                                                  Margin="0,0,18,0"
+                                                  VerticalAlignment="Center"
+                                                  Click="RatingChip_Click">
+                                        <TextBlock Classes="genreLabel"
+                                                   Text="{Binding Name}"
+                                                   FontSize="12.5"/>
+                                    </ToggleButton>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+
+                        <Rectangle Grid.Column="5"
+                                   Width="1"
+                                   Height="16"
+                                   Margin="4,0,20,0"
+                                   Fill="{StaticResource EdgeBrush}"
+                                   VerticalAlignment="Center"/>
+
+                        <!-- One field for both, because the question is "is this
+                             person behind it", and somebody looking for Clint
+                             Eastwood does not want to have to say in advance
+                             whether they mean the actor or the director. -->
+                        <TextBox x:Name="PersonBox"
+                                 Grid.Column="6"
+                                 Classes="field"
+                                 Width="210"
+                                 VerticalAlignment="Center"
+                                 Watermark="Actor or director"
+                                 TextChanged="PersonBox_TextChanged"/>
+
+                        <Button x:Name="ClearFiltersButton"
+                                Grid.Column="7"
+                                Classes="ghost"
+                                Margin="12,0,0,0"
+                                Content="Clear filters"
+                                IsVisible="False"
+                                Click="ClearFilters_Click"/>
+
+                        <TextBlock x:Name="RefinementNoteText"
+                                   Grid.Column="8"
+                                   Classes="dim"
+                                   Margin="16,0,0,0"
+                                   TextWrapping="NoWrap"
+                                   TextTrimming="CharacterEllipsis"
+                                   VerticalAlignment="Center"/>
+                    </Grid>
+                </Border>
             </StackPanel>
 
             <!-- The foot: what the app is doing, and the attribution the TMDB
@@ -811,6 +924,30 @@
                                 Content="Scan now"
                                 Click="ScanButton_Click"/>
                     </StackPanel>
+                </StackPanel>
+
+                <!-- NOTHING MATCHES THE FILTERS. Not the panel above: that one
+                     invites somebody to choose folders, and saying that to a
+                     person with a full library and a narrow filter would read as
+                     their films having gone. -->
+                <StackPanel x:Name="NoMatchPanel"
+                            IsVisible="False"
+                            Margin="0,120,24,0"
+                            MaxWidth="560"
+                            HorizontalAlignment="Center">
+                    <TextBlock Classes="display"
+                               FontSize="28"
+                               TextAlignment="Center"
+                               TextWrapping="Wrap"
+                               Text="Nothing matches these filters"/>
+                    <TextBlock Classes="body"
+                               TextAlignment="Center"
+                               Margin="0,12,0,24"
+                               Text="Widen the length or rating, check the spelling of the name, or clear the filters to see the whole library again."/>
+                    <Button Classes="ghost"
+                            HorizontalAlignment="Center"
+                            Content="Clear filters"
+                            Click="ClearFilters_Click"/>
                 </StackPanel>
 
                 <!-- The one atmospheric move in the design: a shallow vignette,

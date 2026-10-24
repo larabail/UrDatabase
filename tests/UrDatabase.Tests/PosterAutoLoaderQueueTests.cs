@@ -358,9 +358,16 @@ namespace UrDatabase.Tests
 
             Assert.True(await loader.DrainAsync(TimeSpan.FromSeconds(30)));
 
-            var found = Assert.Single(reported);
-            Assert.False(found.HasPoster);
-            Assert.Equal("Drama", found.Genres);
+            // The identification, then — behind it — the length, rating and people the filters
+            // need. Both describe the same film, and neither may invent a poster for it.
+            Assert.Equal(2, reported.Count);
+            Assert.Null(reported[0].Facts);
+            Assert.NotNull(reported[1].Facts);
+            Assert.All(reported, found =>
+            {
+                Assert.False(found.HasPoster);
+                Assert.Equal("Drama", found.Genres);
+            });
 
             Assert.Equal("Drama", StoredGenres(1));
             Assert.Null(StoredPoster(1));

@@ -15,7 +15,7 @@ namespace UrDatabase.Tests
     /// One library read, against a real catalogue in a temporary directory.
     ///
     /// SQLite is cheap enough to test for real, and the interesting cases here are all about what
-    /// the database actually does — an FTS prefix match, a table an older build never created —
+    /// the database actually does â€” an FTS prefix match, a table an older build never created â€”
     /// which a mock would only assert back at itself.
     /// </summary>
     public class LibraryLoaderTests : IDisposable
@@ -79,7 +79,7 @@ namespace UrDatabase.Tests
         {
             SeedLibrary();
 
-            // "???" has nothing FTS5 can match on, so the whole library comes back — but the
+            // "???" has nothing FTS5 can match on, so the whole library comes back â€” but the
             // person typing it is mid-word and must not be thrown back into the grouped view.
             var view = NewLoader().Load("???");
 
@@ -103,9 +103,9 @@ namespace UrDatabase.Tests
         [Fact]
         public void A_catalogue_that_cannot_be_read_is_reported_rather_than_thrown()
         {
-            // A file that is a database but has none of the tables the query needs, which is what
-            // a catalogue from an older build looks like.
-            using (var conn = Database.Connect(_dbPath)) { }
+            // A file in the catalogue's place that SQLite cannot read at all. A catalogue from an
+            // older build is no longer this case: the first read brings it up to date instead.
+            WriteUnreadableCatalogue();
 
             var failures = new List<Exception>();
             var view = new LibraryLoader(new MovieRepository(_dbPath), failures.Add).Load("matrix");
@@ -149,7 +149,7 @@ namespace UrDatabase.Tests
 
             var view = NewLoader().Load("matrix", remote);
 
-            // One film, in two places, carrying both facts — rather than two identical posters
+            // One film, in two places, carrying both facts â€” rather than two identical posters
             // with nothing to tell them apart until you click one.
             var matrix = Assert.Single(view.All, m => m.Title == "The Matrix");
             Assert.True(matrix.IsInBothPlaces);
@@ -184,7 +184,7 @@ namespace UrDatabase.Tests
         {
             // The point of the whole change: this used to run on the UI thread on every keystroke.
             // Proved through the failure callback, which runs on whichever thread did the read.
-            using (var conn = Database.Connect(_dbPath)) { }
+            WriteUnreadableCatalogue();
 
             var caller = Environment.CurrentManagedThreadId;
             var worker = 0;
@@ -217,6 +217,9 @@ namespace UrDatabase.Tests
         }
 
         private LibraryLoader NewLoader() => new LibraryLoader(new MovieRepository(_dbPath));
+
+        private void WriteUnreadableCatalogue() =>
+            File.WriteAllText(_dbPath, "This is not a SQLite database, and no amount of migrating will make it one.");
 
         private static UiMovie Server(string itemId, string title, int? year) =>
             JellyfinLibrary.ToUiMovie(new JellyfinMovie { ItemId = itemId, Title = title, Year = year });

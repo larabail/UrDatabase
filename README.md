@@ -56,6 +56,20 @@ It runs on Windows and macOS from one codebase, built with
   of films only, and on one of television only: a permanent "Television 0" beside
   "Films 412" is a control whose only possible use is to empty the window
   (`Services/LibraryFilter`).
+- **Filter by length, rating and who is in it.** A row under the genres narrows
+  whatever is on screen by running time (**Under 90 min**, **90–120 min**,
+  **Over 2 hours**), by a rating floor out of ten (**6+**, **7+**, **8+**), and
+  by an **Actor or director** field that ignores case and accents and needs
+  every word you type to be in the same person's name — `chris nolan` finds
+  Christopher Nolan, `almodovar` finds Almodóvar. The genre row is the genre
+  filter: its counts describe what the filters leave, so "dramas over two hours
+  with Liv Ullmann" is two clicks, a name and a genre. The rating is the IMDb one
+  once a film's details have fetched it, TMDB's average otherwise, and the
+  server's community rating for a server film. A film whose length, rating or
+  cast is not known yet is left out of a filter on it rather than guessed into
+  one, and the row says how many that is; **Clear filters** puts the row back
+  without touching the genre, source or kind rows. Searching while filtered
+  searches within the filter (`Services/LibraryRefinement`).
 - **It looks like a screening room.** Warm near-black rather than blue-black,
   because a blue surround makes every poster look faintly green; one brass
   accent, spent only on the focus ring, the primary action and progress that is
@@ -84,6 +98,11 @@ It runs on Windows and macOS from one codebase, built with
   every so often rather than under your hands. Genres the server supplied, or
   ones you fixed with **Wrong film?**, are never overwritten by the guess
   (`Services/PosterAutoLoader`, `Services/TmdbService`, `Services/MovieMatch`).
+  Behind the artwork and genres of every film, the same pass asks TMDB for each
+  identified film's runtime, rating, cast and directors — one request per film,
+  credits appended to the details — and keeps them in the `movies` row so the
+  filters above work offline. A film whose TMDB id was already stored gets all of
+  it from the single request that repairs its poster (`Services/FilmFactsStore`).
 - **A library of thousands opens like a library of forty.** Only the cards on
   screen exist: a shelf realises what its viewport can show, and the grid views
   wrap their films into rows and virtualise those, Avalonia having no
@@ -1295,7 +1314,10 @@ the script and adds those with `ALTER TABLE`. A column added to the schema file
 alone would reach new installs only, and every existing library would fail on
 "no such column" — which is to say it would work perfectly on a fresh clone and
 break for everybody with films in it. Anything added to a table in the script
-has to be added there too.
+has to be added there too. The library read itself migrates the first time it
+runs, because on an install with no Jellyfin server nothing else opens the
+catalogue before it, and a read that failed on a new column would show an empty
+library and never reach the code that would have repaired it.
 
 `IF NOT EXISTS` creates a missing table but says nothing about one that is
 present and out of date, so a column added to an existing table needs more than
@@ -1624,6 +1646,18 @@ Stated plainly, so nobody has to find out by using it:
   identified has no genres either and shares that bucket, deliberately: both mean
   "nobody has said what this is", and the **Television** filter separates them
   again in a click.
+- **The length, rating and actor filters need TMDB for local films.** A server
+  film arrives knowing all three. A scanned film learns them from TMDB in the
+  background pass, after every film's artwork and genres — one extra request per
+  film, so a large library takes roughly twice as long to finish filling in as
+  it did before, and the filters only see a local film once its turn has come.
+  Until then it is left out of a filter on what it lacks, and the filter row says
+  how many films that is. With no TMDB key it is permanent. A film that already
+  had a poster and genres but no stored TMDB id — chosen by hand, or enriched by
+  a build older than the id column — is not re-identified from its title to get
+  them; **Wrong film?** supplies the id and the facts together. Episodes and
+  programmes have no runtime of their own, so a length filter leaves television
+  out.
 - **A film in both places is matched by identity, then by name.** The server's
   copy and this computer's are shown as one card when they agree on a TMDB id,
   and otherwise when their titles agree once case, accents and punctuation are

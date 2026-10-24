@@ -35,9 +35,15 @@ namespace UrDatabase.Services
                 // Already a real list from Jellyfin's own metadata, so a server library never
                 // piles into the "Uncategorised" bucket the way a freshly scanned one does.
                 Genres = movie.Genres ?? "",
-                PosterPath = posterUrl?.Invoke(movie)
+                PosterPath = posterUrl?.Invoke(movie),
+                RuntimeMinutes = movie.RuntimeMinutes is > 0 ? movie.RuntimeMinutes : null,
+                Rating = FilmFactsStore.NormaliseRating(movie.CommunityRating),
+                CastList = NullIfEmpty(JellyfinCache.JoinCredits(movie.Cast)),
+                CrewList = NullIfEmpty(JellyfinCache.JoinCredits(movie.Crew))
             };
         }
+
+        private static string? NullIfEmpty(string value) => value.Length == 0 ? null : value;
 
         /// <summary>
         /// Jellyfin reports provider ids as strings, and reports nothing at all for a film it could
@@ -98,7 +104,13 @@ namespace UrDatabase.Services
                 Genres = series.Genres ?? "",
                 SeasonCount = series.SeasonCount,
                 EpisodeCount = series.EpisodeCount,
-                PosterPath = posterUrl?.Invoke(series)
+                PosterPath = posterUrl?.Invoke(series),
+
+                // No runtime: a programme has episodes of a length, not a length of its own, so a
+                // length filter leaves series out rather than guessing one for them.
+                Rating = FilmFactsStore.NormaliseRating(series.CommunityRating),
+                CastList = NullIfEmpty(JellyfinCache.JoinCredits(series.Cast)),
+                CrewList = NullIfEmpty(JellyfinCache.JoinCredits(series.Crew))
             };
         }
 

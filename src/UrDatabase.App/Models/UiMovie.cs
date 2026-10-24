@@ -26,6 +26,88 @@ namespace UrDatabase.Models
         /// </summary>
         public int? TmdbId { get; set; }
 
+        /// <summary>How long the film runs, in minutes, when anything has said. Null on most series.</summary>
+        public int? RuntimeMinutes { get; set; }
+
+        /// <summary>
+        /// How well the film is rated, out of ten: the IMDb rating when the catalogue has fetched
+        /// one, TMDB's average otherwise, and the server's community rating for a server film.
+        /// Null when nothing has rated it.
+        /// </summary>
+        public double? Rating { get; set; }
+
+        /// <summary>
+        /// The billed cast, one <c>"Name (Character)"</c> per line, in the same shape the details
+        /// screen and the Jellyfin cache use.
+        /// </summary>
+        public string? CastList { get; set; }
+
+        /// <summary>Directors and writers, one <c>"Job: Name"</c> per line.</summary>
+        public string? CrewList { get; set; }
+
+        /// <summary>
+        /// Whether TMDB has been asked for the four fields above. Only meaningful for a film on
+        /// this machine: it is what tells the poster pass a film still needs that request, as
+        /// opposed to one TMDB was asked about and simply had nothing to say.
+        /// </summary>
+        public bool FactsKnown { get; set; }
+
+        /// <summary>
+        /// The people a "who is in it" filter searches: the cast and the directors, by name alone.
+        /// Writers are left out on purpose — the filter is for actors and directors, and a writer
+        /// sharing a surname with an actor would otherwise answer for them.
+        /// </summary>
+        public IEnumerable<string> People
+        {
+            get
+            {
+                foreach (var line in SplitLines(CastList))
+                {
+                    var (name, _) = Services.CreditLine.SplitCast(line);
+                    if (name.Length > 0) yield return name;
+                }
+
+                foreach (var line in SplitLines(CrewList))
+                {
+                    var (job, name) = Services.CreditLine.SplitCrew(line);
+                    if (name.Length > 0 && string.Equals(job, "Director", StringComparison.OrdinalIgnoreCase))
+                        yield return name;
+                }
+            }
+        }
+
+        /// <summary>
+        /// Takes a fresh answer about the film's length, rating and people from TMDB.
+        /// </summary>
+        /// <remarks>
+        /// Where TMDB has no answer the card keeps what it had — a server twin may well know the
+        /// runtime TMDB does not. A rating already on the card is kept even when TMDB has one,
+        /// because it is the IMDb rating or the server's, which the library read prefers too; the
+        /// card would otherwise change number the next time the library is read.
+        /// </remarks>
+        public void ApplyFacts(FilmFacts? facts)
+        {
+            if (facts is null) return;
+
+            RuntimeMinutes = facts.RuntimeMinutes ?? RuntimeMinutes;
+            Rating ??= facts.Rating;
+            CastList = JoinLines(facts.Cast) ?? CastList;
+            CrewList = JoinLines(facts.Crew) ?? CrewList;
+            FactsKnown = true;
+        }
+
+        private static IEnumerable<string> SplitLines(string? stored) =>
+            (stored ?? "").Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+        private static string? JoinLines(IEnumerable<string>? lines)
+        {
+            var joined = string.Join("\n", (lines ?? Array.Empty<string>())
+                .Where(l => !string.IsNullOrWhiteSpace(l))
+                .Select(l => l.Trim()));
+
+            return joined.Length == 0 ? null : joined;
+        }
+
         /// <summary>
         /// The word for a film that plays with the house network down, on the badge and on the
         /// control in the source row. Those two have to say the same thing: the row is what
@@ -465,6 +547,15 @@ namespace UrDatabase.Models
             // only ever fills a blank — a local answer, including a corrected one, is never
             // overwritten by the server's.
             TmdbId ??= server.TmdbId;
+
+            // What the filters ask about, on the same terms as the genres: only into a blank. A
+            // scanned film nothing has looked up yet would otherwise drop out of every length,
+            // rating and actor filter while its server twin, which knows all three, is folded
+            // into it and stops being a card of its own.
+            RuntimeMinutes ??= server.RuntimeMinutes;
+            Rating ??= server.Rating;
+            if (string.IsNullOrWhiteSpace(CastList)) CastList = server.CastList;
+            if (string.IsNullOrWhiteSpace(CrewList)) CrewList = server.CrewList;
         }
 
         public IEnumerable<string> GenresList =>

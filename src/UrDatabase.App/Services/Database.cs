@@ -166,6 +166,17 @@ namespace UrDatabase.Services
             // value: those rows are still called what the scan called them.
             AddColumnIfMissing(conn, "movies", "scan_title", "TEXT");
 
+            // What the library's filters ask about a local film: length, rating, cast and crew.
+            // A server film has always carried these in jellyfin_movies; a scanned one had nowhere
+            // to keep them, so filtering by any of them could only ever find server films. Null
+            // on every existing row, and facts_fetched_at null with them, which is what tells the
+            // poster pass that these films still have to be asked about.
+            AddColumnIfMissing(conn, "movies", "runtime_minutes", "INTEGER");
+            AddColumnIfMissing(conn, "movies", "rating", "REAL");
+            AddColumnIfMissing(conn, "movies", "cast_list", "TEXT");
+            AddColumnIfMissing(conn, "movies", "crew_list", "TEXT");
+            AddColumnIfMissing(conn, "movies", "facts_fetched_at", "TEXT");
+
             // What kind of thing a resume entry is about, and — for an episode — what its card has
             // to say. The row used to be films only, so a library synced before television was in
             // it has a jellyfin_resume table with none of these: without them the next sync fails
@@ -199,11 +210,10 @@ namespace UrDatabase.Services
         /// deliberately does not retry it, and it surfaces to whoever asked for the database.
         ///
         /// Not hypothetical, and not rare. <c>PosterAutoLoader</c> calls <see cref="Open"/> from
-        /// four tasks at once, and on an install with no Jellyfin server nothing has migrated
-        /// before them: the window's read path uses <see cref="Connect"/>, which does not migrate,
-        /// and the cache load returns without opening anything at all. So the first code ever to
-        /// run <see cref="Migrate"/> on such a library is four concurrent poster fetches, on the
-        /// first launch after an upgrade.
+        /// four tasks at once, and on an install with no Jellyfin server they used to be the first:
+        /// the window's read path used <see cref="Connect"/>, which does not migrate, and the cache
+        /// load returns without opening anything at all. The read path now migrates on its first
+        /// read, which narrows that race without closing it, so the tolerance below stays.
         ///
         /// The failure is therefore caught and treated as success — but only once the column is
         /// confirmed present, which is the post-condition this method promises whoever ended up
@@ -274,7 +284,12 @@ CREATE TABLE IF NOT EXISTS movies (
     genres      TEXT,
     poster_path TEXT,
     tmdb_id     INTEGER,
-    scan_title  TEXT
+    scan_title  TEXT,
+    runtime_minutes  INTEGER,
+    rating           REAL,
+    cast_list        TEXT,
+    crew_list        TEXT,
+    facts_fetched_at TEXT
 );
 CREATE TABLE IF NOT EXISTS files (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
