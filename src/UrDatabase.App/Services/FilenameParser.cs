@@ -17,7 +17,11 @@ namespace UrDatabase.Services
     /// "The Matrix [1999].mp4") is to be able to assert on them directly.
     ///
     /// Known limits, all deliberate: a dotted name loses genuine full stops ("S.W.A.T." becomes
-    /// "S W A T"), and release noise is only stripped from the end of the title.
+    /// "S W A T"). Release noise is cut in two strengths. A token that can only ever describe a
+    /// release — "1080p", "x264", "BDRip", "MicroHD", "Castellano" — ends the title, and
+    /// everything after it goes whether it is recognised or not. A token that is also a word —
+    /// "Web", "Dual", "Spanish", "4K" — is only stripped from the end, so "Charlotte's Web" still
+    /// loses its last word but "The Spanish Prisoner" keeps its middle one.
     ///
     /// Nothing here understands television, and that is now a division of labour rather than a
     /// gap: <see cref="EpisodeParser"/> reads a path that names a season and an episode, and a
@@ -63,31 +67,70 @@ namespace UrDatabase.Services
         private static readonly Regex Channels =
             new(@"^\d(\.\d)?ch$", RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
+        /// <summary>"5.1", "7.1", "2.0" on their own. Weak, because "2.0" is also a film.</summary>
+        private static readonly Regex BareChannels =
+            new(@"^[1-9]\.[01]$", RegexOptions.Compiled);
+
         /// <summary>
-        /// Tokens that describe the encode rather than the film. Only ever removed from the end of
-        /// a title, because a word that is noise in "The Matrix 1080p" is the film in "4K".
+        /// A site name stamped onto the file by whoever shared it, as in
+        /// "www.DivxTotaL.com - Film.avi". Only with the "www.", because "the.net.1995" is a
+        /// dotted name and not a domain.
         /// </summary>
-        private static readonly HashSet<string> NoiseWords = new(StringComparer.OrdinalIgnoreCase)
+        private static readonly Regex SiteName =
+            new(@"(?<![\p{L}\p{N}])www\.[\p{L}\p{N}-]+(\.[\p{L}\p{N}-]+)*\.(com|net|org|info|biz|es|tv|to|me|cc|ws|mx|ar|eu|co|io|nu|la|ch|cx)(?![\p{L}\p{N}])",
+                RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
+        /// <summary>
+        /// Tokens that only ever describe a release and never appear in a film's name. The first
+        /// one in a title ends it, and everything after it goes too, however unfamiliar: a
+        /// release name puts the film first and the encode after, and the encode part is an open
+        /// vocabulary of languages, groups and uploader names ("1080p.Castellano.By.Pepito") that
+        /// no list could keep up with.
+        /// </summary>
+        private static readonly HashSet<string> ReleaseTags = new(StringComparer.OrdinalIgnoreCase)
         {
             // source
-            "bluray", "blu-ray", "brrip", "bdrip", "bdremux", "remux", "webrip", "web", "webdl",
-            "web-dl", "hdtv", "pdtv", "dvdrip", "dvdscr", "dvd", "hdrip", "cam", "hdcam", "telesync",
-            "telecine", "workprint", "vhsrip", "r5", "screener",
+            "bluray", "blu-ray", "brrip", "bdrip", "bdremux", "remux", "webrip", "webdl", "web-dl",
+            "hdtv", "hdtvrip", "pdtv", "dvdrip", "dvdscr", "dvdfull", "dvd5", "dvd9", "hdrip",
+            "hdcam", "microhd", "telesync", "telecine", "workprint", "vhsrip", "bluray-rip",
             // resolution and picture
-            "4k", "uhd", "fullhd", "hd", "sd", "hdr", "hdr10", "hdr10plus", "dolbyvision", "dovi",
-            "sdr", "imax", "hi10p", "upscaled",
+            "uhd", "fullhd", "hdr", "hdr10", "hdr10plus", "dolbyvision", "dovi", "hi10p", "upscaled",
             // codecs and containers
             "hevc", "avc", "xvid", "divx", "av1", "vp9", "mpeg2", "mkv", "mp4", "avi",
             // audio
-            "aac", "ac3", "eac3", "dts", "dtshd", "truehd", "atmos", "flac", "mp3", "opus", "dd",
-            "ddp", "dual", "multi",
+            "aac", "ac3", "eac3", "dts", "dtshd", "truehd", "flac",
             // edition and release state
-            "proper", "repack", "rerip", "extended", "theatrical", "unrated", "uncut", "remastered",
-            "restored", "limited", "internal", "readnfo", "subbed", "dubbed", "subs",
+            "rerip", "repack", "readnfo",
+            // language and subtitle tags of Spanish releases
+            "castellano", "vose", "vosi", "subtitulado", "subtitulada", "subesp",
             // streaming service tags
-            "amzn", "nf", "hulu", "dsnp", "atvp", "hmax", "itunes", "stan", "pcok",
+            "amzn", "dsnp", "atvp", "hmax",
             // release groups seen constantly in the wild
-            "yify", "yts", "rarbg", "sparks", "evo", "fgt", "ntb", "ettv", "eztv",
+            "yify", "yts", "rarbg", "fgt", "ntb", "ettv", "eztv",
+        };
+
+        /// <summary>
+        /// Tokens that are noise at the end of a title but can be a word of one: "4K" is a film,
+        /// "Charlotte's Web" ends in a source tag and "The Spanish Prisoner" holds a language.
+        /// Only ever removed from the end, and never down to nothing.
+        /// </summary>
+        private static readonly HashSet<string> TrailingNoise = new(StringComparer.OrdinalIgnoreCase)
+        {
+            // source
+            "web", "dvd", "cam", "r5", "screener", "rip", "bd",
+            // resolution and picture
+            "4k", "hd", "sd", "sdr", "imax",
+            // audio
+            "atmos", "mp3", "opus", "dd", "ddp", "dual", "multi", "audio",
+            // edition and release state
+            "proper", "extended", "theatrical", "unrated", "uncut", "remastered", "restored",
+            "limited", "internal", "subbed", "dubbed", "subs", "sub",
+            // language
+            "spanish", "espanol", "español", "latino", "ingles", "inglés", "vo", "vos",
+            // streaming service tags
+            "nf", "hulu", "itunes", "stan", "pcok",
+            // release groups that are also words
+            "sparks", "evo",
         };
 
         /// <summary>
@@ -110,7 +153,7 @@ namespace UrDatabase.Services
             var stem = Stem(pathOrFileName);
             if (stem.Length == 0) return new ParsedMedia("", null);
 
-            var working = RemoveBracketedNoise(stem);
+            var working = RemoveBracketedNoise(SiteName.Replace(stem, " "));
 
             var (year, titlePart) = SplitOnYear(working);
             var title = CleanTitle(titlePart);
@@ -232,43 +275,79 @@ namespace UrDatabase.Services
         {
             if (string.IsNullOrWhiteSpace(raw)) return "";
 
-            var text = AnyBracket.Replace(raw, " ").Replace('_', ' ');
+            var text = AnyBracket.Replace(SiteName.Replace(raw, " "), " ").Replace('_', ' ');
 
             // Bracket removal and mixed release separators can introduce spaces into a dotted
             // filename. Split internal dots, but keep "Mr. Nobody" and audio tags such as DD5.1.
             text = string.Join(' ', text.Split(' ', StringSplitOptions.RemoveEmptyEntries)
-                .Select(token => IsNoiseToken(token) ? token : Regex.Replace(token, @"(?<=\S)\.(?=\S)", " ")));
+                .Select(token => Classify(token) != Noise.None ? token : Regex.Replace(token, @"(?<=\S)\.(?=\S)", " ")));
 
             var tokens = text.Split(' ', StringSplitOptions.RemoveEmptyEntries).ToList();
-            while (tokens.Count > 0 && IsNoiseToken(tokens[^1]))
+
+            // Release tags in front of the title say nothing about it either.
+            while (tokens.Count > 0 && Classify(tokens[0]) == Noise.ReleaseTag)
+                tokens.RemoveAt(0);
+
+            // The title ends at the first release tag, and whatever follows it goes with it.
+            var cut = tokens.FindIndex(token => Classify(token) == Noise.ReleaseTag);
+            if (cut >= 0) tokens.RemoveRange(cut, tokens.Count - cut);
+
+            // Words that are noise only at the end come off one at a time, but never the first:
+            // a film called "4K" or "2.0" is still a film.
+            while (tokens.Count > 1 && Classify(tokens[^1]) != Noise.None)
                 tokens.RemoveAt(tokens.Count - 1);
+            if (tokens.Count == 1 && IsPunctuationOnly(tokens[0]))
+                tokens.Clear();
 
             var title = string.Join(' ', tokens).Trim(' ', '-', '.', ',', ':', ';', '_');
             return ApplyTitleCase(title);
         }
 
-        /// <summary>
-        /// True for a token that describes the encode. A hyphenated token counts when its first
-        /// half does, which removes "x264-GROUP" without touching "Spider-Man".
-        /// </summary>
-        private static bool IsNoiseToken(string token)
+        private enum Noise
         {
-            var trimmed = token.Trim('-', '_', '.', ',');
-            if (trimmed.Length == 0) return true;
+            None,
 
-            var hyphen = trimmed.IndexOf('-');
-            if (hyphen > 0 && IsNoiseAtom(trimmed[..hyphen])) return true;
+            /// <summary>Noise only when it ends a title.</summary>
+            Trailing,
 
-            return IsNoiseAtom(trimmed);
+            /// <summary>Never part of a title: it and everything after it go.</summary>
+            ReleaseTag,
         }
 
-        private static bool IsNoiseAtom(string token) =>
-            NoiseWords.Contains(token) ||
-            Resolution.IsMatch(token) ||
-            VideoCodec.IsMatch(token) ||
-            BitDepth.IsMatch(token) ||
-            AudioLayout.IsMatch(token) ||
-            Channels.IsMatch(token);
+        private static bool IsPunctuationOnly(string token) =>
+            token.Trim('-', '_', '.', ',').Length == 0;
+
+        /// <summary>
+        /// Says whether a token describes the encode. A hyphenated token counts when its first
+        /// half does, which removes "x264-GROUP" without touching "Spider-Man".
+        /// </summary>
+        private static Noise Classify(string token)
+        {
+            var trimmed = token.Trim('-', '_', '.', ',');
+            if (trimmed.Length == 0) return Noise.Trailing;
+
+            var whole = ClassifyAtom(trimmed);
+            if (whole != Noise.None) return whole;
+
+            var hyphen = trimmed.IndexOf('-');
+            return hyphen > 0 ? ClassifyAtom(trimmed[..hyphen]) : Noise.None;
+        }
+
+        private static Noise ClassifyAtom(string token)
+        {
+            if (ReleaseTags.Contains(token) ||
+                Resolution.IsMatch(token) ||
+                VideoCodec.IsMatch(token) ||
+                BitDepth.IsMatch(token) ||
+                AudioLayout.IsMatch(token) ||
+                Channels.IsMatch(token))
+                return Noise.ReleaseTag;
+
+            if (TrailingNoise.Contains(token) || BareChannels.IsMatch(token))
+                return Noise.Trailing;
+
+            return Noise.None;
+        }
 
         /// <summary>
         /// Capitalises a title that arrived entirely in lower case. A name that already carries

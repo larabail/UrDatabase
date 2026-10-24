@@ -100,6 +100,64 @@ namespace UrDatabase.Tests
         }
 
         [Theory]
+        [InlineData("Inception.2010.1080p.BluRay.x264-GRP.mkv", "Inception", 2010)]
+        [InlineData("Inception (2010) [HDR] DIVX.avi", "Inception", 2010)]
+        [InlineData("Inception [BluRay Rip][AC3 5.1 Castellano][2010].avi", "Inception", 2010)]
+        [InlineData("Origen 2010 BDRip Castellano.avi", "Origen", 2010)]
+        [InlineData("Origen BDRip Castellano.avi", "Origen", null)]
+        [InlineData("Origen.MicroHD.1080p.DUAL.mkv", "Origen", null)]
+        [InlineData("Origen MicroHD 1080p Castellano AC3 5.1.mkv", "Origen", null)]
+        [InlineData("Avatar 4K UHD HDR Castellano AC3 5.1.mkv", "Avatar", null)]
+        [InlineData("El Padrino DVDRip Spanish XviD.avi", "El Padrino", null)]
+        [InlineData("Coco SPANISH 1080p.mkv", "Coco", null)]
+        [InlineData("Coco 1080p SPANISH.mkv", "Coco", null)]
+        [InlineData("Coco.1080p.HEVC.Castellano.Ingles.Subs.By.Pepito.mkv", "Coco", null)]
+        [InlineData("Up HDR MULTI VOSE.mkv", "Up", null)]
+        [InlineData("Joker.HDRip.XviD.AC3-EVO.2019.avi", "Joker", 2019)]
+        [InlineData("Joker 1080p 2019 Dual Audio.mkv", "Joker", 2019)]
+        [InlineData("Gladiator 2000 BRRip 720p Dual Audio.mkv", "Gladiator", 2000)]
+        [InlineData("Dunkirk 2017 2160p UHD BDRemux HDR10 DTS-HD MA 5.1 Castellano-Ingles.mkv", "Dunkirk", 2017)]
+        [InlineData("Seven (1995) [BDrip 1080p] [Castellano DTS-Ingles AC3] [Subs].mkv", "Seven", 1995)]
+        [InlineData("Matrix Reloaded [DVDRIP][spanish][www.newpct.com].avi", "Matrix Reloaded", null)]
+        [InlineData("www.DivxTotaL.com - El Laberinto del Fauno.avi", "El Laberinto del Fauno", null)]
+        [InlineData("www.newpct1.com_Torrente.5.HDRip.avi", "Torrente 5", null)]
+        [InlineData("Parasite.2019.KOREAN.1080p.WEB-DL.H264.AAC-RARBG.mp4", "Parasite", 2019)]
+        [InlineData("Arrival 1080p WEB-DL DD5.1 H.264-FGT.mkv", "Arrival", null)]
+        [InlineData("La La Land 2016 FullHD 1080p Castellano.mkv", "La La Land", 2016)]
+        [InlineData("Roma 2018 Subtitulado VOSE 720p.mkv", "Roma", 2018)]
+        public void Everything_after_the_first_release_tag_is_trimmed_off_the_title(
+            string name, string expectedTitle, int? expectedYear)
+        {
+            var parsed = FilenameParser.Parse(name);
+
+            Assert.Equal(expectedTitle, parsed.Title);
+            Assert.Equal(expectedYear, parsed.Year);
+        }
+
+        [Theory]
+        [InlineData("Johnny English (2003).mkv", "Johnny English")]
+        [InlineData("Johnny English 1080p.mkv", "Johnny English")]
+        [InlineData("The Spanish Prisoner (1997) 1080p.mkv", "The Spanish Prisoner")]
+        [InlineData("4K.mkv", "4K")]
+        [InlineData("The Net (1995).mkv", "The Net")]
+        [InlineData("the.net.1995.1080p.mkv", "The Net")]
+        [InlineData("2.0 (2018).mkv", "2.0")]
+        [InlineData("Apollo 13 (1995) Dual 1080p.mkv", "Apollo 13")]
+        public void A_word_that_can_be_part_of_a_title_only_goes_when_it_ends_one(string name, string expected)
+        {
+            Assert.Equal(expected, FilenameParser.Parse(name).Title);
+        }
+
+        [Fact]
+        public void A_title_already_carrying_release_tags_cleans_down_to_the_film()
+        {
+            // Catalogue rows scanned by an older build still hold the noisy name. The TMDB search
+            // retries with CleanText, so improving it also rescues those rows without a rescan.
+            Assert.Equal("Origen", FilenameParser.CleanText("Origen MicroHD 1080p Castellano"));
+            Assert.Equal("Coco", FilenameParser.CleanText("Coco SPANISH HDR Version Extendida"));
+        }
+
+        [Theory]
         [InlineData("Spider-Man.mkv", "Spider-Man")]
         [InlineData("Spider-Man.Far.From.Home.2019.1080p.x264-GROUP.mkv", "Spider-Man Far From Home")]
         public void A_hyphen_inside_a_title_survives_release_group_stripping(string name, string expected)
@@ -172,6 +230,13 @@ namespace UrDatabase.Tests
         {
             Assert.Equal("The Matrix", FilenameParser.Parse("The Matrix.mkv").Title);
             Assert.Equal("The Matrix", FilenameParser.Parse("The Matrix (1999).part1.mkv").Title);
+        }
+
+        [Fact]
+        public void A_title_ending_in_a_word_that_is_also_a_release_tag_loses_it_which_is_the_accepted_trade()
+        {
+            // "WEB" ends far more release names than titles; keeping it would leave "Film WEB" rows.
+            Assert.Equal("Charlotte's", FilenameParser.Parse("Charlotte's Web (2006).mkv").Title);
         }
 
         [Fact]

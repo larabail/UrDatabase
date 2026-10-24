@@ -331,7 +331,7 @@ WHERE id = @id;
             // same file twice and report a library as double the size it is.
             if (existing is not null && files.WasSeen(existing)) return FileOutcome.AlreadySeen;
 
-            var movieId = await EnsureMovieAsync(conn, tx, movies, FilenameParser.Parse(path));
+            var movieId = await MovieForFileAsync(conn, tx, movies, existing, FilenameParser.Parse(path));
 
             var outcome = FileOutcome.Unchanged;
             if (existing is null)
@@ -488,6 +488,69 @@ WHERE id = @id;
         /// matches. Matching happens in <see cref="MovieIndex"/> rather than in SQL so that two
         /// spellings of one title collapse onto a single row.
         /// </summary>
+        /// <summary>
+        /// Which movie a walked file belongs to.
+        /// </summary>
+        /// <remarks>
+        /// A file already linked to a row keeps that link — the update coalesces it — so a parsed
+        /// name that no row answers to must not create one. That happens whenever the name read
+        /// from disk differs from the row's: a file linked by hand, a file renamed on disk, and
+        /// above all a library scanned before the parser learned to cut a title at its first
+        /// release tag. Inserting would leave an empty row beside the real one on every one of
+        /// them.
+        ///
+        /// The last case is also worth repairing rather than merely not making worse: the row is
+        /// called "Origen MicroHD", and that name is why TMDB never found it. When the row's own
+        /// title cleans down to exactly what the file now parses as, and nothing has identified
+        /// it yet, the row takes the clean title. A title a person or a corrected match chose
+        /// never cleans down to the filename like that, and one TMDB already identified is left
+        /// exactly as it is.
+        /// </remarks>
+        private static async Task<long> MovieForFileAsync(
+            SqliteConnection conn,
+            SqliteTransaction tx,
+            MovieIndex movies,
+            ScanFileRow? existing,
+            ParsedMedia parsed)
+        {
+            if (existing?.MovieId is not long linked || movies.TryResolve(parsed, out _, out _))
+                return await EnsureMovieAsync(conn, tx, movies, parsed);
+
+            var row = await conn.QuerySingleOrDefaultAsync<LinkedMovieRow>(
+                "SELECT title AS Title, year AS Year, tmdb_id AS TmdbId, scan_title AS ScanTitle FROM movies WHERE id = @id",
+                new { id = linked }, tx);
+
+            if (row is not null && IsStaleScannedTitle(row, parsed))
+            {
+                await conn.ExecuteAsync(
+                    "UPDATE movies SET title = @title, year = COALESCE(year, @year) WHERE id = @id AND tmdb_id IS NULL",
+                    new { title = parsed.Title, year = parsed.Year, id = linked }, tx);
+
+                movies.Add(linked, parsed.Title, row.Year ?? parsed.Year);
+            }
+
+            return linked;
+        }
+
+        private static bool IsStaleScannedTitle(LinkedMovieRow row, ParsedMedia parsed)
+        {
+            if (row.TmdbId is not null || !string.IsNullOrWhiteSpace(row.ScanTitle)) return false;
+            if (string.IsNullOrWhiteSpace(row.Title) || string.IsNullOrWhiteSpace(parsed.Title)) return false;
+            if (string.Equals(row.Title, parsed.Title, StringComparison.Ordinal)) return false;
+            if (row.Year.HasValue && parsed.Year.HasValue && row.Year != parsed.Year) return false;
+
+            var cleaned = MovieIndex.NormalizeTitle(FilenameParser.CleanText(row.Title));
+            return cleaned.Length > 0 && cleaned == MovieIndex.NormalizeTitle(parsed.Title);
+        }
+
+        private sealed class LinkedMovieRow
+        {
+            public string? Title { get; set; }
+            public int? Year { get; set; }
+            public long? TmdbId { get; set; }
+            public string? ScanTitle { get; set; }
+        }
+
         private static async Task<long> EnsureMovieAsync(SqliteConnection conn, SqliteTransaction tx, MovieIndex index, ParsedMedia parsed)
         {
             if (string.IsNullOrWhiteSpace(parsed.Title))
