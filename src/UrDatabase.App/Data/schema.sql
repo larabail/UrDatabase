@@ -289,6 +289,20 @@ CREATE TABLE IF NOT EXISTS jellyfin_resume_dismissals (
     dismissed_at   TEXT NOT NULL
 );
 
+-- Problems the owner has reported with a copy of a film: bad audio, a low resolution, a squashed
+-- aspect ratio. A person's judgement after watching it, which nothing in the file can measure, so it
+-- is kept apart from the media badges that are recomputed every time a film is opened.
+--
+-- Keyed on the library's own card identity ('local:<movies.id>' or 'jellyfin:<item id>') rather
+-- than on movies.id, because a server film has no row there, and kept out of jellyfin_movies because
+-- every sync deletes and rewrites that table. problems is a comma-separated list of stable codes.
+CREATE TABLE IF NOT EXISTS film_problems (
+    film_key   TEXT PRIMARY KEY,
+    problems   TEXT NOT NULL,
+    note       TEXT,
+    flagged_at TEXT NOT NULL
+);
+
 -- Full text search over the catalogue, kept in sync with movies by triggers.
 CREATE VIRTUAL TABLE IF NOT EXISTS movies_fts USING fts5(
     title,

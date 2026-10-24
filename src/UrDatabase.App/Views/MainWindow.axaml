@@ -187,6 +187,29 @@
                                        LetterSpacing="1"/>
                         </Border>
                     </StackPanel>
+
+                    <!-- Something the owner reported wrong with this copy:
+                         the sound, the resolution, the aspect ratio. Top left,
+                         away from the where-is-it badges, because it answers a
+                         different question — is this copy worth putting on —
+                         and red-orange with a word in it rather than a dot, for
+                         the same reason the connection indicators carry a
+                         glyph. The tooltip lists what was reported. -->
+                    <Border Background="{StaticResource NoBrush}"
+                            CornerRadius="{StaticResource RadiusSmall}"
+                            Padding="6,2"
+                            Margin="8,8,0,0"
+                            HorizontalAlignment="Left"
+                            VerticalAlignment="Top"
+                            IsVisible="{Binding HasProblem}"
+                            ToolTip.Tip="{Binding ProblemTooltip}">
+                        <TextBlock Text="{Binding ProblemBadge}"
+                                   Foreground="{StaticResource RoomBrush}"
+                                   FontFamily="{StaticResource MonoFont}"
+                                   FontSize="9.5"
+                                   FontWeight="SemiBold"
+                                   LetterSpacing="1"/>
+                    </Border>
                 </Grid>
 
                 <!-- Exactly two lines, always, as a fixed height rather than a
