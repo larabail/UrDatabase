@@ -297,6 +297,20 @@ It runs on Windows and macOS from one codebase, built with
   altogether. Nothing is deleted from the database, so putting the file back —
   or linking one by hand — brings the same film back on the next scan rather
   than a fresh copy of it (`Services/MissingFilms`).
+- **Know when a drive has gone.** On launch, behind a window that is already
+  usable, the app checks every drive your library lives on — each drive holding
+  a configured library folder, plus each drive holding a catalogued file the
+  last scan still found — and raises a red banner over the library when one is
+  not connected, or is a network share that did not answer within eight
+  seconds. The banner names the drive and how many films on it cannot be played
+  until it is back; **Check again** re-runs the check after you plug it in, and
+  **Dismiss** hides it until the next launch. The **Drives** button in the top
+  bar shows every drive with its state, the films on it, its free space and the
+  library folders it holds. The check only reports: nothing in the catalogue
+  changes because a drive is away. Drives are told apart by volume rather than
+  by path root, so an external disk under `/Volumes` on macOS is checked as
+  itself instead of as the boot disk it hangs off (`Services/DriveVolumes`,
+  `Services/DriveMonitor`, `Services/DriveStatusText`).
 - **Play.** The details window opens the file the catalogue links to this film —
   the link the scan wrote, not a guess at the filename — and hands it to whatever
   the operating system uses. A film with no link, or whose only linked copy has
@@ -1530,7 +1544,8 @@ src/UrDatabase.App/          the application: one cross-platform project
   Models/                    what the views bind to
   Services/                  config, SQLite, scanning, search, TMDB, OMDb,
                              UrActor, Jellyfin, posters, playback reporting,
-                             local media-track inspection, the update check
+                             local media-track inspection, the update check,
+                             the drive check
   Assets/UrDatabase.icns     the macOS application icon
   Assets/UrDatabase.ico      multi-resolution Windows executable and window icon,
                              embedded in the app rather than loaded from a loose file

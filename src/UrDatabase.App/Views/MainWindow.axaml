@@ -362,6 +362,55 @@
                     </Grid>
                 </Border>
 
+                <!--
+                    The drive alarm. Raised when a drive the library lives on did
+                    not answer the check made at launch, and hidden on every launch
+                    where they all did. A banner rather than a dialog for the same
+                    reason as the update banner above: somebody who opened the app
+                    to watch a film on the disk that is still plugged in should not
+                    have to dismiss anything first. The headline is in the warning
+                    colour because, unlike an update, this is something going wrong.
+                -->
+                <Border x:Name="DriveBanner"
+                        IsVisible="False"
+                        Background="{StaticResource WallBrush}"
+                        BorderBrush="{StaticResource NoBrush}"
+                        BorderThickness="0,0,0,1"
+                        Padding="24,12">
+                    <Grid ColumnDefinitions="*,16,Auto" VerticalAlignment="Center">
+
+                        <StackPanel Grid.Column="0" VerticalAlignment="Center" Spacing="2">
+                            <TextBlock x:Name="DriveHeadline"
+                                       FontSize="13.5"
+                                       FontWeight="SemiBold"
+                                       TextWrapping="NoWrap"
+                                       Foreground="{StaticResource NoBrush}"/>
+                            <TextBlock x:Name="DriveDetail"
+                                       Classes="dim"
+                                       FontSize="11.5"
+                                       TextWrapping="Wrap"/>
+                        </StackPanel>
+
+                        <StackPanel Grid.Column="2"
+                                    Orientation="Horizontal"
+                                    Spacing="8"
+                                    VerticalAlignment="Center">
+                            <Button Classes="ghost"
+                                    x:Name="DriveRecheckButton"
+                                    Content="Check again"
+                                    Click="DriveRecheck_Click"/>
+                            <Button Classes="ghost"
+                                    x:Name="DriveDetailsButton"
+                                    Content="Details"
+                                    Click="Drives_Click"/>
+                            <Button Classes="ghost"
+                                    x:Name="DriveDismissButton"
+                                    Content="Dismiss"
+                                    Click="DriveDismiss_Click"/>
+                        </StackPanel>
+                    </Grid>
+                </Border>
+
                 <!-- The top bar: the wordmark, search, and library actions. -->
                 <Grid Height="56"
                       Margin="24,0"
@@ -422,6 +471,11 @@
                                 Content="Sync Jellyfin"
                                 IsVisible="False"
                                 Click="JellyfinSyncButton_Click"/>
+                        <Button Classes="ghost"
+                                x:Name="DrivesButton"
+                                Content="Drives"
+                                ToolTip.Tip="Check whether every drive your library lives on is connected."
+                                Click="Drives_Click"/>
                         <Button Classes="ghost"
                                 x:Name="SettingsButton"
                                 Content="Settings"
