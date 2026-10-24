@@ -1650,7 +1650,8 @@ namespace UrDatabase.Views
                         vm, _dbPath, _config, LoadImdbRatingAsync, _jellyfin, _cts.Token,
                         LoadAwardsAsync, related,
                         relatedLookup: (movie, ct) => LoadRelatedAsync(movie, null, ct),
-                        cancelEnrichment: loading.Cancel),
+                        cancelEnrichment: loading.Cancel,
+                        stillsLookup: LoadStillsAsync),
                     enrich);
 
                 // A downloaded film is a row the library behind this screen does not have yet: it
@@ -1867,7 +1868,8 @@ namespace UrDatabase.Views
                     })
                     : Task.CompletedTask,
                 LoadMovieRatingAsync(vm, loading),
-                LoadMovieRelatedAsync(vm, tmdb, loading));
+                LoadMovieRelatedAsync(vm, tmdb, loading),
+                LoadMovieStillsAsync(vm, loading));
 
             if (loading.IsCancellationRequested) return;
             vm.IsLoadingMetadata = false;
@@ -1886,6 +1888,38 @@ namespace UrDatabase.Views
         private Task LoadMovieRelatedAsync(MovieDetailsVm vm, TmdbService? tmdb, DetailLoading loading) =>
             loading.RunAsync("Recommendations", ct => LoadRelatedAsync(vm, tmdb, ct),
                 related => DetailsView.RefreshRelated(vm, related));
+
+        /// <summary>
+        /// Started once the film is identified, so the backdrop already behind the page can be
+        /// left off the strip. Never awaited before the page shows, like everything else here.
+        /// </summary>
+        private Task LoadMovieStillsAsync(MovieDetailsVm vm, DetailLoading loading) =>
+            loading.RunAsync("Stills", ct => LoadStillsAsync(vm, false, ct),
+                stills => DetailsView.RefreshStills(vm, stills));
+
+        /// <summary>
+        /// Frames from the film, from TMDB, cached beside the posters when posters are cached.
+        /// </summary>
+        /// <remarks>
+        /// A server film is asked about under the TMDB id the server gave it, which is the only
+        /// TMDB identity it has: nothing in the catalogue describes it. Without a key a cached
+        /// strip is still shown, and an uncached one is simply absent.
+        /// </remarks>
+        private async Task<IReadOnlyList<FilmStill>> LoadStillsAsync(MovieDetailsVm vm, bool refresh, CancellationToken ct)
+        {
+            var tmdbId = vm.TmdbId;
+            if (tmdbId is null && vm.RemoteId is { } remoteId && _remoteById.TryGetValue(remoteId, out var film))
+                tmdbId = JellyfinLibrary.ParseTmdbId(film.TmdbId);
+
+            using var tmdb = new TmdbService(
+                apiKey: _config.TmdbApiKey ?? "",
+                posterCacheDir: _config.PosterCacheDir ?? "",
+                imageSize: _config.TmdbImageSize ?? "w342",
+                downloadPosters: false);
+
+            var stills = new FilmStills(tmdb, FilmStills.CacheRootFor(tmdb, _config.DownloadPosters));
+            return await stills.LoadAsync(tmdbId, vm.BackdropUrl, refresh, ct);
+        }
 
         /// <summary>
         /// Lets the server describe a film this machine also has, wherever nothing else could.
@@ -1970,7 +2004,8 @@ namespace UrDatabase.Views
                     LoadDownloadedFileAsync(vm, loading),
                     LoadMovieRatingAsync(vm, loading),
                     LoadMovieAwardsAsync(vm, loading),
-                    LoadMovieRelatedAsync(vm, null, loading)));
+                    LoadMovieRelatedAsync(vm, null, loading),
+                    LoadMovieStillsAsync(vm, loading)));
             }
             catch (OperationCanceledException) when (_cts.IsCancellationRequested)
             {

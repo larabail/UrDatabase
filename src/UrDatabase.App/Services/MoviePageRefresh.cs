@@ -20,6 +20,7 @@ public sealed class MoviePageRefresh : IDisposable
     private readonly Func<string?, long?, CancellationToken, Task<double?>>? _ratingLookup;
     private readonly Func<string?, int?, CancellationToken, Task<OscarHonours>>? _awardsLookup;
     private readonly Func<MovieDetailsVm, CancellationToken, Task<RelatedShelf>>? _relatedLookup;
+    private readonly Func<MovieDetailsVm, bool, CancellationToken, Task<IReadOnlyList<FilmStill>>>? _stillsLookup;
     private int _running;
 
     public MoviePageRefresh(
@@ -30,7 +31,8 @@ public sealed class MoviePageRefresh : IDisposable
         Func<string?, long?, CancellationToken, Task<double?>>? ratingLookup = null,
         Func<string?, int?, CancellationToken, Task<OscarHonours>>? awardsLookup = null,
         Func<MovieDetailsVm, CancellationToken, Task<RelatedShelf>>? relatedLookup = null,
-        HttpMessageHandler? handler = null)
+        HttpMessageHandler? handler = null,
+        Func<MovieDetailsVm, bool, CancellationToken, Task<IReadOnlyList<FilmStill>>>? stillsLookup = null)
     {
         _config = config;
         _dbPath = dbPath;
@@ -39,6 +41,7 @@ public sealed class MoviePageRefresh : IDisposable
         _ratingLookup = ratingLookup;
         _awardsLookup = awardsLookup;
         _relatedLookup = relatedLookup;
+        _stillsLookup = stillsLookup;
         if (!string.IsNullOrWhiteSpace(config?.TmdbApiKey))
             _tmdb = new TmdbService(config.TmdbApiKey, config.PosterCacheDir, config.TmdbImageSize, false, handler);
     }
@@ -102,6 +105,12 @@ public sealed class MoviePageRefresh : IDisposable
             if (_relatedLookup is not null)
                 await AttemptAsync(result, "Related films could not be refreshed; the existing shelf is kept.", async () =>
                     result.Related = await _relatedLookup(updated, ct), ct);
+
+            // Past the cache: Refresh is the one way to ask TMDB again for a film whose strip
+            // was saved, including one saved as having no stills at all.
+            if (_stillsLookup is not null)
+                await AttemptAsync(result, "Stills could not be refreshed; the existing stills are kept.", async () =>
+                    result.Stills = await _stillsLookup(updated, true, ct), ct);
 
             ct.ThrowIfCancellationRequested();
             return result;
@@ -233,6 +242,9 @@ public sealed class MoviePageRefreshResult
     internal MovieDetailsVm Updated { get; }
     public IReadOnlyList<string> Notices => _notices;
     public RelatedShelf? Related { get; internal set; }
+
+    /// <summary>The refreshed strip of stills, or null when nothing was asked or it failed.</summary>
+    public IReadOnlyList<FilmStill>? Stills { get; internal set; }
 
     internal MoviePageRefreshResult(MovieDetailsVm movie)
     {

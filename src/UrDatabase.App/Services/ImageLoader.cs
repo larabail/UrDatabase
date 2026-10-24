@@ -19,7 +19,12 @@ namespace UrDatabase.Services
         private static readonly ConcurrentDictionary<string, Bitmap> Cache = new();
         private static readonly SemaphoreSlim DownloadGate = new(6);
 
-        public static async Task<Bitmap?> LoadAsync(string? source, CancellationToken ct = default)
+        /// <param name="cache">
+        /// False for an image looked at once and then left — a full-size still. The cache keeps
+        /// every bitmap for the life of the app, and a dozen 1280-pixel frames would cost more
+        /// memory than every poster in a library.
+        /// </param>
+        public static async Task<Bitmap?> LoadAsync(string? source, CancellationToken ct = default, bool cache = true)
         {
             if (string.IsNullOrWhiteSpace(source)) return null;
             if (Cache.TryGetValue(source, out var cached)) return cached;
@@ -28,6 +33,7 @@ namespace UrDatabase.Services
             {
                 var bitmap = await Task.Run(() => LoadCoreAsync(source, ct), ct);
                 if (bitmap is null) return null;
+                if (!cache) return bitmap;
 
                 // Another load may have won the race; keep a single instance per key.
                 return Cache.GetOrAdd(source, bitmap);
