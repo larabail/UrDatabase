@@ -351,6 +351,13 @@ It runs on Windows and macOS from one codebase, built with
   anywhere
   (`Services/ResumeRow`, `Services/ResumeDismissals`,
   `Services/PlaybackReporter`, `Services/VlcStatus`).
+- **A watchlist of films you mean to watch.** **+ Watchlist** on a film's page,
+  or **Add to Watchlist** on any film or series card's right-click menu, puts it
+  on a **Watchlist** shelf directly below Continue watching, most recently added
+  first. The button then reads **✓ On Watchlist** and pressing it again takes the
+  film off; the menu offers **Remove from Watchlist**. Kept in the catalogue on
+  this computer and never sent to the server, and a server film you add and later
+  download stays on it (`Services/Watchlist`, `Services/WatchlistStore`).
 - **Download a server film to watch offline.** A film on the server has a
   **Download** button that keeps a copy on this disk, named the way the scanner
   reads it and catalogued the moment it finishes — so it is playable and
@@ -1009,7 +1016,7 @@ I" only in the place you already knew. The tooltip says it in words.
 
 Right-click a card in the row and choose **Remove from Continue watching**. A
 right-click because the row is the first thing on the page and a visible button
-there would be one twitch away from being pressed by accident; the menu appears
+there would be one twitch away from being pressed by accident; that item appears
 only on a card that is actually in the row.
 
 It is local to this app, entirely. **Nothing is sent to the server**, no other
@@ -1278,7 +1285,8 @@ and `files` tables, the `scans` table each scan records itself in, the
 `jellyfin_movies` cache and its television counterparts `jellyfin_series`,
 `jellyfin_seasons` and `jellyfin_episodes`, the `jellyfin_resume` positions
 behind the Continue watching row and the `jellyfin_resume_dismissals` that are
-taken back out of it, the `movies_fts` FTS5 index and the
+taken back out of it, the `watchlist` behind the Watchlist shelf, the
+`movies_fts` FTS5 index and the
 triggers that keep it current — and every statement is `IF NOT EXISTS`, so it
 runs against a library you already have without touching your data.
 
@@ -1704,6 +1712,12 @@ Stated plainly, so nobody has to find out by using it:
   to maintain, but something abandoned at a position nothing will ever move is
   gone from the row for good, and the only record of it is a row in
   `jellyfin_resume_dismissals`.
+- **Watching a film does not take it off the Watchlist.** Nothing notices that a
+  film on it has been played, so it stays until you remove it. A film that leaves
+  the library — deleted, or on a server that is switched off — drops off the
+  shelf but stays in `watchlist`, and is back on the shelf the moment the library
+  holds it again. There is no Watchlist toggle on a series' own page yet; use the
+  card's right-click menu.
 - **One Jellyfin server.** There is no way to add a second. The setup screen
   configures the first one and tests it, but a household with two servers has to
   pick one.

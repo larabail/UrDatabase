@@ -167,6 +167,12 @@ namespace UrDatabase.Views
         private IReadOnlyList<ResumeDismissal> _dismissals = Array.Empty<ResumeDismissal>();
 
         /// <summary>
+        /// What the owner has said they want to watch. Read from the catalogue with the
+        /// configuration, whether or not a server is configured, and re-read after every change.
+        /// </summary>
+        private IReadOnlyList<WatchlistEntry> _watchlist = Array.Empty<WatchlistEntry>();
+
+        /// <summary>
         /// The card the context menu was opened on. Recorded on the press that opens the menu
         /// rather than read off the menu's own data context, which is a chain of inheritance
         /// through a popup that is not in this window's visual tree.
@@ -399,6 +405,9 @@ namespace UrDatabase.Views
                 onFailure: message => Dispatcher.UIThread.Post(() => SetStatus(message)));
 
             if (JellyfinButton is not null) JellyfinButton.IsVisible = _jellyfin is not null;
+
+            // The catalogue may have just moved.
+            LoadWatchlist();
         }
 
         /// <summary>
@@ -1090,10 +1099,14 @@ namespace UrDatabase.Views
             // off a film that is no longer part-watched.
             var continueWatching = ResumeRow.Build(visible, _resume, _dismissals);
 
+            // The same filtered list, the same rule about only showing with every genre on screen.
+            var watchlist = showingEverything ? Watchlist.Build(visible, _watchlist) : null;
+
             foreach (var shelf in LibraryGrouping.BuildShelves(
                          visible,
                          buckets,
-                         showingEverything ? continueWatching : null))
+                         showingEverything ? continueWatching : null,
+                         watchlist))
             {
                 VisibleGroups.Add(shelf);
             }
@@ -1658,6 +1671,14 @@ namespace UrDatabase.Views
                 // A renamed one is a row whose name, sort position and genre shelf have all moved.
                 if (DetailsView.DownloadedSomething || DetailsView.RenamedSomething)
                     await _searchLoop.RefreshAsync(SearchBox.Text);
+
+                // Only the shelf moved, so only the shelf is rebuilt; nothing needs reading again
+                // but the list itself.
+                if (DetailsView.WatchlistChanged)
+                {
+                    LoadWatchlist();
+                    RebuildGroups();
+                }
             }
             finally
             {
@@ -1786,7 +1807,9 @@ namespace UrDatabase.Views
                     // Opened from disk, and the server has a copy too. Said on the facts row, in
                     // place of the badge the card carries.
                     IsOnServer = m.IsOnServer,
-                    RemoteId = m.RemoteId
+                    RemoteId = m.RemoteId,
+
+                    IsOnWatchlist = Watchlist.Contains(_watchlist, m)
                 };
 
                 if (m.IsOnServer) FillFromServer(vm, m.RemoteId);
@@ -1962,7 +1985,9 @@ namespace UrDatabase.Views
                     KeyCrew = film.Crew.ToList(),
 
                     // Used until a downloaded copy is found and its own tracks are read.
-                    Media = film.Media
+                    Media = film.Media,
+
+                    IsOnWatchlist = Watchlist.Contains(_watchlist, m)
                 };
 
                 await ShowDetailsAsync(vm, loading => Task.WhenAll(
@@ -2087,15 +2112,18 @@ namespace UrDatabase.Views
         }
 
         /// <summary>
-        /// Whether the card the pointer is over has anything to offer a menu, which today means
-        /// whether it is in the Continue watching row.
+        /// Whether the card the pointer is over has anything to offer a menu: a place in the
+        /// Continue watching row, or a place it could take on the watchlist.
         /// </summary>
         /// <remarks>
         /// <c>HasResume</c> is exactly the population of that row: the mark is stamped on when the
         /// row is built and cleared off everything else. So the same film's card on the Drama
         /// shelf offers the same dismissal, which is right — it is the same film and the same
-        /// fact — and the four hundred cards that are in no row at all show no menu rather than an
-        /// empty box.
+        /// fact.
+        ///
+        /// The watchlist item is offered on every film and series, and says which way it would go.
+        /// Not on an episode: see <see cref="Watchlist.CanHold"/>. A card with nothing to offer at
+        /// all shows no menu rather than an empty box.
         ///
         /// The programme item is shown only on an episode, because it is the only card that has a
         /// programme. Set here rather than bound: a context menu is a popup outside this window's
@@ -2105,8 +2133,9 @@ namespace UrDatabase.Views
         private void CardMenu_Opening(object? sender, CancelEventArgs e)
         {
             var card = _cardMenuTarget;
+            var canWatchlist = Watchlist.CanHold(card);
 
-            if (card is not { HasResume: true })
+            if (card is null || (!card.HasResume && !canWatchlist))
             {
                 e.Cancel = true;
                 return;
@@ -2118,6 +2147,13 @@ namespace UrDatabase.Views
             {
                 if (string.Equals(item.Name, OpenProgrammeItemName, StringComparison.Ordinal))
                     item.IsVisible = card.IsEpisode;
+                else if (string.Equals(item.Name, DismissItemName, StringComparison.Ordinal))
+                    item.IsVisible = card.HasResume;
+                else if (string.Equals(item.Name, WatchlistItemName, StringComparison.Ordinal))
+                {
+                    item.IsVisible = canWatchlist;
+                    item.Header = Watchlist.Contains(_watchlist, card) ? "Remove from Watchlist" : "Add to Watchlist";
+                }
             }
         }
 
@@ -2126,6 +2162,83 @@ namespace UrDatabase.Views
         /// so adding another item cannot silently start hiding the wrong one.
         /// </summary>
         private const string OpenProgrammeItemName = "OpenProgrammeItem";
+
+        /// <summary>The Continue watching dismissal, matched the same way.</summary>
+        private const string DismissItemName = "DismissFromRowItem";
+
+        /// <summary>The watchlist toggle, matched the same way.</summary>
+        private const string WatchlistItemName = "WatchlistItem";
+
+        private async void ToggleWatchlist_Click(object? sender, RoutedEventArgs e)
+        {
+            if (_cardMenuTarget is not { } card || !Watchlist.CanHold(card)) return;
+
+            var adding = !Watchlist.Contains(_watchlist, card);
+
+            if (await SetWatchlistAsync(Watchlist.KeysFor(card), adding))
+            {
+                SetStatus(adding
+                    ? $"Added \u201c{card.Title}\u201d to your Watchlist."
+                    : $"Removed \u201c{card.Title}\u201d from your Watchlist.");
+            }
+        }
+
+        /// <summary>
+        /// Writes one watchlist change and puts the shelf in step with it. False when the write
+        /// failed, which has already been said on the status line.
+        /// </summary>
+        private async Task<bool> SetWatchlistAsync(IReadOnlyList<string> keys, bool onWatchlist)
+        {
+            if (keys.Count == 0) return false;
+
+            try
+            {
+                using var conn = Database.Open(_dbPath);
+                await DatabaseWriteLane.RunAsync(
+                    conn,
+                    _ =>
+                    {
+                        WatchlistStore.Set(conn, keys, onWatchlist);
+                        return Task.CompletedTask;
+                    },
+                    _cts.Token);
+            }
+            catch (OperationCanceledException)
+            {
+                return false;
+            }
+            catch (Exception ex)
+            {
+                AppLog.Write("app.log", $"could not update the watchlist: {ex.Message}");
+                SetStatus("The Watchlist could not be updated.");
+                return false;
+            }
+
+            LoadWatchlist();
+            RebuildGroups();
+            return true;
+        }
+
+        /// <summary>
+        /// Reads the watchlist out of the catalogue. An install with no catalogue yet has nothing
+        /// on it, and is not given a database just to say so.
+        /// </summary>
+        private void LoadWatchlist()
+        {
+            _watchlist = Array.Empty<WatchlistEntry>();
+
+            if (string.IsNullOrWhiteSpace(_dbPath) || !File.Exists(_dbPath)) return;
+
+            try
+            {
+                using var conn = Database.Open(_dbPath);
+                _watchlist = WatchlistStore.Load(conn);
+            }
+            catch (Exception ex)
+            {
+                AppLog.Write("app.log", $"could not read the watchlist: {ex.Message}");
+            }
+        }
 
         private async void OpenProgramme_Click(object? sender, RoutedEventArgs e)
         {

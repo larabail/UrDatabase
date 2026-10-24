@@ -387,6 +387,10 @@ CREATE TABLE IF NOT EXISTS jellyfin_resume_dismissals (
     position_ticks INTEGER NOT NULL,
     dismissed_at   TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS watchlist (
+    item_key TEXT PRIMARY KEY COLLATE NOCASE,
+    added_at TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS oscar_lookups (
     title      TEXT    NOT NULL,
     year       INTEGER NOT NULL,

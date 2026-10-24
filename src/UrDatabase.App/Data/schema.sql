@@ -289,6 +289,16 @@ CREATE TABLE IF NOT EXISTS jellyfin_resume_dismissals (
     dismissed_at   TEXT NOT NULL
 );
 
+-- Films the owner has said they want to watch. Keyed on the identity a card carries ('local:12'
+-- for a catalogued film, 'jellyfin:<item id>' for one only the server holds) rather than on
+-- movies.id, because a server film has no row in movies to point at. A table of its own, so no
+-- scan or sync can rewrite it, and nothing here is sent to the server. A new table rather than a
+-- new column, so CREATE ... IF NOT EXISTS is the whole of the migration.
+CREATE TABLE IF NOT EXISTS watchlist (
+    item_key TEXT PRIMARY KEY COLLATE NOCASE,
+    added_at TEXT NOT NULL
+);
+
 -- Full text search over the catalogue, kept in sync with movies by triggers.
 CREATE VIRTUAL TABLE IF NOT EXISTS movies_fts USING fts5(
     title,
