@@ -107,6 +107,57 @@ public sealed class TmdbRecoveryTests : IDisposable
     }
 
     [Fact]
+    public async Task A_sole_result_refused_for_the_cleaned_title_is_not_accepted_for_the_raw_one()
+    {
+        // The raw name's extra word stops "El Sabor del Drama" containing all of it, but the
+        // cleaned name is the El Drama bug exactly, and either query's refusal has to stand.
+        using var handler = FakeHttpMessageHandler.Routed(
+            ("/search/movie", HttpStatusCode.OK,
+                """{"results":[{"id":900,"title":"El Sabor del Drama","release_date":"2026-01-01"}]}"""),
+            ("/alternative_titles", HttpStatusCode.OK, """{"titles":[]}"""));
+        using var tmdb = Service(handler);
+
+        Assert.Null((await tmdb.SearchFilmAsync("El Drama SPANISH 1080p", 2026, default)).TmdbId);
+        Assert.Contains(handler.Requests, url => url.Contains("query=El Drama&") && url.Contains("year=2026"));
+        Assert.Contains(handler.Requests, url => url.Contains("query=El Drama SPANISH 1080p&") && url.Contains("year=2026"));
+    }
+
+    [Fact]
+    public async Task A_title_naming_a_film_from_another_year_refuses_the_raw_querys_lone_result_too()
+    {
+        using var handler = new FakeHttpMessageHandler(request =>
+        {
+            var url = request.RequestUri!.ToString();
+            if (url.Contains("/alternative_titles")) return Json("""{"titles":[]}""");
+            return url.Contains("year=2018")
+                ? Json("""{"results":[{"id":7,"title":"Dune Drifter","release_date":"2018-06-01"}]}""")
+                : Json("""{"results":[{"id":438631,"title":"Dune","release_date":"2021-09-15"},{"id":841,"title":"Dune","release_date":"1984-12-14"},{"id":7,"title":"Dune Drifter","release_date":"2018-06-01"}]}""");
+        });
+        using var tmdb = Service(handler);
+
+        Assert.Null((await tmdb.SearchFilmAsync("Dune SPANISH 1080p", 2018, default)).TmdbId);
+        Assert.Contains(handler.Requests, url => url.Contains("query=Dune&"));
+    }
+
+    [Fact]
+    public async Task A_lone_result_for_one_query_is_not_sole_when_another_query_found_more()
+    {
+        // The picker searches the catalogued title, which here finds two films to choose from.
+        using var handler = new FakeHttpMessageHandler(request =>
+        {
+            var url = request.RequestUri!.ToString();
+            if (url.Contains("/alternative_titles")) return Json("""{"titles":[]}""");
+            return url.Contains("query=La vida de los otros&") && url.Contains("year=2006")
+                ? Json("""{"results":[{"id":582,"title":"The Lives of Others","release_date":"2006-03-15"}]}""")
+                : Json("""{"results":[{"id":582,"title":"The Lives of Others","release_date":"2006-03-15"},{"id":9,"title":"Other Lives","release_date":"2006-01-01"}]}""");
+        });
+        using var tmdb = Service(handler);
+
+        Assert.Null((await tmdb.SearchFilmAsync("La vida de los otros SPANISH 1080p", 2006, default)).TmdbId);
+        Assert.Contains(handler.Requests, url => url.Contains("query=La vida de los otros&"));
+    }
+
+    [Fact]
     public async Task A_sole_result_is_not_accepted_for_a_film_catalogued_without_a_year()
     {
         using var handler = FakeHttpMessageHandler.Json(

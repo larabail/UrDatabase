@@ -229,6 +229,23 @@ namespace UrDatabase.Tests
         }
 
         [Fact]
+        public void Every_searched_spelling_must_admit_the_sole_result()
+        {
+            var sabor = new[] { Result(900, "El Sabor del Drama", "2026") };
+            Assert.NotNull(TmdbMatch.ChooseSoleResult(sabor, "El Drama SPANISH", 2026));
+            Assert.Null(TmdbMatch.ChooseSoleResult(sabor, new[] { "El Drama SPANISH", "El Drama" }, 2026));
+
+            var drifter = new[] { Result(7, "Dune Drifter", "2018") };
+            var seen = new[] { Result(438631, "Dune", "2021"), Result(7, "Dune Drifter", "2018") };
+            Assert.NotNull(TmdbMatch.ChooseSoleResult(drifter, "Dune SPANISH", 2018, seen));
+            Assert.Null(TmdbMatch.ChooseSoleResult(drifter, new[] { "Dune SPANISH", "Dune" }, 2018, seen));
+
+            // Two spellings that each found the same film once still found one film.
+            var lives = new[] { Result(582, "The Lives of Others", "2006"), Result(582, "The Lives of Others", "2006") };
+            Assert.Equal(582, TmdbMatch.ChooseSoleResult(lives, new[] { "La vida de los otros 1080p", "La vida de los otros" }, 2006)!.Id);
+        }
+
+        [Fact]
         public void A_result_with_no_title_at_all_cannot_be_matched()
         {
             var results = new List<TmdbMatch.Candidate> { new() { Id = 1, ReleaseDate = "1999-01-01" } };

@@ -316,7 +316,9 @@ It runs on Windows and macOS from one codebase, built with
   is still refused when the film has no year, when that result merely contains
   the title with other words in front (`El Drama` is not `El Sabor del Drama`),
   or when another result carries the catalogued title exactly in a different
-  year. Films left unmatched by an earlier version are tried again on the next
+  year. The raw and the cleaned spelling of the title are judged together: both
+  year-scoped searches must have found only that film, and a refusal under
+  either spelling stands. Films left unmatched by an earlier version are tried again on the next
   launch or **Refresh**, because a no-match is never stored.
 
   TMDB requests share a ten-per-second pace across the app. An HTTP 429 pauses

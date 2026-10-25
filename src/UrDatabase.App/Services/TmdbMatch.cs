@@ -150,36 +150,56 @@ namespace UrDatabase.Services
         /// lone result in the asked-for year is something else.
         ///
         /// With no year there is nothing to corroborate a lone result, so it is refused.
+        ///
+        /// A lookup searches more than one spelling of the title — as catalogued, and cleaned of
+        /// release noise — so all of them are judged together. The film has to be the only one
+        /// any of those year-scoped searches found, and each refusal applies whichever spelling
+        /// triggers it. Judged one spelling at a time, "El Drama SPANISH 1080p" would accept
+        /// <em>El Sabor del Drama</em> on the raw name's extra words after the cleaned
+        /// "El Drama" had refused it, and the raw name's lone hit would be taken although the
+        /// cleaned one found a choice.
         /// </remarks>
-        /// <param name="yearScoped">TMDB's results for the title searched with the catalogued year.</param>
-        /// <param name="title">The catalogued title.</param>
+        /// <param name="yearScoped">
+        /// TMDB's results for every spelling searched with the catalogued year, together.
+        /// </param>
+        /// <param name="titles">Every spelling of the catalogued title that was searched.</param>
         /// <param name="year">The catalogued year. Null refuses.</param>
         /// <param name="alsoSeen">Every other result the identification has seen, from any query.</param>
-        public static Candidate? ChooseSoleResult(IReadOnlyList<Candidate>? yearScoped, string? title, int? year,
-            IEnumerable<Candidate>? alsoSeen = null)
+        public static Candidate? ChooseSoleResult(IEnumerable<Candidate?>? yearScoped, IReadOnlyList<string?> titles,
+            int? year, IEnumerable<Candidate?>? alsoSeen = null)
         {
-            if (year is null || yearScoped is null || yearScoped.Count != 1) return null;
+            if (year is null || yearScoped is null) return null;
 
-            var sole = yearScoped[0];
-            if (sole is null || sole.Id <= 0 || sole.Year is not int soleYear) return null;
+            var found = yearScoped.OfType<Candidate>().DistinctBy(candidate => candidate.Id).ToArray();
+            if (found.Length != 1) return null;
+
+            var sole = found[0];
+            if (sole.Id <= 0 || sole.Year is not int soleYear) return null;
             if (Math.Abs(soleYear - year.Value) > YearTolerance) return null;
 
-            var wanted = NormalizeTitle(title);
-            var wantedWords = SignificantWords(wanted);
-            if (wantedWords.Length == 0) return null;
+            var wanted = titles.Select(NormalizeTitle).Where(title => title.Length > 0).Distinct().ToArray();
+            if (wanted.Length == 0 || wanted.Any(title => SignificantWords(title).Length == 0)) return null;
 
             if (alsoSeen is not null && alsoSeen.Any(other => other is not null && other.Id != sole.Id
-                    && TitlesAgree(other, wanted)))
+                    && wanted.Any(title => TitlesAgree(other, title))))
                 return null;
 
-            var titles = new[] { sole.Title, sole.OriginalTitle }
+            var soleTitles = new[] { sole.Title, sole.OriginalTitle }
                 .Select(candidateTitle => SignificantWords(NormalizeTitle(candidateTitle)))
                 .Where(words => words.Length > 0).ToArray();
-            if (titles.Length == 0) return null;
+            if (soleTitles.Length == 0) return null;
 
-            if (titles.Any(words => StartsWith(words, wantedWords))) return sole;
-            return titles.Any(words => Buries(words, wantedWords)) ? null : sole;
+            return wanted.All(title => Admits(soleTitles, SignificantWords(title))) ? sole : null;
         }
+
+        /// <summary>The same rule for a title searched under one spelling only.</summary>
+        public static Candidate? ChooseSoleResult(IReadOnlyList<Candidate>? yearScoped, string? title, int? year,
+            IEnumerable<Candidate?>? alsoSeen = null) =>
+            ChooseSoleResult(yearScoped, new[] { title }, year, alsoSeen);
+
+        private static bool Admits(string[][] soleTitles, string[] wantedWords) =>
+            soleTitles.Any(words => StartsWith(words, wantedWords))
+            || !soleTitles.Any(words => Buries(words, wantedWords));
 
         // Articles, prepositions and conjunctions in the languages a library is likely to be
         // named in. They are what lets "El Drama" share words with "El Sabor del Drama" at all,

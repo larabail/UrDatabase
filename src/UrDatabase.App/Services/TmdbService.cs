@@ -249,7 +249,7 @@ namespace UrDatabase.Services
             if (string.IsNullOrWhiteSpace(_apiKey) || string.IsNullOrWhiteSpace(title)) return null;
 
             var candidates = new List<TmdbMatch.Candidate>();
-            var yearScoped = new List<(string Query, IReadOnlyList<TmdbMatch.Candidate> Results)>();
+            var yearScoped = new List<TmdbMatch.Candidate>();
             var queries = new[] { title.Trim(), FilenameParser.CleanText(title) }
                 .Where(query => TmdbMatch.NormalizeTitle(query).Length > 0)
                 .Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
@@ -258,7 +258,7 @@ namespace UrDatabase.Services
             {
                 var results = await SearchAsync(query, year, ct);
                 candidates.AddRange(results);
-                if (year.HasValue) yearScoped.Add((query, results));
+                if (year.HasValue) yearScoped.AddRange(results);
                 var match = TmdbMatch.ChooseBest(results, query, year);
                 if (match is not null) return match;
 
@@ -303,12 +303,10 @@ namespace UrDatabase.Services
 
             // Last, because it needs no request: the year held one film and nothing contradicts
             // it. This is what the "Wrong film?" picker would have shown as its only choice — see
-            // TmdbMatch.ChooseSoleResult for the cases it still refuses. Two queries that each
-            // found a different lone film are a choice for a person.
-            var sole = yearScoped
-                .Select(scoped => TmdbMatch.ChooseSoleResult(scoped.Results, scoped.Query, year, candidates))
-                .OfType<TmdbMatch.Candidate>().DistinctBy(candidate => candidate.Id).ToArray();
-            return sole.Length == 1 ? sole[0] : null;
+            // TmdbMatch.ChooseSoleResult for the cases it still refuses. Every spelling searched
+            // is judged at once, so one that refuses the film or found a choice is not outvoted
+            // by another that found it alone.
+            return TmdbMatch.ChooseSoleResult(yearScoped, queries, year, candidates);
         }
 
         private sealed class TmdbAlternativeTitles
