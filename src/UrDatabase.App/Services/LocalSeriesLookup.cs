@@ -177,8 +177,14 @@ FROM series WHERE id = @id", new { id = seriesId });
 
             var genres = TelevisionGenres.Join(details.Genres?.Select(genre => genre.Name));
 
-            await SaveDescriptionAsync(conn, seriesId, Describe(id, details, hadArtwork ? null : poster, genres), ct)
+            var saved = await SaveDescriptionAsync(
+                    conn, seriesId, Describe(id, details, hadArtwork ? null : poster, genres), ct,
+                    keepOtherIdentification: true)
                 .ConfigureAwait(false);
+
+            // Somebody chose a different programme by hand while this was asking about the one it
+            // read. Nothing was written, and nothing found here belongs on the card either.
+            if (!saved) return SeriesLookupResult.Unmatched;
 
             return new SeriesLookupResult(true, new Enrichment(
                 poster,
@@ -229,12 +235,31 @@ FROM series WHERE id = @id", new { id = seriesId });
         /// season marked as already fetched would otherwise never be asked about again.
         /// </para>
         /// </remarks>
-        public static Task SaveDescriptionAsync(
-            SqliteConnection conn, long seriesId, SeriesDescription description, CancellationToken ct = default) =>
+        /// <param name="keepOtherIdentification">
+        /// Writes nothing when the row has meanwhile been identified as a different programme.
+        /// The background pass sets it: it read the row before asking TMDB, and a person may have
+        /// chosen the programme with Wrong series? while it was waiting for the answer. Their
+        /// choice is the one that stands.
+        /// </param>
+        /// <returns>False when <paramref name="keepOtherIdentification"/> refused the write, or there is no such row.</returns>
+        public static Task<bool> SaveDescriptionAsync(
+            SqliteConnection conn,
+            long seriesId,
+            SeriesDescription description,
+            CancellationToken ct = default,
+            bool keepOtherIdentification = false) =>
             DatabaseWriteLane.RunAsync(conn, token =>
             {
                 token.ThrowIfCancellationRequested();
                 using var tx = conn.BeginTransaction();
+
+                if (keepOtherIdentification)
+                {
+                    var other = conn.ExecuteScalar<long>(
+                        "SELECT COUNT(*) FROM series WHERE id = @id AND tmdb_id IS NOT NULL AND tmdb_id <> @tmdb",
+                        new { id = seriesId, tmdb = description.TmdbId }, tx);
+                    if (other > 0) return Task.FromResult(false);
+                }
 
                 conn.Execute(@"
 UPDATE episodes
@@ -246,7 +271,7 @@ WHERE series_id = @id
 
                 var poster = description.PosterPath is null ? "" : "poster_path = @poster,";
 
-                conn.Execute($@"
+                var written = conn.Execute($@"
 UPDATE series
 SET tmdb_id = @tmdb, {poster}
     genres = CASE WHEN genres IS NULL OR trim(genres, ' ' || char(9) || char(10) || char(13)) = ''
@@ -270,7 +295,7 @@ WHERE id = @id",
                     }, tx);
 
                 tx.Commit();
-                return Task.CompletedTask;
+                return Task.FromResult(written > 0);
             }, ct);
 
         /// <summary>

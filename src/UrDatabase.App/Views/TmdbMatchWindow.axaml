@@ -9,7 +9,8 @@
     <Grid Margin="20"
           RowDefinitions="Auto,Auto,*,Auto,Auto">
 
-        <TextBlock Grid.Row="0"
+        <TextBlock x:Name="ExplanationText"
+                   Grid.Row="0"
                    Foreground="#9E9E9E"
                    FontSize="12"
                    TextWrapping="Wrap"
@@ -98,7 +99,8 @@
                     Click="Cancel_Click"/>
             <Button x:Name="ChooseButton"
                     Content="Use this film"
-                    Width="140"
+                    MinWidth="140"
+                    Padding="16,5"
                     HorizontalContentAlignment="Center"
                     Background="#0A84FF"
                     Foreground="White"

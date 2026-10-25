@@ -209,11 +209,27 @@ It runs on Windows and macOS from one codebase, built with
   opens with *Serenity*, TMDB's aired order with *The Train Job* — so a file
   that names its episode keeps that name, and TMDB's description is used only
   when the two names agree or the file names nothing. Specials (season 0, which
-  TMDB numbers as it pleases) are never asked about. The
-  programme keeps the name the scan gave it, because that name is what the next
-  scan files its episodes under. With no key, nothing is asked and the programme
+  TMDB numbers as it pleases) are never asked about. The background pass never
+  renames a programme, because the name the scan gave it is what the next scan
+  files its episodes under. With no key, nothing is asked and the programme
   reads exactly as the scan left it (`Services/LocalSeriesLookup`,
   `Services/TelevisionGenres`, `Services/LocalSeriesPage`).
+- **Wrong series? chooses a programme's match by hand.** A programme on this
+  computer has a **Wrong series?** button beside **Refresh**. It opens the same
+  picker as **Wrong film?**, searching TMDB's television catalogue unfiltered
+  and starting from the programme's name and year. Pick a result and the
+  programme takes that one's name, poster, genres, plot, cast and IMDb id, all
+  replacing whatever was there, and its episode names are dropped and fetched
+  again for the programme you picked. It is the way to fix a match the
+  background pass got wrong, and the only way to identify one it refused, such
+  as *The Office* with no year to say which. The name the scan gave the
+  programme is kept, so the next scan still files its episodes under the same
+  card, and nothing a scan or the background pass does undoes your choice. If
+  TMDB fails to answer after you pick, or you leave the page before it has, your
+  choice is still saved, the library card moves to it straight away, and the
+  description arrives on the next launch. A server programme has no **Wrong
+  series?**: the server describes it (`Services/SeriesMatchCorrection`,
+  `Services/TmdbMatchWording`, `Views/TmdbMatchWindow`).
 - **What the copy actually is, beside the year and the runtime.** A row of small
   badges says how big the picture is — `4K`, `2K`, `1080p`, `720p`, `SD` — along
   with its dynamic range, video codec, audio track, size on disk, and the
@@ -1485,15 +1501,27 @@ What TMDB says about a local programme lives on the same rows. `series.tmdb_id`
 is the identification, and `tmdb_fetched_at` is when its description —
 `overview`, `backdrop_path`, `rating`, `imdb_id`, `cast_list`, `crew_list`, and
 `genres` and `poster_path` when they were empty — was last written; null means
-it is still to be asked for. `series.title` is never rewritten, because it is the
-identity a re-scan files episodes against. Each episode keeps TMDB's
+it is still to be asked for. The background pass never rewrites `series.title`,
+because it is the identity a re-scan files episodes against. **Wrong series?**
+does — to TMDB's name for the programme you picked — and keeps the scan's name
+in `series.scan_title` the first time it does, as a corrected film keeps its
+`movies.scan_title`. `EpisodeCatalogue` registers every programme under
+`COALESCE(scan_title, title)` first and only then adds the chosen names as
+aliases, so a renamed programme neither forks on the next scan nor takes another
+programme's files. A correction replaces the genres and the poster rather than
+filling them in, caches the poster as `series-{id}-{tmdbId}.jpg` so the old
+programme's `series-{id}.jpg` cannot come back, and writes the identification
+before asking TMDB for the description, so a failed request keeps the choice.
+The background pass refuses to write over a programme that was chosen by hand
+while its own lookup was in flight. Each episode keeps TMDB's
 `tmdb_title`, `overview`, `runtime_minutes`, `air_date` and `still_path` beside
 the `title` its filename gave it — written only when TMDB's name for that number
 agrees with the file's own title, or the file has none, and never for season 0 —
 and `tmdb_fetched_at` is set on every episode
 of a season that was asked about, so a season TMDB numbers differently is not
 asked about on every open. Changing a programme's `tmdb_id` clears its episodes'
-TMDB columns in the same transaction, since they describe the old programme.
+TMDB columns in the same transaction, since they describe the old programme;
+**Wrong series?** clears them even when the same programme is picked again.
 
 `IF NOT EXISTS` covers a whole new table and does nothing at all for a new
 column on a table that already exists, so `Database.Migrate` runs straight after
@@ -1905,18 +1933,19 @@ Stated plainly, so nobody has to find out by using it:
   is what fixes that by hand. Nor does such a card offer the stream as a
   fallback: it plays the file on this disk, and says the server has it rather
   than doing anything with that.
-- **A programme on this computer TMDB will not confirm stays named by its
-  files.** Local programmes are identified against TMDB's television catalogue
+- **A programme on this computer TMDB will not confirm waits for you to choose
+  it.** Local programmes are identified against TMDB's television catalogue
   by the film rules, and one it refuses — two programmes of one name and no year
   to tell them apart, a name spelt too differently — keeps no poster, no plot and
   no genres, so it sits in **Uncategorised** with its episodes called what their
-  filenames call them. There is no **Wrong series?** to choose its match by hand
-  yet, and no way to correct a match the app got wrong. Where TMDB numbers a
+  filenames call them until somebody picks its match with **Wrong series?**.
+  Nothing tells you which programmes were refused other than their missing
+  posters. Where TMDB numbers a
   programme differently from the files (absolute or DVD order), an episode whose
   file names it keeps that name and gets no TMDB plot or length; an episode whose
   file names nothing takes TMDB's description of its number, which may then be
   the wrong episode's. Specials are never described from TMDB. Without a TMDB key
-  nothing is looked up at all.
+  nothing is looked up at all, and **Wrong series?** says it needs one.
   The parser declines what it cannot read with confidence: absolute numbering
   (`Show - 137.mkv`, ordinary for anime), date-named daily shows and three-digit
   `102` numbering all stay films, and so does a `1x02` pair written after a year
@@ -1931,8 +1960,8 @@ Stated plainly, so nobody has to find out by using it:
   episode, or for a season. Episodes stream or they do not play.
 - **A server programme is described only by the server.** TMDB describes
   programmes found on this computer, but a programme on a Jellyfin server is
-  never sent to it, and there is no **Wrong series?** for either kind, so a
-  programme the server has not identified stays undescribed.
+  never sent to it, and **Wrong series?** is offered only for a local programme,
+  so a programme the server has not identified stays undescribed.
 - **Track metadata is only as good as the tags inside the file.** Offline files
   are now measured, but ffprobe does not recognise spoken language by listening:
   an untagged track is **UND**. Embedded subtitle tracks are read; external

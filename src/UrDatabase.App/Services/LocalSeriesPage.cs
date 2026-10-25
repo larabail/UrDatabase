@@ -81,5 +81,51 @@ namespace UrDatabase.Services
             vm.IsIdentified ? "TMDB lists no cast for this programme."
             : vm.TmdbConfigured ? "Not known until TMDB has confirmed which programme this is."
             : "Not known yet for a programme found on this computer.";
+
+        /// <summary>
+        /// Whether the screen offers <b>Wrong series?</b>. Only on a programme on this disk: a
+        /// server programme is described by the server, and the catalogue has nothing of it to
+        /// correct. Offered without a key too, where the picker says what it needs rather than the
+        /// button silently not being there.
+        /// </summary>
+        public static bool CanCorrect(SeriesDetailsVm vm) => vm.IsLocal;
+
+        /// <summary>
+        /// The screen's model once a person has chosen the programme by hand. Everything the
+        /// card supplied that the correction changed — the title, the genres, the poster — comes
+        /// from the catalogue now, because the card was built before the correction and is wrong
+        /// about all three. The counts are the files', which no correction touches.
+        /// </summary>
+        public static SeriesDetailsVm Corrected(SeriesDetailsVm previous, LocalSeriesDetails details)
+        {
+            var vm = new SeriesDetailsVm
+            {
+                LocalId = previous.LocalId,
+                Title = details.Title,
+                Year = details.Year ?? previous.Year,
+                Genres = details.Genres ?? "",
+                PosterPath = PosterAutoLoader.HasArtwork(details.PosterPath) ? details.PosterPath : null,
+                SeasonCount = previous.SeasonCount,
+                EpisodeCount = previous.EpisodeCount,
+                TmdbConfigured = previous.TmdbConfigured
+            };
+
+            if (!details.Described) return vm;
+
+            vm.TmdbId = details.TmdbId;
+            vm.Overview = details.Overview ?? "";
+            vm.ImdbId = details.ImdbId;
+            vm.BackdropUrl = LocalSeriesLookup.BackdropUrl(details.BackdropPath);
+            vm.TopCast = details.Cast.ToList();
+            vm.KeyCrew = details.Crew.ToList();
+
+            return vm;
+        }
+
+        /// <summary>What the screen says once a correction has been saved.</summary>
+        public static string CorrectionNote(SeriesCorrection correction) =>
+            correction.Described
+                ? "Programme changed. Episode names will be fetched for it now."
+                : "Programme changed, but TMDB did not return its description. It will be filled in the next time UrDatabase starts.";
     }
 }

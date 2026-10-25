@@ -78,10 +78,18 @@ CREATE INDEX IF NOT EXISTS ix_files_movie ON files(movie_id);
 --
 -- tmdb_id is which TMDB programme it is, written by the background pass once the match is
 -- confirmed (see LocalSeriesLookup). tmdb_fetched_at is when that programme's description was
--- last written here, and NULL means it still has to be asked for — which is also how a corrected
--- identification asks again: set tmdb_id, clear tmdb_fetched_at. backdrop_path is TMDB's own
+-- last written here, and NULL means it still has to be asked for. A corrected identification
+-- must never be written by setting tmdb_id alone: the episodes' tmdb_* columns describe the old
+-- programme and are marked fetched, so they have to be cleared in the same transaction as the id
+-- changes — LocalSeriesLookup.SaveDescriptionAsync and SeriesMatchCorrection.RecordAsync both do.
+-- backdrop_path is TMDB's own
 -- relative path, sized when it is shown; rating is TMDB's average out of ten; cast_list and
 -- crew_list are newline separated lines, as on movies.
+--
+-- scan_title is the name the scan gave the programme, kept once somebody has chosen its match by
+-- hand with Wrong series? and title has taken TMDB's name. NULL until then. The next scan resolves
+-- episodes by it, exactly as movies.scan_title does for a film, so the renamed programme does not
+-- grow a duplicate (see EpisodeCatalogue.LoadAsync).
 CREATE TABLE IF NOT EXISTS series (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     title           TEXT    NOT NULL,
@@ -96,7 +104,8 @@ CREATE TABLE IF NOT EXISTS series (
     imdb_id         TEXT,
     cast_list       TEXT,
     crew_list       TEXT,
-    tmdb_fetched_at TEXT
+    tmdb_fetched_at TEXT,
+    scan_title      TEXT
 );
 
 -- One episode of a local programme. Files hang off it through files.episode_id, so two prints
