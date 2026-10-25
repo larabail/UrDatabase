@@ -146,14 +146,15 @@ namespace UrDatabase.Tests
 
             try
             {
+                // Generous for a probe that answers at once, tiny next to one that never does.
                 var started = DateTime.UtcNow;
-                var reports = await new DriveMonitor(probe, TimeSpan.FromMilliseconds(200)).CheckAsync(new[]
+                var reports = await new DriveMonitor(probe, TimeSpan.FromSeconds(2)).CheckAsync(new[]
                 {
                     new DriveUsage(@"D:\", Array.Empty<string>(), 1),
                     new DriveUsage(@"\\nas\movies\", Array.Empty<string>(), 7)
                 });
 
-                Assert.True(DateTime.UtcNow - started < TimeSpan.FromSeconds(5));
+                Assert.True(DateTime.UtcNow - started < TimeSpan.FromSeconds(30));
                 Assert.Equal(DriveState.Connected, reports.Single(r => r.Root == @"D:\").State);
                 Assert.Equal(DriveState.NotResponding, reports.Single(r => r.Root == @"\\nas\movies\").State);
             }

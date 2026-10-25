@@ -35,7 +35,7 @@ namespace UrDatabase.Services
         }
 
         /// <summary>
-        /// Probes every drive at once, each on the thread pool and each with its own time limit,
+        /// Probes every drive at once, each on a thread of its own and each with its own time limit,
         /// so one dead share cannot hold up the verdict on the others. Never throws except to
         /// report cancellation.
         /// </summary>
@@ -94,11 +94,14 @@ namespace UrDatabase.Services
 
         private async Task<DriveReport> CheckOneAsync(DriveUsage drive, CancellationToken ct)
         {
-            var probe = Task.Run(() =>
+            // A thread of its own rather than the pool: the time limit starts now, so a probe
+            // still queued behind other work would be called unresponsive before it had asked,
+            // and one that hangs on a dead share would otherwise hold a pool thread indefinitely.
+            var probe = Task.Factory.StartNew(() =>
             {
                 try { return _probe.Probe(drive.Root); }
                 catch { return DriveProbeResult.Unavailable; }
-            });
+            }, CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
 
             var finished = await Task.WhenAny(probe, Task.Delay(_timeout, ct)).ConfigureAwait(false);
 
