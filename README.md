@@ -1329,12 +1329,32 @@ button, and the films appear.
 
 Filenames come in every shape, so the parser copes with the common ones:
 `The Matrix (1999) 1080p.mkv`, `the.matrix.1999.BluRay.x264-GROUP.mkv`,
-`The Matrix [1999].mp4`, underscores, junk brackets, and both Windows and macOS
-paths. It strips resolution, source, codec, audio and release group from the end
-of a name, keeps the hyphen inside a real title like `Spider-Man`, and prefers a
-bracketed year over a bare one so `Blade Runner 2049 (2017)` resolves to the
-right film and year. One casualty of splitting dotted names: genuine full stops
-go with them, so `S.W.A.T.` arrives as `S W A T`.
+`The Matrix [1999].mp4`, `Origen.MicroHD.1080p.DUAL.Castellano.mkv`,
+`www.site.com - Film.avi`, underscores, junk brackets, and both Windows and
+macOS paths. A title ends at the first token that can only describe a release —
+a resolution, codec, source such as `BDRip` or `MicroHD`, `HDR`, an audio
+format, or a release-language tag such as `Castellano` or `VOSE` — and
+everything after it goes, recognised or not. Words that are noise at the end but
+can be part of a title (`Web`, `4K`, `Extended`) are only stripped from the
+end, never down to a lone article, which is why `The Web 1080p` survives and
+`Charlotte's Web` does not. Ordinary words such as `Rip`, `Audio` and `Sub`, and
+language names such as `Spanish` or `Latino`, need more: they go only next to
+another tag (`Dual Audio`, `BD Rip`, `Coco SPANISH 1080p`) and never after an
+article, so `The Rip` and `Pump Up the Audio` keep their names. A site stamp is
+`www.` plus one name and a domain (`www.site.com`, `www.site.com.es`), so
+`www.site.com.Back.to.the.Future` loses only the site. The parser keeps the
+hyphen inside a real title like `Spider-Man`, and prefers a bracketed year over
+a bare one so `Blade Runner 2049 (2017)` resolves to the right film and year.
+One casualty of splitting dotted names: genuine full stops go with them, so
+`S.W.A.T.` arrives as `S W A T`.
+
+A library scanned by an older build may hold rows still named with that noise
+(`Origen MicroHD`). The next scan cleans such a row's title in place, as long as
+TMDB has not identified it yet and the old title holds an unambiguous release
+tag, and keeps the old title in `scan_title` the way a corrected match does. It
+does not catalogue the film a second time under its clean name; the TMDB lookup
+also retries with the cleaned title, so those rows can be matched even before a
+rescan.
 
 Each file the scan records gets `files.movie_id` pointing at the film it belongs
 to, and that column is the only thing Play consults. It matters that it is not
