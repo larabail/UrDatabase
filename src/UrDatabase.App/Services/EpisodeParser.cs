@@ -30,9 +30,11 @@ namespace UrDatabase.Services
     /// What it recognises, and nothing else:
     /// <list type="bullet">
     ///   <item><description><c>S01E02</c>, in any case, with or without separators between the two halves.</description></item>
-    ///   <item><description><c>1x02</c>.</description></item>
-    ///   <item><description>A <c>Season 01</c>, <c>S01</c> or <c>Specials</c> directory, which supplies a
-    ///   season to a file that carries only an episode number.</description></item>
+    ///   <item><description><c>1x02</c>, with a season of at most two digits, and not behind a release
+    ///   year or tag — <c>640x480</c> and <c>Film.2003.DVDRip.10x20</c> are films.</description></item>
+    ///   <item><description>A <c>Season 01</c>, <c>S01</c> or <c>Specials</c> directory that a file sits
+    ///   directly in, which supplies a season to a file that opens with an episode number set off
+    ///   by a separator — <c>02 - Title</c>, not <c>12 Angry Men</c>.</description></item>
     /// </list>
     /// </para>
     /// <para>
@@ -75,13 +77,29 @@ namespace UrDatabase.Services
             RegexOptions.Compiled);
 
         /// <summary>
-        /// <c>1x02</c>. The episode needs at least two digits, which is the guard that keeps this
-        /// away from a resolution: <c>1920x1080</c> cannot match, because a season is at most
-        /// three digits and the lookbehind refuses to start part way into <c>1920</c>.
+        /// <c>1x02</c>. The season is at most two digits and the episode at least two, which is the
+        /// guard that keeps this away from a frame size: <c>1920x1080</c>, <c>640x480</c> and
+        /// <c>720x576</c> cannot match, because the lookbehind refuses to start part way into a
+        /// longer number and no programme has run to a hundred seasons.
         /// </summary>
         private static readonly Regex CrossNumbered = new(
-            @"(?<![A-Za-z0-9])(?<season>\d{1,3})[Xx](?<episode>\d{2,3})(?![0-9])",
+            @"(?<![A-Za-z0-9])(?<season>\d{1,2})[Xx](?<episode>\d{2,3})(?![0-9])",
             RegexOptions.Compiled);
+
+        /// <summary>
+        /// A plausible release year standing on its own. A cross-numbered pair behind one belongs
+        /// to a film's release noise — <c>Movie.Name.2003.10x20</c> — rather than to a programme.
+        /// </summary>
+        private static readonly Regex ReleaseYear = new(
+            @"(?<![0-9])(?:19|20)\d{2}(?![0-9])", RegexOptions.Compiled);
+
+        /// <summary>
+        /// What may follow a bare leading episode number: nothing at all, or a separator that sets
+        /// it off from a title — <c>02 - Title</c>, <c>02. Title</c>, <c>02_Title</c>. A number
+        /// that runs straight into words is a film's title: <c>12 Angry Men</c>, <c>300 (2006)</c>.
+        /// </summary>
+        private static readonly Regex EpisodeNumberSeparator = new(
+            @"^(?:\s*$|\s*[-–—._])", RegexOptions.Compiled);
 
         /// <summary>A <c>Season 01</c>, <c>Season.1</c> or <c>S01</c> directory.</summary>
         private static readonly Regex SeasonDirectory = new(
@@ -140,17 +158,23 @@ namespace UrDatabase.Services
             // The filename's own marker first: it is the only source that states both numbers, and
             // a file that disagrees with the directory it sits in is likelier to be filed wrongly
             // than named wrongly.
-            if (TryMarker(stem, out var seasonNumber, out var episodeNumber, out var before, out var after))
-                return Build(before, after, directories, seasonNumber, episodeNumber, out episode);
+            if (TryMarker(stem, out var seasonNumber, out var episodeNumber, out var before, out var after, out var crossNumbered))
+                return Build(before, after, directories, seasonNumber, episodeNumber, crossNumbered, out episode);
 
-            // Otherwise the season has to come from a directory, and the file has to open with the
-            // episode number. Both halves are required: without the directory there is no season,
-            // and without the leading number there is nothing to say the file is an episode at all.
-            var seasonFromDirectory = SeasonFromDirectory(directories, out var seasonDepth);
+            // Otherwise the season has to come from the folder the file is in, and the file has
+            // to open with the episode number set off from anything after it. All three are
+            // required: without the folder there is no season, without the number nothing says
+            // the file is an episode, and a number that runs into words — "12 Angry Men" — is a
+            // film's title. Only the immediate folder counts: a season folder further up names
+            // that season, not every file somebody has nested beneath it.
+            if (directories.Count == 0) return false;
+
+            var seasonFromDirectory = SeasonOf(directories[^1]);
             if (seasonFromDirectory is null) return false;
 
             var leading = LeadingEpisodeNumber.Match(stem);
             if (!leading.Success) return false;
+            if (!EpisodeNumberSeparator.IsMatch(leading.Groups["rest"].Value)) return false;
             if (!TryNumber(leading.Groups["episode"].Value, out var bareEpisode)) return false;
 
             // The programme is named above the season directory, never in a file that opens with a
@@ -159,9 +183,10 @@ namespace UrDatabase.Services
             return Build(
                 "",
                 leading.Groups["rest"].Value,
-                directories.GetRange(0, seasonDepth),
+                directories.GetRange(0, directories.Count - 1),
                 seasonFromDirectory,
                 bareEpisode,
+                inferred: true,
                 out episode);
         }
 
@@ -208,16 +233,33 @@ namespace UrDatabase.Services
         /// "60x60" is not a real show, but "Cell 211" and "9x9" style titles are close enough to
         /// the shape that taking the first match would occasionally read the title as the marker.
         /// The real marker is almost always the rightmost, because the programme comes first.
+        ///
+        /// A cross-numbered pair is weaker evidence than <c>S01E02</c>, and is refused behind a
+        /// release year or a release tag: in <c>Movie.Name.2003.DVDRip.10x20</c> everything after
+        /// the year is the film's noise. The price is that a programme named with its year has to
+        /// be written <c>Doctor Who (2005) S01E01</c> to be read.
         /// </remarks>
-        private static bool TryMarker(string stem, out int season, out int episode, out string before, out string after)
+        private static bool TryMarker(
+            string stem, out int season, out int episode, out string before, out string after, out bool crossNumbered)
         {
             season = 0;
             episode = 0;
             before = "";
             after = "";
+            crossNumbered = false;
 
-            var match = LastMatch(SeasonEpisode, stem) ?? LastMatch(CrossNumbered, stem);
-            if (match is null) return false;
+            var match = LastMatch(SeasonEpisode, stem);
+            if (match is null)
+            {
+                match = LastMatch(CrossNumbered, stem);
+                if (match is null) return false;
+
+                var front = stem[..match.Index];
+                if (ReleaseYear.IsMatch(front) || FilenameParser.CarriesReleaseTag(front.Replace('.', ' ')))
+                    return false;
+
+                crossNumbered = true;
+            }
 
             if (!TryNumber(match.Groups["season"].Value, out season)) return false;
             if (!TryNumber(match.Groups["episode"].Value, out episode)) return false;
@@ -234,37 +276,19 @@ namespace UrDatabase.Services
             return found;
         }
 
-        /// <summary>
-        /// The season a directory names, searched from the file upwards, along with how far up it
-        /// was found so the caller knows which directories are above it.
-        /// </summary>
-        private static int? SeasonFromDirectory(List<string> directories, out int depth)
+        /// <summary>The season one directory names, or null when it names none.</summary>
+        private static int? SeasonOf(string segment)
         {
-            for (var i = directories.Count - 1; i >= 0; i--)
-            {
-                var segment = directories[i];
+            if (SpecialsDirectory.IsMatch(segment)) return SeriesGrouping.SpecialsSeasonNumber;
 
-                if (SpecialsDirectory.IsMatch(segment))
-                {
-                    depth = i;
-                    return SeriesGrouping.SpecialsSeasonNumber;
-                }
+            var match = SeasonDirectory.Match(segment);
+            if (!match.Success) return null;
 
-                var match = SeasonDirectory.Match(segment);
-                if (!match.Success) continue;
+            var digits = match.Groups["number"].Success
+                ? match.Groups["number"].Value
+                : match.Groups["short"].Value;
 
-                var digits = match.Groups["number"].Success
-                    ? match.Groups["number"].Value
-                    : match.Groups["short"].Value;
-
-                if (!TryNumber(digits, out var season)) continue;
-
-                depth = i;
-                return season;
-            }
-
-            depth = directories.Count;
-            return null;
+            return TryNumber(digits, out var season) ? season : null;
         }
 
         /// <summary>
@@ -298,6 +322,7 @@ namespace UrDatabase.Services
             List<string> directoriesAboveSeason,
             int? season,
             int episode,
+            bool inferred,
             out ParsedEpisode parsed)
         {
             parsed = default!;
@@ -325,7 +350,8 @@ namespace UrDatabase.Services
                 series.Year,
                 season,
                 episode,
-                EpisodeTitle(afterMarker));
+                EpisodeTitle(afterMarker),
+                inferred);
 
             return true;
         }

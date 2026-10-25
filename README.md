@@ -178,11 +178,16 @@ It runs on Windows and macOS from one codebase, built with
   one programme by the same rules that make them one film, and a folder named
   `Fargo (2014)` supplies the year. A library scanned before this existed is put
   right by its next scan: every episode it had catalogued as a film is re-filed
-  under its programme, and the film row it leaves empty is removed — your ratings
-  and watch log are kept separately and are not touched. A file you linked to a
-  film by hand stays that film. Anything the parser cannot read with confidence —
-  anime's absolute numbering, a daily show's dates — is still catalogued as a
-  film rather than guessed at (`Services/EpisodeParser`, `Services/ScanService`,
+  under its programme, and the film row it leaves empty is removed — unless you
+  rated it, logged a viewing, reported a problem with it or put it on the
+  Watchlist, or (when the episode was only inferred from a `1x02` pair or a
+  season folder) it had been identified. A file you linked to a film by hand
+  stays that film, even after it moves, and an episode stays that episode when
+  its season folder is flattened. Anything the parser cannot read with
+  confidence — anime's absolute numbering, a daily show's dates, a `640x480`
+  frame size, a `1x02` pair behind a release year, a film whose title opens with
+  a number — is still catalogued as a film rather than guessed at
+  (`Services/EpisodeParser`, `Services/ScanService`,
   `Services/EpisodeCatalogue`, `Services/LocalSeriesLoader`).
 - **What the copy actually is, beside the year and the runtime.** A row of small
   badges says how big the picture is — `4K`, `2K`, `1080p`, `720p`, `SD` — along
@@ -1868,7 +1873,10 @@ Stated plainly, so nobody has to find out by using it:
   their filenames call them. There is no **Wrong film?** for a series either.
   The parser declines what it cannot read with confidence: absolute numbering
   (`Show - 137.mkv`, ordinary for anime), date-named daily shows and three-digit
-  `102` numbering all stay films. A file holding two episodes (`S01E02E03`) is
+  `102` numbering all stay films, and so does a `1x02` pair written after a year
+  (`Doctor Who (2005) 1x01.mkv` has to be `S01E01` to be read) or a numbered file
+  in a season folder whose number runs straight into its title. A file holding
+  two episodes (`S01E02E03`) is
   filed as the first of them. A programme that is both here and on the server is
   two cards. A local programme cannot go on the Watchlist yet, and an episode
   played from this disk is not logged anywhere — a local film is not either.

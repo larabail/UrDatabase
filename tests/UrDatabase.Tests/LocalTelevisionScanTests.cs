@@ -263,6 +263,126 @@ namespace UrDatabase.Tests
             return await new ScanService().ScanAsync(conn, new[] { _media });
         }
 
+        // ------------------------------------------------- files that moved
+
+        /// <summary>
+        /// A hand-linked film that moves to a path that reads as an episode is the same file the
+        /// person linked: it stays their film, and the film row is not deleted under it.
+        /// </summary>
+        [Fact]
+        public async Task A_hand_linked_film_that_moves_stays_the_film_it_was_linked_to()
+        {
+            var original = Write("Films", "Fargo.S01E01.mkv");
+            long film;
+            using (var conn = Database.Open(_dbPath))
+            {
+                film = conn.ExecuteScalar<long>("INSERT INTO movies (title, year) VALUES ('Fargo', 1996) RETURNING id");
+                PlayTargetResolver.LinkFile(conn, film, original);
+            }
+            await ScanAsync();
+
+            var moved = Path.Combine(_media, "Elsewhere", "Fargo.S01E01.mkv");
+            Directory.CreateDirectory(Path.GetDirectoryName(moved)!);
+            File.Move(original, moved);
+
+            var result = await ScanAsync();
+
+            using var read = Database.Open(_dbPath);
+            Assert.Equal(1, result.Moved);
+            Assert.Equal(1, read.ExecuteScalar<long>("SELECT COUNT(*) FROM movies WHERE id = @film", new { film }));
+            var row = read.QuerySingle<(long? MovieId, long? EpisodeId, long ByHand)>(
+                "SELECT movie_id, episode_id, linked_by_hand FROM files WHERE file_path = @p", new { p = moved });
+            Assert.Equal(film, row.MovieId);
+            Assert.Null(row.EpisodeId);
+            Assert.Equal(1, row.ByHand);
+            Assert.Equal(0, read.ExecuteScalar<long>("SELECT COUNT(*) FROM series"));
+        }
+
+        /// <summary>
+        /// An episode moved somewhere it no longer reads as one — its season folder flattened —
+        /// is still that episode, and must not also become a film.
+        /// </summary>
+        [Fact]
+        public async Task An_episode_that_moves_out_of_its_season_folder_stays_only_an_episode()
+        {
+            var original = Write("Show", "Season 01", "02 - Title.mkv");
+            await ScanAsync();
+
+            var moved = Path.Combine(_media, "Show", "02 - Title.mkv");
+            File.Move(original, moved);
+
+            var result = await ScanAsync();
+
+            using var read = Database.Open(_dbPath);
+            Assert.Equal(1, result.Moved);
+            Assert.Equal(0, read.ExecuteScalar<long>("SELECT COUNT(*) FROM movies"));
+            var row = read.QuerySingle<(long? MovieId, long? EpisodeId)>(
+                "SELECT movie_id, episode_id FROM files WHERE file_path = @p", new { p = moved });
+            Assert.Null(row.MovieId);
+            Assert.NotNull(row.EpisodeId);
+        }
+
+        // ------------------------------------------------- film rows worth keeping
+
+        /// <summary>
+        /// A season-folder episode is an inference, not a name. When the film row it was filed
+        /// under has been identified, the file is re-filed and the row — its TMDB match, its
+        /// poster — is kept rather than deleted on the strength of a guess.
+        /// </summary>
+        [Fact]
+        public async Task An_inferred_episode_does_not_delete_an_identified_film_row()
+        {
+            var path = Write("Show", "Season 01", "02 - Title.mkv");
+            SeedOldCatalogue(("Show", path));
+            using (var conn = Database.Open(_dbPath))
+                conn.Execute("UPDATE movies SET tmdb_id = 42, poster_path = '/p.jpg' WHERE id = 1");
+
+            await ScanAsync();
+
+            using var read = Database.Open(_dbPath);
+            Assert.Equal(1, read.ExecuteScalar<long>("SELECT COUNT(*) FROM movies WHERE id = 1 AND tmdb_id = 42"));
+            Assert.Equal(1, read.ExecuteScalar<long>(
+                "SELECT COUNT(*) FROM files WHERE file_path = @p AND movie_id IS NULL AND episode_id IS NOT NULL", new { p = path }));
+        }
+
+        /// <summary>
+        /// Whatever the evidence, a film row a person has written something against is kept:
+        /// a rating, a viewing, a reported problem or a place on the watchlist.
+        /// </summary>
+        [Theory]
+        [InlineData("INSERT INTO film_ratings (film_key, title, rating, updated_at) VALUES ('title:show s01e01|', 'Show S01E01', 7, '2026-01-01')")]
+        [InlineData("INSERT INTO film_viewings (film_key, title, watched_on, created_at) VALUES ('title:show s01e01|', 'Show S01E01', '2026-01-01', '2026-01-01')")]
+        [InlineData("INSERT INTO watchlist (item_key, added_at) VALUES ('local:1', '2026-01-01')")]
+        [InlineData("INSERT INTO film_problems (film_key, problems, flagged_at) VALUES ('local:1', 'audio', '2026-01-01')")]
+        public async Task A_film_row_with_something_a_person_wrote_is_kept(string userData)
+        {
+            var path = Write("Show", "Show.S01E01.mkv");
+            SeedOldCatalogue(("Show S01E01", path));
+            using (var conn = Database.Open(_dbPath)) conn.Execute(userData);
+
+            await ScanAsync();
+
+            using var read = Database.Open(_dbPath);
+            Assert.Equal(1, read.ExecuteScalar<long>("SELECT COUNT(*) FROM movies WHERE id = 1"));
+            Assert.Equal(1, read.ExecuteScalar<long>(
+                "SELECT COUNT(*) FROM files WHERE file_path = @p AND episode_id IS NOT NULL", new { p = path }));
+        }
+
+        [Fact]
+        public async Task An_existing_dvdrip_film_with_a_frame_size_stays_a_film()
+        {
+            var path = Write("Films", "Movie.Name.2003.DVDRip.XviD.640x272.avi");
+            SeedOldCatalogue(("Movie Name", path));
+
+            await ScanAsync();
+
+            using var read = Database.Open(_dbPath);
+            Assert.Equal(1, read.ExecuteScalar<long>("SELECT COUNT(*) FROM movies WHERE id = 1"));
+            Assert.Equal(0, read.ExecuteScalar<long>("SELECT COUNT(*) FROM series"));
+            Assert.Equal(1, read.ExecuteScalar<long>(
+                "SELECT COUNT(*) FROM files WHERE file_path = @p AND movie_id = 1 AND episode_id IS NULL", new { p = path }));
+        }
+
         private string Write(params string[] parts)
         {
             var path = Path.Combine(new[] { _media }.Concat(parts).ToArray());

@@ -17,11 +17,17 @@ namespace UrDatabase.Models
     /// recognised yet, has no season at all, and a field that has to widen later is worse than one
     /// that was honest from the start. <see cref="Services.SeriesGrouping"/> already files a
     /// season-less episode under "Episodes", so nothing downstream has to change when it does.
+    ///
+    /// <see cref="IsInferred"/> says how strong the evidence was. An explicit <c>S01E02</c> names
+    /// the episode outright; a <c>1x02</c> pair or a bare number inside a season folder is read
+    /// from a shape that films sometimes share, and the scan treats what it would destroy on the
+    /// strength of that shape more carefully.
     /// </remarks>
     public sealed record ParsedEpisode(
         string SeriesTitle,
         int? SeriesYear,
         int? SeasonNumber,
         int EpisodeNumber,
-        string EpisodeTitle);
+        string EpisodeTitle,
+        bool IsInferred = false);
 }
