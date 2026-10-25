@@ -225,6 +225,10 @@ namespace UrDatabase.Services
             AddColumnIfMissing(conn, "series", "crew_list", "TEXT");
             AddColumnIfMissing(conn, "series", "tmdb_fetched_at", "TEXT");
 
+            // The scan's name for a programme somebody renamed with Wrong series?. Null on every
+            // existing row, which is right: nothing could rename a programme before this column.
+            AddColumnIfMissing(conn, "series", "scan_title", "TEXT");
+
             AddColumnIfMissing(conn, "episodes", "tmdb_title", "TEXT");
             AddColumnIfMissing(conn, "episodes", "overview", "TEXT");
             AddColumnIfMissing(conn, "episodes", "runtime_minutes", "INTEGER");
@@ -355,7 +359,8 @@ CREATE TABLE IF NOT EXISTS series (
     imdb_id         TEXT,
     cast_list       TEXT,
     crew_list       TEXT,
-    tmdb_fetched_at TEXT
+    tmdb_fetched_at TEXT,
+    scan_title      TEXT
 );
 CREATE TABLE IF NOT EXISTS episodes (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,

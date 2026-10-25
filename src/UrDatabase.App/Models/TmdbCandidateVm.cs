@@ -6,9 +6,11 @@ using UrDatabase.Services;
 namespace UrDatabase.Models
 {
     /// <summary>
-    /// One row in the "Wrong film?" picker: a TMDB result as a person needs to see it in order to
-    /// recognise it. The poster does most of the work, so the row carries a bitmap that is filled
-    /// in once it has been fetched rather than blocking the list on the network.
+    /// One row in the "Wrong film?" and "Wrong series?" picker: a TMDB result as a person needs to
+    /// see it in order to recognise it. A programme arrives as the same candidate a film does —
+    /// TMDB's television search is read into it name for title and first air date for release —
+    /// so one row serves both. The poster does most of the work, so the row carries a bitmap that
+    /// is filled in once it has been fetched rather than blocking the list on the network.
     /// </summary>
     public sealed class TmdbCandidateVm : INotifyPropertyChanged
     {

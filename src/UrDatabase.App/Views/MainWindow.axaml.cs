@@ -2475,15 +2475,24 @@ namespace UrDatabase.Views
                     // Nothing to enrich without an IMDb id, which is every programme TMDB has not
                     // described — and then the screen opens exactly as it did before programmes
                     // could be looked up, with no "Loading details" over a lookup that will not run.
+                    // The rating lookup is still handed over: Wrong series? can give the programme
+                    // an IMDb id while the screen is open.
                     if (string.IsNullOrWhiteSpace(vm.ImdbId))
-                        await SeriesView.ShowAsync(vm, appLifetime: _cts.Token, localLoader: _localSeries);
+                        await SeriesView.ShowAsync(vm, appLifetime: _cts.Token, localLoader: _localSeries,
+                            loadRating: RetryMissingSeriesRatingAsync, config: _config);
                     else
                         await loading.ShowAsync(
                             () => SeriesView.ShowAsync(vm, appLifetime: _cts.Token, localLoader: _localSeries,
-                                loadRating: RetryMissingSeriesRatingAsync, cancelEnrichment: loading.Cancel),
+                                loadRating: RetryMissingSeriesRatingAsync, cancelEnrichment: loading.Cancel,
+                                config: _config),
                             load => load.RunAsync("IMDb rating",
                                 ct => LoadImdbRatingAsync(vm.ImdbId, null, ct),
                                 rating => SeriesView.UpdateRating(vm, rating)));
+
+                    // A corrected programme has a new name, poster and shelf that the card behind
+                    // this screen does not show yet.
+                    if (SeriesView.CorrectedSomething)
+                        await _searchLoop.RefreshAsync(SearchBox.Text);
                 }
                 finally
                 {

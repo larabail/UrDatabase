@@ -32,6 +32,12 @@ namespace UrDatabase.Tests
         public FakeHttpMessageHandler(Func<HttpRequestMessage, HttpResponseMessage> responder)
             => _responder = responder;
 
+        /// <summary>
+        /// What this handler would answer, without recording a request. For a handler that wraps
+        /// another to intercept one kind of request and pass the rest through.
+        /// </summary>
+        public HttpResponseMessage Respond(HttpRequestMessage request) => _responder(request);
+
         public static FakeHttpMessageHandler Json(string json, HttpStatusCode status = HttpStatusCode.OK)
             => new(_ => new HttpResponseMessage(status)
             {

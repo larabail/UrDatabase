@@ -87,7 +87,7 @@
         <DockPanel>
 
             <Border DockPanel.Dock="Top" Height="48" Padding="24,0">
-                <Grid ColumnDefinitions="Auto,16,*,16,Auto">
+                <Grid ColumnDefinitions="Auto,16,*,16,Auto,8,Auto">
                     <Button x:Name="BackButton"
                             Grid.Column="0"
                             Classes="ghost"
@@ -100,8 +100,19 @@
                             <TextBlock Text="Library"/>
                         </StackPanel>
                     </Button>
-                    <Button x:Name="RefreshButton"
+                    <!-- The way to say which TMDB programme this is, when the automatic match
+                         chose wrongly or would not choose at all. Only on a programme on this
+                         disk: a server programme is the server's to describe. -->
+                    <Button x:Name="CorrectMatchButton"
                             Grid.Column="4"
+                            Classes="ghost"
+                            Content="Wrong series?"
+                            VerticalAlignment="Center"
+                            IsVisible="False"
+                            Click="CorrectMatch_Click"
+                            ToolTip.Tip="Choose which TMDB programme this is"/>
+                    <Button x:Name="RefreshButton"
+                            Grid.Column="6"
                             Classes="ghost"
                             Content="Refresh"
                             MinWidth="96"

@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading.Tasks;
 using Dapper;
 using Microsoft.Data.Sqlite;
@@ -29,6 +30,12 @@ namespace UrDatabase.Services
 
         /// <summary>Registers a programme the catalogue already holds. Expected in id order.</summary>
         public void AddSeries(long id, string? title, int? year) => _series.Add(id, title, year);
+
+        /// <summary>
+        /// Files a programme the catalogue already holds under a second name — the one a person
+        /// gave it by choosing its TMDB match. See <see cref="MovieIndex.AddAlias"/>.
+        /// </summary>
+        public void AddSeriesAlias(long id, string? title, int? year) => _series.AddAlias(id, title, year);
 
         /// <summary>Registers an episode the catalogue already holds.</summary>
         public void AddEpisode(long id, long seriesId, int? season, int episode, bool hasTitle)
@@ -64,13 +71,25 @@ namespace UrDatabase.Services
         private static int SeasonKey(int? season) => season ?? -1;
 
         /// <summary>Reads both tables once. Cheap for a personal library; see the type remarks.</summary>
+        /// <remarks>
+        /// A programme is registered under the name the scan gave it, which is <c>scan_title</c>
+        /// once somebody has renamed it with Wrong series? and <c>title</c> until then: the files
+        /// still say what they always said, and resolving them against TMDB's spelling would fork
+        /// the programme on the next scan. TMDB's name is filed afterwards, as an alias, so a
+        /// folder later renamed to match it still lands on the same row — and so a renamed
+        /// programme can never take another programme's scan name away from it, whatever order
+        /// the two were catalogued in.
+        /// </remarks>
         public static async Task<EpisodeCatalogue> LoadAsync(SqliteConnection conn)
         {
             var catalogue = new EpisodeCatalogue();
 
-            var series = await conn.QueryAsync<SeriesRow>(
-                "SELECT id AS Id, title AS Title, year AS Year FROM series ORDER BY id");
-            foreach (var row in series) catalogue.AddSeries(row.Id, row.Title, row.Year);
+            var series = (await conn.QueryAsync<SeriesRow>(
+                "SELECT id AS Id, title AS Title, year AS Year, scan_title AS ScanTitle FROM series ORDER BY id")).ToList();
+            foreach (var row in series)
+                catalogue.AddSeries(row.Id, string.IsNullOrWhiteSpace(row.ScanTitle) ? row.Title : row.ScanTitle, row.Year);
+            foreach (var row in series.Where(row => !string.IsNullOrWhiteSpace(row.ScanTitle)))
+                catalogue.AddSeriesAlias(row.Id, row.Title, row.Year);
 
             var episodes = await conn.QueryAsync<EpisodeRowData>(@"
 SELECT id AS Id, series_id AS SeriesId, season_number AS SeasonNumber, episode_number AS EpisodeNumber,
@@ -87,6 +106,7 @@ FROM episodes ORDER BY id");
             public long Id { get; set; }
             public string? Title { get; set; }
             public int? Year { get; set; }
+            public string? ScanTitle { get; set; }
         }
 
         private sealed class EpisodeRowData

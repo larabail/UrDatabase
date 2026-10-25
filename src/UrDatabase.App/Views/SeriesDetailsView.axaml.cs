@@ -42,8 +42,19 @@ namespace UrDatabase.Views
         private SeriesLoader? _loader;
         private LocalSeriesLoader? _localLoader;
         private JellyfinClient? _jellyfin;
+        private AppConfig? _config;
         private Func<string?, CancellationToken, Task<double?>>? _loadRating;
         private Action? _cancelEnrichment;
+
+        /// <summary>True while the Wrong series? picker is open over this screen.</summary>
+        private bool _choosing;
+
+        /// <summary>
+        /// True once Wrong series? has changed which programme this is. Read by the library after
+        /// <see cref="ShowAsync"/> returns: the card behind this screen has the old name, poster
+        /// and shelf, and only reading the catalogue again moves it.
+        /// </summary>
+        public bool CorrectedSomething { get; private set; }
 
         /// <summary>
         /// Which season is on screen, by name. Kept rather than an index because a refresh from
@@ -97,6 +108,10 @@ namespace UrDatabase.Views
         /// Where a programme on this disk reads its episodes from. Consulted only when
         /// <see cref="SeriesDetailsVm.IsLocal"/>; a server programme ignores it.
         /// </param>
+        /// <param name="config">
+        /// The settings the Wrong series? picker searches TMDB with. Null leaves the button
+        /// saying it cannot search, which is what the XAML designer gets.
+        /// </param>
         public Task ShowAsync(
             SeriesDetailsVm vm,
             SeriesLoader? loader = null,
@@ -105,7 +120,8 @@ namespace UrDatabase.Views
             int? openAtSeason = null,
             Func<string?, CancellationToken, Task<double?>>? loadRating = null,
             Action? cancelEnrichment = null,
-            LocalSeriesLoader? localLoader = null)
+            LocalSeriesLoader? localLoader = null,
+            AppConfig? config = null)
         {
             if (_closed is not null) Close();
 
@@ -113,11 +129,13 @@ namespace UrDatabase.Views
             _loader = loader;
             _localLoader = localLoader;
             _jellyfin = jellyfin;
+            _config = config;
             _loadRating = loadRating;
             _cancelEnrichment = cancelEnrichment;
             _selectedSeason = null;
             _openAtSeason = openAtSeason;
             _appLifetime = appLifetime;
+            CorrectedSomething = false;
 
             var session = _session = new SeriesRefreshSession(appLifetime);
             _closed = new TaskCompletionSource();
@@ -157,6 +175,7 @@ namespace UrDatabase.Views
             _session?.Dispose();
             _session = null;
             RefreshButton.IsEnabled = false;
+            CorrectMatchButton.IsEnabled = false;
             IsVisible = false;
 
             BackdropImage.Source = null;
@@ -215,6 +234,8 @@ namespace UrDatabase.Views
                 ? LocalSeriesPage.MissingCast(vm)
                 : MissingMetadata.CreditsNotice(isRemote: true, tmdbConfigured: false);
             NoCastText.IsVisible = cast.Count == 0;
+
+            CorrectMatchButton.IsVisible = LocalSeriesPage.CanCorrect(vm);
         }
 
         /// <summary>
@@ -289,6 +310,7 @@ namespace UrDatabase.Views
         {
             if (!IsCurrent(session) || session.IsBusy) return;
             RefreshButton.IsEnabled = false;
+            CorrectMatchButton.IsEnabled = false;
             if (manual)
             {
                 RefreshButton.Content = "Refreshing…";
@@ -319,6 +341,7 @@ namespace UrDatabase.Views
                 {
                     RefreshButton.IsEnabled = true;
                     RefreshButton.Content = "Refresh";
+                    CorrectMatchButton.IsEnabled = !_choosing;
                 }
             }
         }
@@ -415,6 +438,113 @@ namespace UrDatabase.Views
         }
 
         private async void Refresh_Click(object? sender, RoutedEventArgs e) => await RefreshAsync();
+
+        /// <summary>
+        /// Lets the user say which TMDB programme this is, and rebuilds the screen from their
+        /// answer: name, poster, plot, cast, and — since the episodes' TMDB names belonged to the
+        /// programme it was taken for — the episode list, asked for afresh.
+        /// </summary>
+        /// <remarks>
+        /// Also the only way a programme the background pass refused ever gets identified. The
+        /// writing is <see cref="SeriesMatchCorrection"/>'s; this decides only whether the screen
+        /// it was asked from is still the one on show.
+        /// </remarks>
+        private async void CorrectMatch_Click(object? sender, RoutedEventArgs e)
+        {
+            var session = _session;
+            var vm = Vm;
+            var loader = _localLoader;
+            var config = _config;
+            if (session is null || vm is null || !LocalSeriesPage.CanCorrect(vm) ||
+                !IsCurrent(session) || session.IsBusy || _choosing) return;
+
+            var owner = Owner();
+            if (owner is null) return;
+
+            if (config is null || loader is null)
+            {
+                await MessageBoxWindow.ShowAsync(owner, "UrDatabase",
+                    "This screen was opened without any settings, so it cannot search TMDB.");
+                return;
+            }
+
+            _choosing = true;
+            CorrectMatchButton.IsEnabled = false;
+            TmdbCandidateVm? chosen;
+            try
+            {
+                chosen = await TmdbMatchWindow.ChooseAsync(owner, config, vm.Title, vm.Year, TmdbMatchKind.Series);
+            }
+            finally
+            {
+                _choosing = false;
+                if (IsCurrent(session)) CorrectMatchButton.IsEnabled = !session.IsBusy;
+            }
+
+            if (chosen is null || !IsCurrent(session) || !ReferenceEquals(Vm, vm)) return;
+
+            // The opening's IMDb lookup is for the programme the user has just said this is not.
+            _cancelEnrichment?.Invoke();
+            _cancelEnrichment = null;
+            LoadNotice.IsVisible = false;
+
+            var choice = new SeriesChoice(chosen.TmdbId, chosen.TmdbTitle, chosen.PosterPath);
+            var loadRating = _loadRating;
+
+            await RunPageWorkAsync(session, async ct =>
+            {
+                SetRefreshNote("Fetching that programme from TMDB…");
+
+                SeriesCorrection? correction;
+                try
+                {
+                    correction = await Task.Run(() => loader.CorrectAsync(vm.LocalId, choice, config.DownloadPosters, ct), ct);
+                }
+                catch (OperationCanceledException)
+                {
+                    throw;
+                }
+                catch (Exception ex)
+                {
+                    AppLog.Write("posters.log", $"seriesId={vm.LocalId} could not apply tmdb {choice.TmdbId}: {ex}");
+                    if (IsCurrent(session))
+                        SetRefreshNote($"Could not change the programme: {ex.Message}");
+                    return;
+                }
+
+                if (correction is null)
+                {
+                    if (IsCurrent(session))
+                        SetRefreshNote("Choosing a programme needs a TMDB key. Add one under Settings.");
+                    return;
+                }
+
+                // Before the currency check: the catalogue has changed whether or not this screen
+                // is still showing it, and the library behind it has to catch up either way.
+                CorrectedSomething = true;
+                if (!IsCurrent(session) || !ReferenceEquals(Vm, vm)) return;
+
+                var next = LocalSeriesPage.Corrected(vm, correction.Details);
+                Vm = next;
+                BindMetadata(next);
+                PosterImage.Source = null;
+                BackdropImage.Source = null;
+                SetRefreshNote(LocalSeriesPage.CorrectionNote(correction));
+
+                await LoadArtworkAsync(next, session, ct);
+                if (!IsCurrent(session)) return;
+
+                // Every episode's TMDB name was dropped with the old programme, so this lists them
+                // by their files first and then asks for every season of the new one.
+                await ShowLocalEpisodesAsync(next, session, ct);
+
+                if (loadRating is not null && !string.IsNullOrWhiteSpace(next.ImdbId) && IsCurrent(session))
+                {
+                    var rating = await loadRating(next.ImdbId, ct);
+                    if (IsCurrent(session)) UpdateRating(next, rating);
+                }
+            }, manual: false);
+        }
 
         /// <summary>
         /// Puts one answer on screen, keeping the season the user was reading selected when it

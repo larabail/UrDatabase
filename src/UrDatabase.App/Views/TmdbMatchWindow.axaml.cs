@@ -12,12 +12,20 @@ using UrDatabase.Services;
 namespace UrDatabase.Views
 {
     /// <summary>
-    /// Lets a person say which TMDB film a catalogued one actually is.
+    /// Lets a person say which TMDB film — or, for a programme on this disk, which TMDB programme —
+    /// a catalogued one actually is.
     ///
     /// The app matches by title, and a title is not an identifier: two films share one, a
     /// translation renames one, and TMDB's search answers with its most popular near miss rather
     /// than with nothing. Until this window existed a wrong answer was permanent — the poster
     /// column was only ever written when empty, so the first wrong poster was the last word.
+    /// Television is worse: "The Office" is two programmes, and the background pass refuses to
+    /// pick between them, so this window is the only way such a programme gets identified at all.
+    ///
+    /// One window for both, with a <see cref="TmdbMatchKind"/> deciding which catalogue is
+    /// searched and what the words say (see <see cref="TmdbMatchWording"/>). The rows are the same
+    /// shape either way, because TMDB's television search is read into the same candidate a film
+    /// search is.
     ///
     /// It shows TMDB's results unfiltered, deliberately. The rules in <see cref="TmdbMatch"/>
     /// exist to stop the app choosing for itself; applying them to a list somebody is reading
@@ -28,18 +36,25 @@ namespace UrDatabase.Views
         public ObservableCollection<TmdbCandidateVm> Results { get; } = new();
 
         private readonly TmdbService? _tmdb;
+        private readonly TmdbMatchWording _wording;
         private readonly CancellationTokenSource _cts = new();
 
-        /// <summary>The film that was chosen, or null when the window was cancelled or closed.</summary>
+        /// <summary>The result that was chosen, or null when the window was cancelled or closed.</summary>
         private TmdbCandidateVm? _chosen;
 
-        public TmdbMatchWindow() : this(null, "", null)
+        public TmdbMatchWindow() : this(null, "", null, TmdbMatchKind.Film)
         {
         }
 
-        private TmdbMatchWindow(AppConfig? config, string title, int? year)
+        private TmdbMatchWindow(AppConfig? config, string title, int? year, TmdbMatchKind kind)
         {
             InitializeComponent();
+
+            _wording = TmdbMatchWording.For(kind);
+            Title = _wording.WindowTitle;
+            ExplanationText.Text = _wording.Explanation;
+            QueryBox.Watermark = _wording.Watermark;
+            ChooseButton.Content = _wording.ChooseLabel;
 
             ResultsList.ItemsSource = Results;
             QueryBox.Text = title;
@@ -55,7 +70,8 @@ namespace UrDatabase.Views
             else
             {
                 // Nothing here works without a key, and the window is reachable from a film whose
-                // poster arrived before the key was removed. Saying so beats an empty list.
+                // poster arrived before the key was removed, and from any programme on this disk.
+                // Saying so beats an empty list.
                 SearchButton.IsEnabled = false;
                 QueryBox.IsEnabled = false;
                 StatusText.Text = "Searching TMDB needs a TMDB key. Add one under Settings and this will work.";
@@ -65,13 +81,15 @@ namespace UrDatabase.Views
         }
 
         /// <summary>
-        /// Opens the picker for a film and returns what was chosen, or null. The first search runs
-        /// on the catalogued title and year, because that is nearly always the right query and
-        /// making the user retype it to see any results at all would be rude.
+        /// Opens the picker and returns what was chosen, or null. The first search runs on the
+        /// catalogued title and year, because that is nearly always the right query and making
+        /// the user retype it to see any results at all would be rude.
         /// </summary>
-        public static async Task<TmdbCandidateVm?> ChooseAsync(Window owner, AppConfig config, string title, int? year)
+        /// <param name="kind">Whether a film or a programme is being chosen. A film, unless told otherwise.</param>
+        public static async Task<TmdbCandidateVm?> ChooseAsync(
+            Window owner, AppConfig config, string title, int? year, TmdbMatchKind kind = TmdbMatchKind.Film)
         {
-            var window = new TmdbMatchWindow(config, title, year);
+            var window = new TmdbMatchWindow(config, title, year, kind);
             if (window._tmdb is not null) _ = window.SearchAsync(title, year);
 
             await window.ShowDialog(owner);
@@ -114,14 +132,12 @@ namespace UrDatabase.Views
                 using var cts = CancellationTokenSource.CreateLinkedTokenSource(_cts.Token);
                 cts.CancelAfter(TimeSpan.FromSeconds(15));
 
-                var candidates = await _tmdb.SearchAsync(query, year, cts.Token);
+                var candidates = await _wording.SearchAsync(_tmdb, query, year, cts.Token);
 
                 foreach (var candidate in candidates)
                     Results.Add(TmdbCandidateVm.From(candidate, _tmdb.BuildImageUrl));
 
-                StatusText.Text = Results.Count == 0
-                    ? $"TMDB has nothing for “{query.Trim()}”. Try the title in its own language, or without a subtitle."
-                    : $"{Results.Count} result{(Results.Count == 1 ? "" : "s")}. Pick the one that is this film.";
+                StatusText.Text = _wording.Results(Results.Count, query);
 
                 // After the list, not before: the posters are worth waiting for but the titles are
                 // not worth waiting on them.
