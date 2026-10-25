@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Net;
 using System.Net.Http;
@@ -348,6 +349,40 @@ public sealed class MoviePageRefreshTests : IDisposable
         Assert.Equal(0, handler.CallCount);
         Assert.Equal("Cached plot", movie.Overview);
         Assert.Contains(result.Notices, notice => notice.Contains("not configured"));
+    }
+
+    [Fact]
+    public async Task RefreshAsksForStillsPastTheCacheForTheRefreshedFilm()
+    {
+        var config = Config;
+        config.TmdbApiKey = "";
+        var still = new FilmStill("thumb.jpg", "https://image.tmdb.org/t/p/w1280/full.jpg");
+        var asked = new List<(int? TmdbId, bool Refresh)>();
+        using var refresh = new MoviePageRefresh(config,
+            stillsLookup: (movie, past, _) =>
+            {
+                asked.Add((movie.TmdbId, past));
+                return Task.FromResult<IReadOnlyList<FilmStill>>(new[] { still });
+            });
+
+        var result = await refresh.LoadAsync(new MovieDetailsVm { TmdbId = 603 });
+
+        Assert.Equal((603, true), Assert.Single(asked));
+        Assert.Same(still, Assert.Single(result!.Stills!));
+    }
+
+    [Fact]
+    public async Task FailedStillsKeepTheExistingStripAndSaySo()
+    {
+        var config = Config;
+        config.TmdbApiKey = "";
+        using var refresh = new MoviePageRefresh(config,
+            stillsLookup: (_, _, _) => throw new HttpRequestException("Offline"));
+
+        var result = await refresh.LoadAsync(new MovieDetailsVm { TmdbId = 603 });
+
+        Assert.Null(result!.Stills);
+        Assert.Contains(result.Notices, notice => notice.Contains("Stills"));
     }
 
     public void Dispose()

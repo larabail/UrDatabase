@@ -452,6 +452,25 @@ INSERT INTO movies (title, year, poster_path) VALUES ('El Drama', 2026, '/wrong.
         }
 
         /// <summary>
+        /// The ratings and viewings tables are new tables, not new columns, so the schema script's
+        /// own CREATE TABLE IF NOT EXISTS is what brings them to a library that predates them.
+        /// </summary>
+        [Fact]
+        public void An_existing_library_gains_the_ratings_and_viewings_tables()
+        {
+            CreateOldLibrary();
+
+            using var conn = Database.Open(_dbPath);
+
+            Assert.True(Database.TableExists(conn, "film_ratings"));
+            Assert.True(Database.TableExists(conn, "film_viewings"));
+
+            using var read = conn.CreateCommand();
+            read.CommandText = "SELECT title FROM jellyfin_movies WHERE item_id = 'abc'";
+            Assert.Equal("Ran", read.ExecuteScalar() as string);
+        }
+
+        /// <summary>
         /// Database.cs carries a copy of the schema for a publish layout that did not copy the
         /// file beside it. Two descriptions of one schema drift the moment somebody edits one of
         /// them, and the failure lands on a trimmed release build that cannot open its own

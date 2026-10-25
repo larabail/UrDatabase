@@ -73,6 +73,7 @@ namespace UrDatabase.Tests
                 "Views", "MainWindow.axaml.cs"));
             Assert.Equal(2, source.Split("cancelEnrichment: loading.Cancel").Length - 1);
             Assert.Contains("relatedLookup: (movie, ct) => LoadRelatedAsync(movie, null, ct)", source);
+            Assert.Contains("stillsLookup: LoadStillsAsync", source);
             Assert.Contains("loadRating: RetryMissingSeriesRatingAsync", source);
 
             var movie = File.ReadAllText(Path.Combine(RepositoryRoot(), "src", "UrDatabase.App",

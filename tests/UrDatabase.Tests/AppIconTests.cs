@@ -64,6 +64,66 @@ namespace UrDatabase.Tests
                 ReadIconFrames().Select(frame => frame.Size).OrderBy(size => size).ToArray());
         }
 
+        [Fact]
+        public void Mac_icon_carries_every_size_at_1x_and_2x_as_RGBA_PNG()
+        {
+            var expected = new (string Type, int Size)[]
+            {
+                ("icp4", 16), ("icp5", 32), ("ic11", 32), ("ic12", 64), ("ic07", 128),
+                ("ic08", 256), ("ic13", 256), ("ic09", 512), ("ic14", 512), ("ic10", 1024),
+            };
+            var chunks = ReadMacIconChunks();
+            Assert.Equal(expected.Select(slot => slot.Type), chunks.Select(chunk => chunk.Type));
+            foreach (var ((type, size), chunk) in expected.Zip(chunks))
+                Assert.Equal(size, ReadPngSide(chunk.Png, $"{type} in {MacIconPath}"));
+        }
+
+        [Fact]
+        public void Windows_and_mac_icons_are_the_same_artwork()
+        {
+            // Both are rendered from assets/logo by tool/make_icons.py, so a frame
+            // of a given size is the same PNG in each. A mismatch means one was
+            // edited by hand, or regenerated without the other.
+            var windows = ReadIconFrames().ToDictionary(frame => frame.Size, frame => frame.Png);
+            foreach (var (type, png) in ReadMacIconChunks())
+            {
+                var size = ReadPngSide(png, type);
+                if (windows.TryGetValue(size, out var frame))
+                    Assert.True(frame.AsSpan().SequenceEqual(png),
+                        $"The {size}px frame differs between {IconPath} and {MacIconPath} ({type}).");
+            }
+        }
+
+        private const string MacIconPath = "Assets/UrDatabase.icns";
+
+        private static IReadOnlyList<(string Type, byte[] Png)> ReadMacIconChunks()
+        {
+            var bytes = File.ReadAllBytes(SourcePath(MacIconPath));
+            Assert.Equal("icns"u8.ToArray(), bytes[..4]);
+            Assert.Equal((uint)bytes.Length, BinaryPrimitives.ReadUInt32BigEndian(bytes.AsSpan(4)));
+            var chunks = new List<(string, byte[])>();
+            for (var offset = 8; offset < bytes.Length;)
+            {
+                var type = System.Text.Encoding.ASCII.GetString(bytes, offset, 4);
+                var length = checked((int)BinaryPrimitives.ReadUInt32BigEndian(bytes.AsSpan(offset + 4)));
+                Assert.InRange(length, 9, bytes.Length - offset);
+                chunks.Add((type, bytes.AsSpan(offset + 8, length - 8).ToArray()));
+                offset += length;
+            }
+            return chunks;
+        }
+
+        private static int ReadPngSide(byte[] png, string what)
+        {
+            Assert.True(png.Length > 26 && png.AsSpan(0, 8).SequenceEqual(
+                new byte[] { 137, 80, 78, 71, 13, 10, 26, 10 }), $"{what} is not a PNG.");
+            var width = BinaryPrimitives.ReadUInt32BigEndian(png.AsSpan(16));
+            Assert.Equal(width, BinaryPrimitives.ReadUInt32BigEndian(png.AsSpan(20)));
+            Assert.Equal(8, png[24]);
+            Assert.Equal(6, png[25]);
+            return (int)width;
+        }
+
         private static IReadOnlyList<(int Size, byte[] Png)> ReadIconFrames()
         {
             var bytes = File.ReadAllBytes(SourcePath(IconPath));

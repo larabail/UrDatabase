@@ -140,7 +140,7 @@ It runs on Windows and macOS from one codebase, built with
   **Library** goes back.
 
   Network lookups no longer stand between the click and the page. Ratings,
-  awards and recommendations load independently where their inputs are already
+  awards, recommendations and stills load independently where their inputs are already
   known, and each lookup gets its own twelve-second deadline rather than sharing
   one deadline across all the services. A slow or unreachable service leaves the
   page open, says which lookup timed out, and records it in `details.log`;
@@ -188,6 +188,19 @@ It runs on Windows and macOS from one codebase, built with
   explicitly say "according to the filename" in their tooltips
   (`Services/LocalMediaReader`, `Services/FfprobeRunner`, `Services/MediaFlags`,
   `Services/LanguageTag`).
+- **Mark a copy as having a problem.** **Report problem…** on a film's details
+  screen opens a short list — **Audio**, **Low resolution**, **Wrong aspect
+  ratio**, **Subtitles**, **Picture glitches**, **Other** — and a note for
+  anything that fits none of them. The film's card then carries a red-orange
+  **Problem** badge in its top-left corner, whose tooltip lists what was
+  reported, and the details screen shows the same list above the genres. **Clear**
+  (on that banner, or in the list) takes it off once the copy has been replaced;
+  unticking everything and saving does the same. Works for local and server films
+  alike. Reports are kept in the catalogue's `film_problems` table, apart from the
+  media badges above: those are measured from the file every time, and a squashed
+  picture or an out-of-sync track is something only somebody who watched it can
+  say. Nothing is sent to Jellyfin (`Services/FilmProblems`,
+  `Services/FilmProblemStore`).
 - **What to put on next, and you already own it.** Where a series lists its
   episodes, a film gets a shelf of other films — and every poster on it is one
   already in this library, so every one of them plays. TMDB supplies the
@@ -205,6 +218,24 @@ It runs on Windows and macOS from one codebase, built with
   sharing the most genres, and says so in its heading rather than claiming a
   resemblance nobody computed. When there is nothing to show it hides entirely
   and the plot takes the space back (`Services/RelatedFilms`).
+- **Stills from the film, under its plot.** A strip of up to eight frames sits
+  directly beneath the synopsis, and clicking one fills the window with it at
+  1280 pixels wide; the arrow keys step through the strip and Escape puts it
+  away. They are TMDB's backdrops for the film — for nearly every film,
+  stills from it — with the ones carrying a title or tagline left out unless
+  there is nothing else, and the backdrop already behind the page left off so
+  the first frame is not the picture directly behind it.
+
+  They load like everything else on the page: after it is open, on their own
+  deadline, and never in its way. With **DownloadPosters** on, the thumbnails
+  are cached in a `stills` folder inside the poster cache, staged and checked
+  like posters, so a film opened once shows its strip again offline and with
+  no key. A strip is only trusted from disk once every frame on it arrived, so
+  an interrupted one is asked for again rather than shown half-empty forever.
+  **Refresh** goes past the cache, and **Wrong film?** fetches the strip of the
+  film you chose. With no TMDB key, nothing cached, or a film nothing has
+  identified, the strip is hidden rather than left as an empty heading
+  (`Services/FilmStills`, `Services/DetailsLayout`).
 - **The Academy, under the poster.** A film that was nominated for an Oscar says
   so: wins first, marked with a star, then the nominations, with the category and
   who it was for. The panel is hidden outright for the great majority of films
@@ -230,6 +261,30 @@ It runs on Windows and macOS from one codebase, built with
   hand it the 1996 film's Oscars, which is the exact false attribution the year
   window exists to prevent (`Services/OscarsService`, `Services/UrActorService`,
   `Services/OscarMatch`).
+- **Rate it, and remember when you watched it and who with.** Under the poster,
+  **Your rating** is ten stars — UrActor's own scale — and a line for what you
+  thought. Click a star to rate, click the same star again to take the rating
+  away; the review saves when you leave the box, or the page. **Viewings** lists
+  every time you logged the film, newest first: **+ I watched this** asks for the
+  day (today unless you change it, and never a day that has not happened yet),
+  who with, and a note. The names are typed as one line, `Ana, Luis`, and
+  everybody you have logged before is offered underneath as a chip, most frequent
+  first, that adds or removes them in one click. A film can be logged as many
+  times as it was watched, and each viewing has its own ✕.
+
+  It all lives in the catalogue, in `film_ratings` and `film_viewings`, on this
+  computer only — nothing is sent to UrActor or anywhere else (see
+  [Known gaps](#known-gaps)). A film is filed under its TMDB id when it has one
+  and under its title and year until then, so a rating survives a rescan, works
+  for a film that is only on the server, and follows the film onto its TMDB id
+  the first time anything is saved after it is identified. Correcting a film with
+  **Wrong film?** moves its rating and viewings onto the film you picked, even off
+  a wrong TMDB id, because they were of that film all along; nothing else ever
+  moves history from one TMDB id to another. The stars and review stay disabled
+  until the film's stored rating has loaded, and stay disabled if it could not be
+  read, so a blank placeholder is never saved over a real review
+  (`Services/FilmJournalStore`, `Services/FilmJournal`, `Services/FilmJournalEdits`,
+  `Services/FilmKey`, `Services/Companions`, `Views/MovieDetailsView.Journal`).
 - **Refresh without restarting.** The library, film details and programme pages
   each have a **Refresh** button. Library refresh reloads the catalogue, syncs
   Jellyfin when configured and retries missing artwork and genres without
@@ -316,6 +371,22 @@ It runs on Windows and macOS from one codebase, built with
   altogether. Nothing is deleted from the database, so putting the file back —
   or linking one by hand — brings the same film back on the next scan rather
   than a fresh copy of it (`Services/MissingFilms`).
+- **Know when a drive has gone.** On launch, behind a window that is already
+  usable, the app checks every drive a configured library folder lives on and
+  raises a red banner over the library when one is not connected, or is a
+  network share that did not answer within eight seconds. The banner names the
+  drive and how many catalogued films on it cannot be played until it is back;
+  **Check again** re-runs the check after you plug it in, and **Dismiss** hides
+  it until the next launch. Remove a dead drive's library folder in Settings
+  and the banner stops naming it. The **Drives** button in the top bar shows
+  every drive with its state, the films on it, its free space and the library
+  folders it holds — including drives that hold catalogued files but no library
+  folder, such as a retired disk or a copy linked by hand, which are listed there
+  but never raise the banner. The check only reports: nothing in the catalogue
+  changes because a drive is away. Drives are told apart by volume rather than
+  by path root, so an external disk under `/Volumes` on macOS is checked as
+  itself instead of as the boot disk it hangs off (`Services/DriveVolumes`,
+  `Services/DriveMonitor`, `Services/DriveStatusText`).
 - **Play.** The details window opens the file the catalogue links to this film —
   the link the scan wrote, not a guess at the filename — and hands it to whatever
   the operating system uses. A film with no link, or whose only linked copy has
@@ -370,6 +441,15 @@ It runs on Windows and macOS from one codebase, built with
   anywhere
   (`Services/ResumeRow`, `Services/ResumeDismissals`,
   `Services/PlaybackReporter`, `Services/VlcStatus`).
+- **A watchlist of films you mean to watch.** **+ Watchlist** on a film's page,
+  or **Add to Watchlist** on any film or series card's right-click menu, puts it
+  on a **Watchlist** shelf directly below Continue watching, most recently added
+  first. The button then reads **✓ On Watchlist** and pressing it again takes the
+  film off; the menu offers **Remove from Watchlist**. Kept in the catalogue on
+  this computer and never sent to the server. A server film you add and later
+  download stays on it: once the film has a catalogue row of its own its entry is
+  moved onto that row, so it survives the server being switched off or the match
+  changing (`Services/Watchlist`, `Services/WatchlistStore`).
 - **Download a server film to watch offline.** A film on the server has a
   **Download** button that keeps a copy on this disk, named the way the scanner
   reads it and catalogued the moment it finishes — so it is playable and
@@ -1028,7 +1108,7 @@ I" only in the place you already knew. The tooltip says it in words.
 
 Right-click a card in the row and choose **Remove from Continue watching**. A
 right-click because the row is the first thing on the page and a visible button
-there would be one twitch away from being pressed by accident; the menu appears
+there would be one twitch away from being pressed by accident; that item appears
 only on a card that is actually in the row.
 
 It is local to this app, entirely. **Nothing is sent to the server**, no other
@@ -1297,7 +1377,10 @@ and `files` tables, the `scans` table each scan records itself in, the
 `jellyfin_movies` cache and its television counterparts `jellyfin_series`,
 `jellyfin_seasons` and `jellyfin_episodes`, the `jellyfin_resume` positions
 behind the Continue watching row and the `jellyfin_resume_dismissals` that are
-taken back out of it, the `movies_fts` FTS5 index and the
+taken back out of it, the `watchlist` behind the Watchlist shelf, the
+`film_problems` you have reported about a copy, the `film_ratings` and
+`film_viewings` that hold your own ratings and watch log, the
+`movies_fts` FTS5 index and the
 triggers that keep it current — and every statement is `IF NOT EXISTS`, so it
 runs against a library you already have without touching your data.
 
@@ -1337,12 +1420,32 @@ button, and the films appear.
 
 Filenames come in every shape, so the parser copes with the common ones:
 `The Matrix (1999) 1080p.mkv`, `the.matrix.1999.BluRay.x264-GROUP.mkv`,
-`The Matrix [1999].mp4`, underscores, junk brackets, and both Windows and macOS
-paths. It strips resolution, source, codec, audio and release group from the end
-of a name, keeps the hyphen inside a real title like `Spider-Man`, and prefers a
-bracketed year over a bare one so `Blade Runner 2049 (2017)` resolves to the
-right film and year. One casualty of splitting dotted names: genuine full stops
-go with them, so `S.W.A.T.` arrives as `S W A T`.
+`The Matrix [1999].mp4`, `Origen.MicroHD.1080p.DUAL.Castellano.mkv`,
+`www.site.com - Film.avi`, underscores, junk brackets, and both Windows and
+macOS paths. A title ends at the first token that can only describe a release —
+a resolution, codec, source such as `BDRip` or `MicroHD`, `HDR`, an audio
+format, or a release-language tag such as `Castellano` or `VOSE` — and
+everything after it goes, recognised or not. Words that are noise at the end but
+can be part of a title (`Web`, `4K`, `Extended`) are only stripped from the
+end, never down to a lone article, which is why `The Web 1080p` survives and
+`Charlotte's Web` does not. Ordinary words such as `Rip`, `Audio` and `Sub`, and
+language names such as `Spanish` or `Latino`, need more: they go only next to
+another tag (`Dual Audio`, `BD Rip`, `Coco SPANISH 1080p`) and never after an
+article, so `The Rip` and `Pump Up the Audio` keep their names. A site stamp is
+`www.` plus one name and a domain (`www.site.com`, `www.site.com.es`), so
+`www.site.com.Back.to.the.Future` loses only the site. The parser keeps the
+hyphen inside a real title like `Spider-Man`, and prefers a bracketed year over
+a bare one so `Blade Runner 2049 (2017)` resolves to the right film and year.
+One casualty of splitting dotted names: genuine full stops go with them, so
+`S.W.A.T.` arrives as `S W A T`.
+
+A library scanned by an older build may hold rows still named with that noise
+(`Origen MicroHD`). The next scan cleans such a row's title in place, as long as
+TMDB has not identified it yet and the old title holds an unambiguous release
+tag, and keeps the old title in `scan_title` the way a corrected match does. It
+does not catalogue the film a second time under its clean name; the TMDB lookup
+also retries with the cleaned title, so those rows can be matched even before a
+rescan.
 
 Each file the scan records gets `files.movie_id` pointing at the film it belongs
 to, and that column is the only thing Play consults. It matters that it is not
@@ -1544,7 +1647,8 @@ is `urdatabase-downloads`.
 ```
 src/UrDatabase.App/          the application: one cross-platform project
   Views/                     windows, screens and their code-behind
-  Controls/                  reusable pieces, e.g. the poster card
+  Controls/                  reusable pieces, e.g. the poster card and the
+                             self-loading image the stills strip uses
   Styles/                    Tokens.axaml: every colour, face and metric, plus
                              the Fluent resources the theme would otherwise
                              paint in the system accent.
@@ -1552,10 +1656,13 @@ src/UrDatabase.App/          the application: one cross-platform project
   Models/                    what the views bind to
   Services/                  config, SQLite, scanning, search, TMDB, OMDb,
                              UrActor, Jellyfin, posters, playback reporting,
-                             local media-track inspection, the update check
+                             local media-track inspection, the update check,
+                             the drive check,
+                             your own ratings and watch log
   Assets/UrDatabase.icns     the macOS application icon
   Assets/UrDatabase.ico      multi-resolution Windows executable and window icon,
-                             embedded in the app rather than loaded from a loose file
+                             embedded in the app rather than loaded from a loose file;
+                             both are generated from assets/logo, never edited
   Data/schema.sql            the shape a database is created with; Database.Migrate
                              brings an older one up to it
   appsettings.example.json   configuration template, copied to the user's data
@@ -1567,9 +1674,13 @@ tests/UrDatabase.Tests/      xUnit suite; TempLog is how a test class stays out
 tool/                        Python helpers with their own unittest suite:
                              the version-bump check, the release gate and the
                              macOS bundler, Store payload/archive validation,
-                             checksum-locked ffprobe preparation
+                             checksum-locked ffprobe preparation, and
+                             make_icons.py, which renders every copy of the icon
 packaging/windows/           Store manifest and PNG assets derived from the app icon
 packaging/ffprobe/            helper pins, notices and source/rebuild provenance
+assets/logo/                 the app icon's editable SVG masters: UrDatabase.svg
+                             for 48px and up, UrDatabase-small.svg drawn on the
+                             pixel grid for 16-32px and the site favicon
 Directory.Build.props        the single <Version> for the whole solution
 web/                         the downloads site served by Firebase Hosting
 docs/                        design notes
@@ -1586,6 +1697,26 @@ and that a change under `src/` bumps the version.
 
 `dotnet build` and `dotnet test` must both be clean before you open a pull
 request.
+
+### Changing the app icon
+
+The icon is a clapperboard whose slate is a catalogue card. Edit the SVGs in
+`assets/logo/`, then regenerate every copy of it in one go:
+
+```bash
+pip install -r tool/requirements-icons.txt
+python tool/make_icons.py          # writes the .ico, .icns, Store PNGs and site favicon
+python tool/make_icons.py --check  # fails if any of them is stale
+```
+
+That writes `src/UrDatabase.App/Assets/UrDatabase.ico` and `.icns`, the PNGs in
+`packaging/windows/Assets/` and the inline favicon in `web/downloads/index.html`.
+Change the small master as well as the large one: it is a separate drawing,
+because a scaled-down large icon blurs at taskbar sizes. The renderer is pinned,
+since the tests compare the committed files with a fresh render byte for byte.
+Those tests are skipped when resvg is not installed, which is the case in CI. The
+tests that check the files' structure and that Windows and macOS carry identical
+frames always run.
 
 ### The suite never touches your install
 
@@ -1695,6 +1826,16 @@ Stated plainly, so nobody has to find out by using it:
   genre fallback behind it needs genres, which the same pass fills in, so on a
   library that has never reached TMDB at all the shelf is simply absent. Nothing
   on it is ever a film you do not own, which is the one guarantee it does make.
+- **Stills come from TMDB, not from the file.** The strip under the plot is
+  TMDB's backdrops, so it needs a TMDB key and a film TMDB has identified —
+  for a server film, the TMDB id the server gave it. Reading frames out of the
+  file was considered and left out: the app bundles ffprobe and not ffmpeg, a
+  server film has no file on this disk, and a frame picked by timestamp is as
+  often a black fade or a title card as a picture of anything. A strip already
+  cached keeps showing without a key; one never fetched does not appear.
+  Without **DownloadPosters** nothing is cached and the strip needs the network
+  every time, like the posters. A film whose backdrops are all title cards
+  shows those, because they are all there is.
 - **A series has no awards panel.** The Academy does not give programmes Oscars,
   and the archive is searched by title, so a series is never asked about at all —
   a programme sharing a name with a film would otherwise be handed the film's
@@ -1708,6 +1849,20 @@ Stated plainly, so nobody has to find out by using it:
   the awards are looked up again on the new name, so identifying a film corrects
   its Oscars along with its artwork. Until then the quiet failure is deliberate:
   attaching another film's Oscars would be worse than showing none.
+- **Ratings and viewings are not synced with UrActor.** The UrActor app keeps the
+  same things — a ten-star rating and review, a calendar of what was watched on
+  which day, who it was seen with — but they live in that app's own Firebase
+  project behind your UrActor login, not in the public awards API this app
+  already uses, and logging a shared viewing there writes into your friends'
+  data too. Doing that properly needs a sign-in flow and a credential that is
+  genuinely personal, unlike the three API keys, so this app keeps its own copy
+  locally instead. The tables are shaped like UrActor's — ten points, TMDB ids,
+  `yyyy-MM-dd` days — so a sync can be added without converting anything. Until
+  then a film rated here and in UrActor is rated twice, and "who with" is a list
+  of names rather than UrActor friends.
+- **Only films can be rated or logged.** A programme's page has no rating panel,
+  and an episode watched cannot be logged. Nothing fills the log in for you
+  either: playing a film to the end does not record a viewing.
 - **Playback position is shared with the server through VLC, and only VLC.** A
   film or an episode streamed through VLC now reports where it got to, so it
   resumes and is marked watched on every device — but three cases still do not.
@@ -1738,6 +1893,18 @@ Stated plainly, so nobody has to find out by using it:
   to maintain, but something abandoned at a position nothing will ever move is
   gone from the row for good, and the only record of it is a row in
   `jellyfin_resume_dismissals`.
+- **Watching a film does not take it off the Watchlist.** Nothing notices that a
+  film on it has been played, so it stays until you remove it. A film that leaves
+  the library — deleted, or on a server that is switched off — drops off the
+  shelf but stays in `watchlist`, and is back on the shelf the moment the library
+  holds it again. There is no Watchlist toggle on a series' own page yet; use the
+  card's right-click menu.
+- **A reported problem belongs to the card, not to the film.** It is stored under
+  the same identity the library deduplicates on: a film on this disk by its
+  catalogue row, a server-only film by its Jellyfin id. So a problem reported on a
+  server-only film does not follow it once it is downloaded and becomes a local
+  card, and there is no filter yet for "films with a problem" — the badge is the
+  only way to find them.
 - **One Jellyfin server.** There is no way to add a second. The setup screen
   configures the first one and tests it, but a household with two servers has to
   pick one.

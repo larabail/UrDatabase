@@ -300,6 +300,72 @@ CREATE TABLE IF NOT EXISTS jellyfin_resume_dismissals (
     dismissed_at   TEXT NOT NULL
 );
 
+-- Films the owner has said they want to watch. Keyed on the identity a card carries ('local:12'
+-- for a catalogued film, 'jellyfin:<item id>' for one only the server holds) rather than on
+-- movies.id, because a server film has no row in movies to point at. A table of its own, so no
+-- scan or sync can rewrite it, and nothing here is sent to the server. A new table rather than a
+-- new column, so CREATE ... IF NOT EXISTS is the whole of the migration.
+CREATE TABLE IF NOT EXISTS watchlist (
+    item_key TEXT PRIMARY KEY COLLATE NOCASE,
+    added_at TEXT NOT NULL
+);
+
+-- Problems the owner has reported with a copy of a film: bad audio, a low resolution, a squashed
+-- aspect ratio. A person's judgement after watching it, which nothing in the file can measure, so it
+-- is kept apart from the media badges that are recomputed every time a film is opened.
+--
+-- Keyed on the library's own card identity ('local:<movies.id>' or 'jellyfin:<item id>') rather
+-- than on movies.id, because a server film has no row there, and kept out of jellyfin_movies because
+-- every sync deletes and rewrites that table. problems is a comma-separated list of stable codes.
+CREATE TABLE IF NOT EXISTS film_problems (
+    film_key   TEXT PRIMARY KEY,
+    problems   TEXT NOT NULL,
+    note       TEXT,
+    flagged_at TEXT NOT NULL
+);
+
+-- The owner's own opinion of a film: a rating out of ten and a free-text review. One row per film.
+--
+-- Keyed on film_key rather than movies(id), and not foreign-keyed to it, because a rating has to
+-- outlive the row it was made against: a rescan that discards a renamed file deletes that row, and
+-- a film that is only on the Jellyfin server has no row in movies at all. The key is 'tmdb:<id>'
+-- when the film has been identified and 'title:<normalised title>|<year>' until then — see
+-- FilmKey — and a title-keyed row is moved onto the TMDB key once the film is identified.
+--
+-- Shaped like UrActor's own Reviews so a later sync has nothing to convert: the same ten-point
+-- scale, and the TMDB id alongside. Nothing here is sent anywhere today.
+CREATE TABLE IF NOT EXISTS film_ratings (
+    film_key   TEXT PRIMARY KEY,
+    tmdb_id    INTEGER,
+    title      TEXT NOT NULL,
+    year       INTEGER,
+    -- NULL when the owner wrote a review but gave no stars, which is a real thing to do.
+    rating     INTEGER CHECK (rating IS NULL OR rating BETWEEN 1 AND 10),
+    review     TEXT,
+    updated_at TEXT NOT NULL
+);
+
+-- Each time the owner watched a film: the day, who with, and a note. As many rows per film as
+-- there were viewings, which is what makes a rewatch countable.
+--
+-- watched_on is a local calendar date as yyyy-MM-dd, the same shape UrActor's Calendar uses, not
+-- a timestamp: "the evening of the 3rd" is the fact a person remembers, and a UTC instant would
+-- move it to the 4th for anyone east of Greenwich who watched late. companions is a JSON array of
+-- names as typed — plain people, not accounts.
+CREATE TABLE IF NOT EXISTS film_viewings (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    film_key   TEXT NOT NULL,
+    tmdb_id    INTEGER,
+    title      TEXT NOT NULL,
+    year       INTEGER,
+    watched_on TEXT NOT NULL,
+    companions TEXT,
+    note       TEXT,
+    created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS ix_film_viewings_key ON film_viewings(film_key);
+
 -- Full text search over the catalogue, kept in sync with movies by triggers.
 CREATE VIRTUAL TABLE IF NOT EXISTS movies_fts USING fts5(
     title,
