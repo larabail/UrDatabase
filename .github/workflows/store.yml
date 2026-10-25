@@ -12,7 +12,7 @@ on:
       - 'packaging/ffprobe/**'
       - 'tool/**'
       - 'scripts/package-store.ps1'
-      - 'scripts/make-store-assets.sh'
+      - 'assets/logo/**'
       - 'Directory.Build.props'
       - '.github/workflows/store.yml'
   pull_request:

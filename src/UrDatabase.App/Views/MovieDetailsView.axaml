@@ -86,6 +86,16 @@
             <Setter Property="BorderBrush" Value="{DynamicResource BrassBrush}"/>
             <Setter Property="Foreground" Value="{DynamicResource BrassBrush}"/>
         </Style>
+
+        <!-- The brass ring a poster card wears under the pointer, so a still
+             reads as something to click in the same way. -->
+        <Style Selector="Border.still">
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="BorderBrush" Value="Transparent"/>
+        </Style>
+        <Style Selector="Border.still:pointerover">
+            <Setter Property="BorderBrush" Value="{DynamicResource BrassBrush}"/>
+        </Style>
     </UserControl.Styles>
 
     <!-- Opaque, and deliberately so. Every layer above this one is
@@ -199,6 +209,14 @@
                                 IsVisible="False"
                                 Content="Start again"
                                 Click="StartAgain_Click"/>
+                        <!-- On or off the Watchlist shelf on the library page.
+                             Says which, so the button is also the answer to "did I
+                             already add this". See Watchlist.ButtonLabel. -->
+                        <Button x:Name="WatchlistButton"
+                                Classes="ghost"
+                                Height="34"
+                                Content="+ Watchlist"
+                                Click="Watchlist_Click"/>
                         <Button x:Name="LinkFileButton"
                                 Classes="ghost"
                                 Height="34"
@@ -212,6 +230,51 @@
                                 Height="34"
                                 Content="Wrong film?"
                                 Click="CorrectMatch_Click"/>
+                        <!-- Something wrong with this copy: the sound, the
+                             resolution, the aspect ratio. The ticks live in a
+                             flyout rather than on the page, because nearly every
+                             film has nothing to report and six empty checkboxes
+                             under every plot would be noise. The banner above the
+                             genres says what has been reported. -->
+                        <Button x:Name="ProblemButton"
+                                Classes="ghost"
+                                Height="34"
+                                Content="Report problem…"
+                                ToolTip.Tip="Mark this copy as having a problem: audio, low resolution, wrong aspect ratio…">
+                            <Button.Flyout>
+                                <Flyout
+                                        Placement="TopEdgeAlignedLeft"
+                                        Opening="ProblemFlyout_Opening">
+                                    <StackPanel Width="300" Spacing="8">
+                                        <TextBlock Classes="label"
+                                                   Text="WHAT IS WRONG WITH THIS COPY"
+                                                   LetterSpacing="1.6"/>
+                                        <StackPanel x:Name="ProblemChoices" Spacing="2"/>
+                                        <TextBox x:Name="ProblemNote"
+                                                 Classes="field"
+                                                 Watermark="Note (optional)"
+                                                 MaxLength="500"
+                                                 TextWrapping="Wrap"/>
+                                        <TextBlock x:Name="ProblemError"
+                                                   Foreground="{StaticResource NoBrush}"
+                                                   TextWrapping="Wrap"
+                                                   IsVisible="False"/>
+                                        <StackPanel Orientation="Horizontal"
+                                                    Spacing="8"
+                                                    HorizontalAlignment="Right">
+                                            <Button x:Name="ClearProblemButton"
+                                                    Classes="ghost"
+                                                    Content="Clear"
+                                                    Click="ClearProblem_Click"/>
+                                            <Button x:Name="SaveProblemButton"
+                                                    Classes="primary"
+                                                    Content="Save"
+                                                    Click="SaveProblem_Click"/>
+                                        </StackPanel>
+                                    </StackPanel>
+                                </Flyout>
+                            </Button.Flyout>
+                        </Button>
                         <!-- Keeps a copy on this disk so the film survives being away
                              from the server. Shown only for a server film that is not
                              already here. -->
@@ -514,7 +577,7 @@
                      long one and leaves a quarter of the window dead under the
                      credits on a short one, which is the worst of both. -->
                 <Grid Grid.Column="2"
-                      RowDefinitions="Auto,Auto,Auto,*,Auto,Auto">
+                      RowDefinitions="Auto,Auto,Auto,*,Auto,Auto,Auto">
 
                     <TextBlock Grid.Row="0"
                                x:Name="TitleText"
@@ -589,14 +652,50 @@
                         </ItemsControl>
                     </WrapPanel>
 
-                    <TextBlock Grid.Row="2"
-                               x:Name="GenresText"
-                               Classes="mono"
-                               FontSize="11"
-                               LetterSpacing="1.1"
-                               Foreground="{StaticResource ProseBrush}"
-                               TextWrapping="Wrap"
-                               Margin="0,0,0,12"/>
+                    <StackPanel Grid.Row="2">
+                        <!-- What the owner reported wrong with this copy. Hidden
+                             for nearly every film. Outlined in the same
+                             red-orange as the card's badge, with the word on it,
+                             so the two are recognisably one fact. -->
+                        <Border x:Name="ProblemBanner"
+                                HorizontalAlignment="Left"
+                                BorderBrush="{StaticResource NoBrush}"
+                                BorderThickness="1"
+                                CornerRadius="{StaticResource RadiusSmall}"
+                                Padding="8,4,4,4"
+                                Margin="0,0,0,12"
+                                IsVisible="False">
+                            <StackPanel Orientation="Horizontal" Spacing="10">
+                                <TextBlock Text="PROBLEM"
+                                           Foreground="{StaticResource NoBrush}"
+                                           FontFamily="{StaticResource MonoFont}"
+                                           FontSize="10.5"
+                                           FontWeight="SemiBold"
+                                           LetterSpacing="1"
+                                           VerticalAlignment="Center"/>
+                                <TextBlock x:Name="ProblemSummary"
+                                           Foreground="{StaticResource ProseBrush}"
+                                           FontSize="12.5"
+                                           MaxWidth="560"
+                                           TextWrapping="Wrap"
+                                           VerticalAlignment="Center"/>
+                                <Button x:Name="ProblemBannerClear"
+                                        Classes="ghost"
+                                        Content="Clear"
+                                        VerticalAlignment="Center"
+                                        ToolTip.Tip="This copy is fine now: remove the problem."
+                                        Click="ClearProblem_Click"/>
+                            </StackPanel>
+                        </Border>
+
+                        <TextBlock x:Name="GenresText"
+                                   Classes="mono"
+                                   FontSize="11"
+                                   LetterSpacing="1.1"
+                                   Foreground="{StaticResource ProseBrush}"
+                                   TextWrapping="Wrap"
+                                   Margin="0,0,0,12"/>
+                    </StackPanel>
 
                     <Border x:Name="PlotPane"
                             Grid.Row="3"
@@ -617,6 +716,61 @@
                     </Border>
 
                     <!--
+                        Frames from the film, directly under its plot. TMDB's
+                        text-free backdrops, which for nearly every film are
+                        stills from it; see FilmStills for why not frames read
+                        out of the file.
+
+                        Small on purpose: this column already holds a plot, a
+                        shelf and the credits, and the strip is an invitation to
+                        look rather than the look itself. Clicking one opens it
+                        across the whole window.
+
+                        Hidden when there are none, which is every film without
+                        a TMDB key and an identification. A heading over an
+                        empty row would report a failure nobody had.
+                    -->
+                    <StackPanel x:Name="StillsPane"
+                                Grid.Row="4"
+                                Margin="0,14,0,0"
+                                VerticalAlignment="Top"
+                                IsVisible="False">
+                        <TextBlock Classes="label"
+                                   Text="STILLS"
+                                   LetterSpacing="1.6"
+                                   Margin="0,0,0,5"/>
+                        <Rectangle Height="1"
+                                   Fill="{StaticResource EdgeBrush}"
+                                   Margin="0,0,0,10"/>
+                        <ctrls:ScrollableShelf Padding="0,0,0,4">
+                            <ItemsControl x:Name="StillsList">
+                                <ItemsControl.ItemsPanel>
+                                    <ItemsPanelTemplate>
+                                        <StackPanel Orientation="Horizontal"/>
+                                    </ItemsPanelTemplate>
+                                </ItemsControl.ItemsPanel>
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate DataType="models:FilmStill">
+                                        <Border Classes="still"
+                                                Width="160"
+                                                Height="90"
+                                                Margin="0,0,10,0"
+                                                CornerRadius="4"
+                                                ClipToBounds="True"
+                                                Background="#1AFFFFFF"
+                                                Cursor="Hand"
+                                                PointerPressed="StillCard_Click"
+                                                ToolTip.Tip="Click to enlarge">
+                                            <ctrls:AsyncImage SourcePath="{Binding Thumbnail}"
+                                                              Stretch="UniformToFill"/>
+                                        </Border>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </ctrls:ScrollableShelf>
+                    </StackPanel>
+
+                    <!--
                         What to put on next, and the answer is always something
                         already owned. This row is where a series lists its
                         episodes; a film has no episodes, and what it had
@@ -634,7 +788,7 @@
                         reporting a failure it did not have.
                     -->
                     <StackPanel x:Name="RelatedPane"
-                                Grid.Row="4"
+                                Grid.Row="5"
                                 Margin="0,16,0,0"
                                 VerticalAlignment="Center"
                                 IsVisible="False">
@@ -683,7 +837,7 @@
                         </ctrls:ScrollableShelf>
                     </StackPanel>
 
-                    <Grid Grid.Row="5"
+                    <Grid Grid.Row="6"
                           ColumnDefinitions="*,48,260"
                           Margin="0,24,0,24">
 
@@ -767,5 +921,26 @@
                 </Grid>
             </Grid>
         </DockPanel>
+
+        <!-- One still across the whole window. Above everything, opaque enough
+             that the page behind it is a suggestion, and closed by a click
+             anywhere or by Escape; the arrow keys step through the strip. -->
+        <Border x:Name="StillViewer"
+                Background="#F20B0A09"
+                IsVisible="False"
+                Focusable="True"
+                FocusAdorner="{x:Null}"
+                Cursor="Hand"
+                PointerPressed="StillViewer_Click">
+            <Grid RowDefinitions="*,Auto" Margin="48,32">
+                <Image x:Name="StillViewerImage"
+                       Stretch="Uniform"/>
+                <TextBlock x:Name="StillViewerCaption"
+                           Grid.Row="1"
+                           Classes="label"
+                           HorizontalAlignment="Center"
+                           Margin="0,12,0,0"/>
+            </Grid>
+        </Border>
     </Grid>
 </UserControl>
