@@ -72,15 +72,31 @@ CREATE UNIQUE INDEX IF NOT EXISTS ux_files_path ON files(file_path);
 CREATE INDEX IF NOT EXISTS ix_files_movie ON files(movie_id);
 
 -- A programme on this disk, made of the episodes a scan found for it. Named by the scan, from
--- the folder or the filename, exactly as a film is: the identity a re-scan resolves against.
--- genres and poster_path stay NULL until something identifies the programme.
+-- the folder or the filename, exactly as a film is: the identity a re-scan resolves against, so
+-- title is never rewritten by a lookup. genres and poster_path stay NULL until something
+-- identifies the programme.
+--
+-- tmdb_id is which TMDB programme it is, written by the background pass once the match is
+-- confirmed (see LocalSeriesLookup). tmdb_fetched_at is when that programme's description was
+-- last written here, and NULL means it still has to be asked for — which is also how a corrected
+-- identification asks again: set tmdb_id, clear tmdb_fetched_at. backdrop_path is TMDB's own
+-- relative path, sized when it is shown; rating is TMDB's average out of ten; cast_list and
+-- crew_list are newline separated lines, as on movies.
 CREATE TABLE IF NOT EXISTS series (
-    id          INTEGER PRIMARY KEY AUTOINCREMENT,
-    title       TEXT    NOT NULL,
-    year        INTEGER,
-    genres      TEXT,
-    poster_path TEXT,
-    created_at  TEXT
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    title           TEXT    NOT NULL,
+    year            INTEGER,
+    genres          TEXT,
+    poster_path     TEXT,
+    created_at      TEXT,
+    tmdb_id         INTEGER,
+    overview        TEXT,
+    backdrop_path   TEXT,
+    rating          REAL,
+    imdb_id         TEXT,
+    cast_list       TEXT,
+    crew_list       TEXT,
+    tmdb_fetched_at TEXT
 );
 
 -- One episode of a local programme. Files hang off it through files.episode_id, so two prints
@@ -88,12 +104,23 @@ CREATE TABLE IF NOT EXISTS series (
 -- may be NULL for a numbering that has none; the unique index folds that NULL to -1, because
 -- SQLite treats every NULL as distinct and two copies of an unnumbered episode would otherwise
 -- become two rows.
+--
+-- title is what the filename called it. The tmdb_* columns, overview, runtime_minutes, air_date
+-- and still_path are TMDB's description of the episode, fetched a season at a time when the
+-- programme is opened; tmdb_fetched_at is set on every episode of a season that was asked about,
+-- including one TMDB does not list, so a season is asked about once rather than on every open.
 CREATE TABLE IF NOT EXISTS episodes (
-    id             INTEGER PRIMARY KEY AUTOINCREMENT,
-    series_id      INTEGER NOT NULL REFERENCES series(id) ON DELETE CASCADE,
-    season_number  INTEGER,
-    episode_number INTEGER NOT NULL,
-    title          TEXT
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    series_id       INTEGER NOT NULL REFERENCES series(id) ON DELETE CASCADE,
+    season_number   INTEGER,
+    episode_number  INTEGER NOT NULL,
+    title           TEXT,
+    tmdb_title      TEXT,
+    overview        TEXT,
+    runtime_minutes INTEGER,
+    air_date        TEXT,
+    still_path      TEXT,
+    tmdb_fetched_at TEXT
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS ux_episodes_number

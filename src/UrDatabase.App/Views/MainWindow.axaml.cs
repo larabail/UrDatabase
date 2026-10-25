@@ -110,6 +110,13 @@ namespace UrDatabase.Views
         private Dictionary<long, UiMovie> _moviesById = new();
 
         /// <summary>
+        /// The same, for programmes on this disk. A dictionary of its own because the ids are a
+        /// separate namespace: <c>series</c> numbers from one as <c>movies</c> does, and an answer
+        /// about programme 3 must reach programme 3 and never film 3.
+        /// </summary>
+        private Dictionary<long, UiMovie> _seriesById = new();
+
+        /// <summary>
         /// The numbers the status line was last written from, and a running count of how many
         /// films now have artwork. Null until a library has actually been read.
         /// </summary>
@@ -442,7 +449,7 @@ namespace UrDatabase.Views
                 _jellyfin,
                 onFailure: message => Dispatcher.UIThread.Post(() => SetStatus(message)));
 
-            _localSeries = new LocalSeriesLoader(_dbPath);
+            _localSeries = new LocalSeriesLoader(_dbPath, CreateSeriesTmdb);
             if (JellyfinButton is not null) JellyfinButton.IsVisible = _jellyfin is not null;
 
             // The catalogue may have just moved.
@@ -502,13 +509,16 @@ namespace UrDatabase.Views
 
             // Before anything is warmed, so a fetch that answers immediately has somewhere to
             // report to. Last write wins on a duplicate id, which cannot happen for a local film
-            // but costs nothing to be safe about. Films only: a programme on this disk numbers its
-            // ids from one as well, and an answer about film 3 must not land on series 3.
+            // but costs nothing to be safe about. Films and programmes apart: a programme on this
+            // disk numbers its ids from one as well, and an answer about film 3 must not land on
+            // series 3.
             _moviesById = new Dictionary<long, UiMovie>();
+            _seriesById = new Dictionary<long, UiMovie>();
             foreach (var movie in _allMovies)
             {
-                if (movie.Id <= 0 || !movie.IsFilm) continue;
-                _moviesById[movie.Id] = movie;
+                if (movie.Id <= 0) continue;
+                if (movie.IsFilm) _moviesById[movie.Id] = movie;
+                else if (IsLocalSeries(movie)) _seriesById[movie.Id] = movie;
             }
 
             // Reset before the status is written, so a fresh read starts counting from what it
@@ -1153,8 +1163,22 @@ namespace UrDatabase.Views
                 // for that artwork to belong to — it keeps whatever poster it already had.
                 if (m.IsRemote) continue;
 
-                // Nor a programme on this disk. The film pass asks TMDB's film catalogue, which
-                // would answer "Fargo" with the 1996 film; television is looked up apart.
+                // A programme on this disk is identified against TMDB's television catalogue, not
+                // the film one, which would answer "Fargo" with the 1996 film. One lookup per
+                // programme, never per episode; see LocalSeriesLookup.
+                if (IsLocalSeries(m))
+                {
+                    if (!includeKnown && !string.IsNullOrWhiteSpace(m.PosterPath)
+                        && !string.IsNullOrWhiteSpace(m.Genres)) continue;
+
+                    var seriesId = m.Id;
+                    loader.QueueSeries(
+                        seriesId,
+                        onFetched: found => ShowOnUiThread(() => ApplySeriesEnrichment(seriesId, found)),
+                        ct: _cts.Token);
+                    continue;
+                }
+
                 if (!m.IsFilm) continue;
 
                 if (!includeKnown && !string.IsNullOrWhiteSpace(m.PosterPath)
@@ -1232,6 +1256,49 @@ namespace UrDatabase.Views
 
             if (gained) NotePosterArrived();
         }
+
+        private static bool IsLocalSeries(UiMovie m) => m.IsSeries && m.Source == MovieSource.Local && m.Id > 0;
+
+        /// <summary>
+        /// Puts what TMDB found onto whichever card is representing that programme now. The same
+        /// rules as a film's, less the poster count, which is the library's count of films.
+        /// </summary>
+        private void ApplySeriesEnrichment(long seriesId, Enrichment found)
+        {
+            if (!_seriesById.TryGetValue(seriesId, out var m)) return;
+
+            if (found.PosterPath is not null) m.PosterPath = found.PosterPath;
+            if (found.ArtworkRepaired) RetryVisibleSeriesArtwork(seriesId);
+
+            if (!string.IsNullOrWhiteSpace(found.Genres) && string.IsNullOrWhiteSpace(m.Genres))
+            {
+                m.Genres = found.Genres;
+                _genresStale = true;
+                _progressTimer?.Start();
+            }
+        }
+
+        private void RetryVisibleSeriesArtwork(long seriesId)
+        {
+            foreach (var card in LibraryRoot.GetVisualDescendants().OfType<PosterCard>())
+            {
+                if (card.DataContext is UiMovie movie && IsLocalSeries(movie) && movie.Id == seriesId)
+                    card.RetryArtwork();
+            }
+        }
+
+        /// <summary>
+        /// A TMDB client for one programme screen's season lookups, or null without a key — which
+        /// leaves the screen exactly as it was before programmes could be identified.
+        /// </summary>
+        private TmdbService? CreateSeriesTmdb() =>
+            string.IsNullOrWhiteSpace(_config.TmdbApiKey)
+                ? null
+                : new TmdbService(
+                    apiKey: _config.TmdbApiKey,
+                    posterCacheDir: _config.PosterCacheDir ?? "",
+                    imageSize: _config.TmdbImageSize ?? "w342",
+                    downloadPosters: false);
 
         /// <summary>
         /// Runs <paramref name="update"/> on the UI thread, and only while there is still a
@@ -2387,30 +2454,36 @@ namespace UrDatabase.Views
                 : ShowProgrammeAsync(m.RemoteId, m.DisplayPosterPath, openAtSeason: null);
 
         /// <summary>
-        /// Opens a programme a scan found on this disk. Nothing about it is fetched: until it has
-        /// been identified, what the catalogue knows is its name, its year and its episodes, and
-        /// the screen says so rather than waiting on a lookup that is not going to happen.
+        /// Opens a programme a scan found on this disk. What the catalogue knows about it — and,
+        /// once TMDB has identified it, TMDB's description — is read first; the IMDb rating is
+        /// asked for afterwards, as a server programme's is, and the episodes the screen asks
+        /// TMDB about itself, a season at a time.
         /// </summary>
         private async Task ShowLocalSeriesAsync(UiMovie m)
         {
             try
             {
-                var vm = new SeriesDetailsVm
-                {
-                    LocalId = m.Id,
-                    Title = m.Title,
-                    Year = m.Year,
-                    Genres = m.Genres ?? "",
-                    PosterPath = m.DisplayPosterPath,
-                    SeasonCount = m.SeasonCount,
-                    EpisodeCount = m.EpisodeCount
-                };
+                var loader = _localSeries;
+                var details = loader is null ? null : await Task.Run(() => loader.LoadDetails(m.Id), _cts.Token);
+                var vm = LocalSeriesPage.Build(m, details, tmdbConfigured: !string.IsNullOrWhiteSpace(_config.TmdbApiKey));
 
                 LibraryRoot.IsVisible = false;
+                using var loading = new DetailLoading(_cts.Token, message => SeriesView.ReportLoadNotice(vm, message));
 
                 try
                 {
-                    await SeriesView.ShowAsync(vm, appLifetime: _cts.Token, localLoader: _localSeries);
+                    // Nothing to enrich without an IMDb id, which is every programme TMDB has not
+                    // described — and then the screen opens exactly as it did before programmes
+                    // could be looked up, with no "Loading details" over a lookup that will not run.
+                    if (string.IsNullOrWhiteSpace(vm.ImdbId))
+                        await SeriesView.ShowAsync(vm, appLifetime: _cts.Token, localLoader: _localSeries);
+                    else
+                        await loading.ShowAsync(
+                            () => SeriesView.ShowAsync(vm, appLifetime: _cts.Token, localLoader: _localSeries,
+                                loadRating: RetryMissingSeriesRatingAsync, cancelEnrichment: loading.Cancel),
+                            load => load.RunAsync("IMDb rating",
+                                ct => LoadImdbRatingAsync(vm.ImdbId, null, ct),
+                                rating => SeriesView.UpdateRating(vm, rating)));
                 }
                 finally
                 {

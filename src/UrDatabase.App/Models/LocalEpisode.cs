@@ -23,6 +23,18 @@ namespace UrDatabase.Models
         /// <summary>The episode's own title as the filename gave it. Often empty.</summary>
         public string? Title { get; set; }
 
+        /// <summary>TMDB's name for the episode, once its season has been asked about. Preferred to <see cref="Title"/>.</summary>
+        public string? TmdbTitle { get; set; }
+
+        /// <summary>TMDB's plot for the episode. Null until its season has been asked about, and when TMDB has none.</summary>
+        public string? Overview { get; set; }
+
+        /// <summary>TMDB's length for the episode, in minutes.</summary>
+        public int? RuntimeMinutes { get; set; }
+
+        /// <summary>The day TMDB says it first aired, <c>yyyy-MM-dd</c>.</summary>
+        public string? AirDate { get; set; }
+
         /// <summary>
         /// The best copy the last scan still found: largest first, as a film's prints are chosen.
         /// Null when every copy is one a scan could not find.

@@ -195,17 +195,13 @@ namespace UrDatabase.Views
             // The server is credited only for what it supplied. A programme on this disk was named
             // by the scan from its own folders, and saying otherwise would send somebody looking
             // for a server setting that has nothing to do with it.
-            AttributionText.Text = vm.IsLocal
-                ? "Found on this computer: names and episode numbers come from the files and the folders they are in."
-                : "Metadata and artwork supplied by your Jellyfin server. IMDb rating retrieved from the OMDb API; neither IMDb nor OMDb endorses this application.";
+            AttributionText.Text = LocalSeriesPage.Attribution(vm);
 
             GenresText.Text = vm.Genres ?? "";
             GenresText.IsVisible = !string.IsNullOrWhiteSpace(vm.Genres);
 
             OverviewText.Text = string.IsNullOrWhiteSpace(vm.Overview)
-                ? vm.IsLocal
-                    ? "No summary yet: this programme was found on this computer and has not been looked up."
-                    : "The server has no summary for this programme."
+                ? LocalSeriesPage.MissingOverview(vm)
                 : vm.Overview;
 
             var cast = vm.TopCast
@@ -216,7 +212,7 @@ namespace UrDatabase.Views
 
             CastList.ItemsSource = cast;
             NoCastText.Text = vm.IsLocal
-                ? "Not known yet for a programme found on this computer."
+                ? LocalSeriesPage.MissingCast(vm)
                 : MissingMetadata.CreditsNotice(isRemote: true, tmdbConfigured: false);
             NoCastText.IsVisible = cast.Count == 0;
         }
@@ -331,11 +327,14 @@ namespace UrDatabase.Views
             ReferenceEquals(_session, session) && session.IsCurrent && IsShowing;
 
         /// <summary>
-        /// Reads a local programme's episodes off the catalogue and lists them. Off the UI thread,
-        /// because it is a query, and checked against the session afterwards like every other
-        /// answer this screen waits for.
+        /// Reads a local programme's episodes off the catalogue and lists them, then — for a
+        /// programme TMDB has identified — asks about any season not described yet and lists them
+        /// again with TMDB's names, plots and lengths. Off the UI thread, and checked against the
+        /// session after each answer like everything else this screen waits for.
         /// </summary>
-        private async Task ShowLocalEpisodesAsync(SeriesDetailsVm vm, SeriesRefreshSession session, CancellationToken ct)
+        /// <param name="force">Asks about every season, not only the undescribed ones. A manual refresh.</param>
+        private async Task ShowLocalEpisodesAsync(
+            SeriesDetailsVm vm, SeriesRefreshSession session, CancellationToken ct, bool force = false)
         {
             var loader = _localLoader;
             if (loader is null)
@@ -346,7 +345,33 @@ namespace UrDatabase.Views
 
             var episodes = await Task.Run(() => loader.Load(vm.LocalId), ct);
             if (!IsCurrent(session)) return;
+            ShowLocalEpisodes(episodes);
 
+            if (!vm.IsIdentified) return;
+
+            try
+            {
+                var described = await Task.Run(() => loader.RefreshEpisodesAsync(vm.LocalId, force, ct), ct);
+                if (described is null || !IsCurrent(session)) return;
+                ShowLocalEpisodes(described);
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                // The episodes are already listed under the names their files give them. What
+                // failed is the improvement, and the seasons it did not reach are asked about
+                // again the next time the programme is opened.
+                AppLog.Write("posters.log", $"seriesId={vm.LocalId} episode details: {ex}");
+                if (force && IsCurrent(session))
+                    SetRefreshNote("Could not fetch episode details from TMDB. Showing what the catalogue has; try again.");
+            }
+        }
+
+        private void ShowLocalEpisodes(IReadOnlyList<LocalEpisode> episodes)
+        {
             var groups = SeriesGrouping.GroupLocal(episodes);
             var missing = episodes.Count(e => !e.IsAvailable);
             var described = SeriesGrouping.Describe(groups);
@@ -358,15 +383,36 @@ namespace UrDatabase.Views
 
         /// <summary>
         /// Refreshing a local programme re-reads what the catalogue says, which changes whenever a
-        /// scan has run since the screen opened. It never scans: that is the library's job, and a
-        /// scan started from here would walk every watch folder to answer a question about one show.
+        /// scan has run since the screen opened, and asks TMDB about every season again when the
+        /// programme has been identified. It never scans: that is the library's job, and a scan
+        /// started from here would walk every watch folder to answer a question about one show.
         /// </summary>
-        private Task RefreshLocalAsync(SeriesDetailsVm vm, SeriesRefreshSession session) =>
-            RunPageWorkAsync(session, async ct =>
+        private Task RefreshLocalAsync(SeriesDetailsVm vm, SeriesRefreshSession session)
+        {
+            var loadRating = _loadRating;
+
+            // The opening's IMDb lookup is superseded by the one below, as on a server programme.
+            _cancelEnrichment?.Invoke();
+            _cancelEnrichment = null;
+            LoadNotice.IsVisible = false;
+
+            return RunPageWorkAsync(session, async ct =>
             {
-                await ShowLocalEpisodesAsync(vm, session, ct);
-                if (IsCurrent(session)) SetRefreshNote("Episodes re-read from the catalogue.");
+                SetRefreshNote("");
+                await ShowLocalEpisodesAsync(vm, session, ct, force: true);
+
+                if (loadRating is not null && !string.IsNullOrWhiteSpace(vm.ImdbId))
+                {
+                    var rating = await loadRating(vm.ImdbId, ct);
+                    if (IsCurrent(session)) UpdateRating(vm, rating);
+                }
+
+                if (IsCurrent(session) && !RefreshNote.IsVisible)
+                    SetRefreshNote(vm.IsIdentified
+                        ? "Episodes re-read from the catalogue and described again by TMDB."
+                        : "Episodes re-read from the catalogue.");
             }, manual: true);
+        }
 
         private async void Refresh_Click(object? sender, RoutedEventArgs e) => await RefreshAsync();
 

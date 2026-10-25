@@ -173,6 +173,41 @@ namespace UrDatabase.Tests
         }
 
         /// <summary>
+        /// The filename names the programme and the folder dates it. Without the folder's year,
+        /// two programmes of one name cannot be told apart and identifying it is refused.
+        /// </summary>
+        [Theory]
+        [InlineData("/tv/Fargo (2014)/Fargo.S01E01.mkv")]
+        [InlineData("/tv/Fargo (2014)/Season 01/Fargo.S01E01.mkv")]
+        [InlineData(@"D:\TV\Fargo.2014\Season 1\Fargo.S01E01.The.Crocodiles.Dilemma.1080p.mkv")]
+        public void Takes_the_year_from_a_folder_that_names_the_same_programme(string path)
+        {
+            Assert.True(EpisodeParser.TryParse(path, out var parsed));
+
+            Assert.Equal("Fargo", parsed.SeriesTitle);
+            Assert.Equal(2014, parsed.SeriesYear);
+        }
+
+        /// <summary>A folder of something else is no evidence about this programme's year.</summary>
+        [Fact]
+        public void Does_not_take_the_year_from_a_folder_naming_something_else()
+        {
+            Assert.True(EpisodeParser.TryParse("/media/Television (2020)/Fargo.S01E01.mkv", out var parsed));
+
+            Assert.Equal("Fargo", parsed.SeriesTitle);
+            Assert.Null(parsed.SeriesYear);
+        }
+
+        /// <summary>The filename's own year is still the better source.</summary>
+        [Fact]
+        public void Keeps_the_filename_year_over_the_folder_year()
+        {
+            Assert.True(EpisodeParser.TryParse("/tv/Doctor Who (1963)/Doctor Who (2005).S01E01.mkv", out var parsed));
+
+            Assert.Equal(2005, parsed.SeriesYear);
+        }
+
+        /// <summary>
         /// Documented in <see cref="EpisodeParser"/>: one file holding two episodes is a question
         /// about the catalogue's shape, not about parsing, and is not answered yet. Pinned so that
         /// answering it later is a deliberate act rather than an accident.

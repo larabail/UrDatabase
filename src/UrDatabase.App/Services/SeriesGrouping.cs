@@ -186,15 +186,19 @@ namespace UrDatabase.Services
         }
 
         /// <summary>
-        /// One local episode as a row. Its plot line is where the file is, because until something
-        /// has looked the programme up that is the one thing worth knowing about it; and a copy the
-        /// last scan could not find says so there instead, rather than leaving Play to discover it.
+        /// One local episode as a row. TMDB's name, plot and length when its season has been
+        /// described, and otherwise what the file said — its own title, and where it is, because
+        /// until something has looked the programme up that is the one thing worth knowing about
+        /// it. A copy the last scan could not find says so in place of the plot, whatever TMDB
+        /// knows, rather than leaving Play to discover it.
         /// </summary>
         public static EpisodeRow ToRow(LocalEpisode episode)
         {
             if (episode is null) throw new ArgumentNullException(nameof(episode));
 
-            var name = (episode.Title ?? "").Trim();
+            var described = (episode.TmdbTitle ?? "").Trim();
+            var parsed = (episode.Title ?? "").Trim();
+            var plot = (episode.Overview ?? "").Trim();
             var file = System.IO.Path.GetFileName(episode.FilePath ?? episode.AnyPath ?? "");
 
             return new EpisodeRow
@@ -202,12 +206,15 @@ namespace UrDatabase.Services
                 FilePath = episode.FilePath,
                 IsAvailable = episode.IsAvailable,
                 Label = EpisodeLabel(episode.SeasonNumber, episode.EpisodeNumber),
-                Title = name.Length > 0
-                    ? name
-                    : $"Episode {episode.EpisodeNumber.ToString(CultureInfo.InvariantCulture)}",
-                Overview = episode.IsAvailable
-                    ? file
-                    : $"Not found by the last scan — {file}"
+                Title = described.Length > 0
+                    ? described
+                    : parsed.Length > 0
+                        ? parsed
+                        : $"Episode {episode.EpisodeNumber.ToString(CultureInfo.InvariantCulture)}",
+                Runtime = RuntimeLabel(episode.RuntimeMinutes),
+                Overview = !episode.IsAvailable
+                    ? $"Not found by the last scan — {file}"
+                    : plot.Length > 0 ? plot : file
             };
         }
 

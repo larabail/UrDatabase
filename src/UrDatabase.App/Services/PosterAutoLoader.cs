@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -97,6 +97,22 @@ namespace UrDatabase.Services
         private readonly HashSet<long> _factsAsked = new();
         private readonly HashSet<long> _factsWaiting = new();
 
+        /// <summary>
+        /// Programmes on this disk waiting to be identified against TMDB's television catalogue.
+        /// </summary>
+        /// <remarks>
+        /// A queue of their own, taken first. A library holds tens of programmes beside thousands
+        /// of films, so putting them in front costs the films seconds; putting them behind would
+        /// leave every programme uncategorised until the last film had been looked up.
+        ///
+        /// Their ids are a separate namespace from the films' — <c>series</c> numbers from one as
+        /// <c>movies</c> does — so they are remembered in sets of their own, and never counted in
+        /// <see cref="Progress"/>, whose numbers are about films.
+        /// </remarks>
+        private readonly ConcurrentQueue<Request> _series = new();
+        private readonly HashSet<long> _seriesAttempted = new();
+        private readonly HashSet<long> _seriesInFlight = new();
+
         private int _outstanding;
         private int _workers;
 
@@ -105,13 +121,17 @@ namespace UrDatabase.Services
         /// Set on a request for a film's length, rating and people, to the TMDB film to ask about.
         /// Null on the ordinary lookup.
         /// </param>
+        /// <param name="Series">
+        /// Set on a request about a programme on this disk, whose id is a <c>series</c> row.
+        /// </param>
         private readonly record struct Request(
             long MovieId,
             string Title,
             int? Year,
             Action<Enrichment> OnFetched,
             CancellationToken Token,
-            int? FactsFor = null);
+            int? FactsFor = null,
+            bool Series = false);
 
         /// <summary>
         /// One TMDB client for the whole library, rather than one per poster.
@@ -197,6 +217,7 @@ namespace UrDatabase.Services
                     _outcomes.Count(entry => entry.Value == LookupOutcome.Failed));
 
                 _factsAsked.IntersectWith(_factsWaiting);
+                _seriesAttempted.IntersectWith(_seriesInFlight);
             }
         }
 
@@ -293,6 +314,23 @@ namespace UrDatabase.Services
         }
 
         /// <summary>
+        /// Takes a programme on this disk to identify, describe and find artwork for. Returns
+        /// immediately, like <see cref="Queue"/>, and does nothing at all without a TMDB key — the
+        /// programme then stays exactly as the scan catalogued it.
+        /// </summary>
+        /// <param name="seriesId">The <c>series</c> row. Not a film id; see <see cref="_series"/>.</param>
+        /// <param name="onFetched">Told the poster and genres to put on the card.</param>
+        public void QueueSeries(long seriesId, Action<Enrichment> onFetched, CancellationToken ct)
+        {
+            if (_disposed || seriesId <= 0 || string.IsNullOrWhiteSpace(_cfg.TmdbApiKey)) return;
+
+            Interlocked.Increment(ref _outstanding);
+            _series.Enqueue(new Request(seriesId, "", null, onFetched, ct, Series: true));
+
+            StartWorkerIfNeeded();
+        }
+
+        /// <summary>
         /// Makes sure somebody is going to take the queue, without ever running more workers than
         /// the configured concurrency.
         /// </summary>
@@ -343,13 +381,17 @@ namespace UrDatabase.Services
             {
                 while (true)
                 {
-                    // Artwork and genres first, every time a worker comes back for more: see
-                    // _facts for why the extra request waits behind them.
-                    while (_pending.TryDequeue(out var request) || _facts.TryDequeue(out request))
+                    // Programmes first, then artwork and genres, then facts: see _series and _facts
+                    // for why each waits behind the one before it.
+                    while (_series.TryDequeue(out var request)
+                           || _pending.TryDequeue(out request)
+                           || _facts.TryDequeue(out request))
                     {
                         try
                         {
-                            if (request.FactsFor is int tmdbId)
+                            if (request.Series)
+                                await FetchSeriesAsync(request).ConfigureAwait(false);
+                            else if (request.FactsFor is int tmdbId)
                                 await FetchFactsAsync(request, tmdbId).ConfigureAwait(false);
                             else
                                 await FetchAsync(request).ConfigureAwait(false);
@@ -362,7 +404,7 @@ namespace UrDatabase.Services
 
                     Interlocked.Decrement(ref _workers);
 
-                    if (_pending.IsEmpty && _facts.IsEmpty) return;
+                    if (_series.IsEmpty && _pending.IsEmpty && _facts.IsEmpty) return;
 
                     // Something arrived as this was standing down. Take the post back if nobody
                     // else already has, and otherwise leave it to them.
@@ -423,7 +465,7 @@ namespace UrDatabase.Services
         /// </remarks>
         private async Task FetchAsync(Request request)
         {
-            var (movieId, title, year, onFetched, ct, _) = request;
+            var (movieId, title, year, onFetched, ct, _, _) = request;
 
             if (string.IsNullOrWhiteSpace(_cfg.TmdbApiKey)) return;
 
@@ -610,7 +652,7 @@ namespace UrDatabase.Services
             }
         }
 
-        private static bool HasArtwork(string? path) =>
+        internal static bool HasArtwork(string? path) =>
             !string.IsNullOrWhiteSpace(path)
             && ((Uri.TryCreate(path, UriKind.Absolute, out var uri)
                  && (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps))
@@ -652,6 +694,86 @@ namespace UrDatabase.Services
         private readonly record struct Known(Enrichment Found, int? TmdbId, bool FactsKnown);
 
         /// <summary>
+        /// Identifies one programme on this disk, or reports what the catalogue already holds for
+        /// it. The rules are in <see cref="LocalSeriesLookup"/>; this is the scheduling around
+        /// them, on the same terms as a film's lookup — the same gate, the same shared client and
+        /// rate limit, the same drain on close, and the same once-per-launch memory of a refusal.
+        /// </summary>
+        private async Task FetchSeriesAsync(Request request)
+        {
+            var seriesId = request.MovieId;
+            var onFetched = request.OnFetched;
+
+            var acquired = false;
+            var attempted = false;
+            string title = "";
+
+            using var linked = CancellationTokenSource.CreateLinkedTokenSource(request.Token, _stopping.Token);
+            var token = linked.Token;
+
+            Interlocked.Increment(ref _active);
+
+            try
+            {
+                if (string.IsNullOrWhiteSpace(_cfg.TmdbApiKey)) return;
+
+                await _gate.WaitAsync(token);
+                acquired = true;
+
+                using var conn = Database.Open(_dbPath);
+
+                var known = LocalSeriesLookup.Read(conn, seriesId);
+                if (known is null) return;
+                title = known.Title;
+
+                // Reported every time, for the reason FetchAsync gives: each library read builds
+                // fresh cards, and only this tells the new ones what the catalogue already holds.
+                var hasArtwork = HasArtwork(known.PosterPath);
+                if (hasArtwork || !string.IsNullOrWhiteSpace(known.Genres))
+                    onFetched(new Enrichment(hasArtwork ? known.PosterPath : null, known.Genres));
+
+                if (LocalSeriesLookup.IsComplete(known)) return;
+
+                lock (_attemptLock)
+                {
+                    if (!_seriesAttempted.Add(seriesId)) return;
+                    _seriesInFlight.Add(seriesId);
+                }
+
+                attempted = true;
+
+                var result = await LocalSeriesLookup.IdentifyAsync(_tmdb, conn, seriesId, _cfg.DownloadPosters, token);
+                if (result.Matched) onFetched(result.Found);
+            }
+            catch (OperationCanceledException) when (token.IsCancellationRequested)
+            {
+                // Not an answer. Asked again after the next Refresh or launch.
+                if (attempted)
+                    lock (_attemptLock) _seriesAttempted.Remove(seriesId);
+            }
+            catch (Exception ex)
+            {
+                AppLog.Write("posters.log", $"seriesId={seriesId} {ex}");
+
+                if (_disposed) return;
+
+                var name = title.Length > 0 ? $"“{title}”" : "a programme";
+                _onFailure?.Invoke(DatabaseWriteLane.IsTransientLockFailure(ex)
+                    ? $"Could not save what TMDB says about {name}: the library was still in use. It will be looked up again next time."
+                    : $"Could not look up {name} on TMDB: {ex.Message}");
+            }
+            finally
+            {
+                if (acquired) _gate.Release();
+
+                if (attempted)
+                    lock (_attemptLock) _seriesInFlight.Remove(seriesId);
+
+                if (Interlocked.Decrement(ref _active) == 0 && _disposed) ReleaseClient();
+            }
+        }
+
+        /// <summary>
         /// Asks TMDB for a film's length, rating and people, writes them down, and reports them.
         /// </summary>
         /// <remarks>
@@ -665,7 +787,7 @@ namespace UrDatabase.Services
         /// </remarks>
         private async Task FetchFactsAsync(Request request, int tmdbId)
         {
-            var (movieId, _, _, onFetched, ct, _) = request;
+            var (movieId, _, _, onFetched, ct, _, _) = request;
 
             var acquired = false;
 
