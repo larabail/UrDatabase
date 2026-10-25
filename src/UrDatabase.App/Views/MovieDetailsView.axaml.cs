@@ -153,6 +153,7 @@ namespace UrDatabase.Views
         public MovieDetailsView()
         {
             InitializeComponent();
+            InitializeJournal();
         }
 
         /// <summary>
@@ -232,6 +233,7 @@ namespace UrDatabase.Views
 
             _cancelEnrichment?.Invoke();
             _cancelEnrichment = null;
+            CloseJournal();
             _cts?.Cancel();
             _mediaLoad?.Dispose();
             _mediaLoad = null;
@@ -288,6 +290,7 @@ namespace UrDatabase.Views
             FlagsList.ItemsSource = MediaFlags.For(vm.Media);
 
             ShowAwards(vm);
+            ShowJournal(vm);
 
             GenresText.Text = vm.Genres ?? "";
             GenresText.IsVisible = !string.IsNullOrWhiteSpace(vm.Genres);

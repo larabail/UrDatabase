@@ -211,6 +211,25 @@ It runs on Windows and macOS from one codebase, built with
   hand it the 1996 film's Oscars, which is the exact false attribution the year
   window exists to prevent (`Services/OscarsService`, `Services/UrActorService`,
   `Services/OscarMatch`).
+- **Rate it, and remember when you watched it and who with.** Under the poster,
+  **Your rating** is ten stars — UrActor's own scale — and a line for what you
+  thought. Click a star to rate, click the same star again to take the rating
+  away; the review saves when you leave the box, or the page. **Viewings** lists
+  every time you logged the film, newest first: **+ I watched this** asks for the
+  day (today unless you change it, and never a day that has not happened yet),
+  who with, and a note. The names are typed as one line, `Ana, Luis`, and
+  everybody you have logged before is offered underneath as a chip, most frequent
+  first, that adds or removes them in one click. A film can be logged as many
+  times as it was watched, and each viewing has its own ✕.
+
+  It all lives in the catalogue, in `film_ratings` and `film_viewings`, on this
+  computer only — nothing is sent to UrActor or anywhere else (see
+  [Known gaps](#known-gaps)). A film is filed under its TMDB id when it has one
+  and under its title and year until then, so a rating survives a rescan, works
+  for a film that is only on the server, and follows the film onto its TMDB id
+  the first time anything is saved after it is identified
+  (`Services/FilmJournalStore`, `Services/FilmJournal`, `Services/FilmKey`,
+  `Services/Companions`, `Views/MovieDetailsView.Journal`).
 - **Refresh without restarting.** The library, film details and programme pages
   each have a **Refresh** button. Library refresh reloads the catalogue, syncs
   Jellyfin when configured and retries missing artwork and genres without
@@ -1278,7 +1297,8 @@ and `files` tables, the `scans` table each scan records itself in, the
 `jellyfin_movies` cache and its television counterparts `jellyfin_series`,
 `jellyfin_seasons` and `jellyfin_episodes`, the `jellyfin_resume` positions
 behind the Continue watching row and the `jellyfin_resume_dismissals` that are
-taken back out of it, the `movies_fts` FTS5 index and the
+taken back out of it, the `film_ratings` and `film_viewings` that hold your own
+ratings and watch log, the `movies_fts` FTS5 index and the
 triggers that keep it current — and every statement is `IF NOT EXISTS`, so it
 runs against a library you already have without touching your data.
 
@@ -1530,7 +1550,8 @@ src/UrDatabase.App/          the application: one cross-platform project
   Models/                    what the views bind to
   Services/                  config, SQLite, scanning, search, TMDB, OMDb,
                              UrActor, Jellyfin, posters, playback reporting,
-                             local media-track inspection, the update check
+                             local media-track inspection, the update check,
+                             your own ratings and watch log
   Assets/UrDatabase.icns     the macOS application icon
   Assets/UrDatabase.ico      multi-resolution Windows executable and window icon,
                              embedded in the app rather than loaded from a loose file
@@ -1674,6 +1695,20 @@ Stated plainly, so nobody has to find out by using it:
   the awards are looked up again on the new name, so identifying a film corrects
   its Oscars along with its artwork. Until then the quiet failure is deliberate:
   attaching another film's Oscars would be worse than showing none.
+- **Ratings and viewings are not synced with UrActor.** The UrActor app keeps the
+  same things — a ten-star rating and review, a calendar of what was watched on
+  which day, who it was seen with — but they live in that app's own Firebase
+  project behind your UrActor login, not in the public awards API this app
+  already uses, and logging a shared viewing there writes into your friends'
+  data too. Doing that properly needs a sign-in flow and a credential that is
+  genuinely personal, unlike the three API keys, so this app keeps its own copy
+  locally instead. The tables are shaped like UrActor's — ten points, TMDB ids,
+  `yyyy-MM-dd` days — so a sync can be added without converting anything. Until
+  then a film rated here and in UrActor is rated twice, and "who with" is a list
+  of names rather than UrActor friends.
+- **Only films can be rated or logged.** A programme's page has no rating panel,
+  and an episode watched cannot be logged. Nothing fills the log in for you
+  either: playing a film to the end does not record a viewing.
 - **Playback position is shared with the server through VLC, and only VLC.** A
   film or an episode streamed through VLC now reports where it got to, so it
   resumes and is marked watched on every device — but three cases still do not.
