@@ -1533,7 +1533,8 @@ src/UrDatabase.App/          the application: one cross-platform project
                              local media-track inspection, the update check
   Assets/UrDatabase.icns     the macOS application icon
   Assets/UrDatabase.ico      multi-resolution Windows executable and window icon,
-                             embedded in the app rather than loaded from a loose file
+                             embedded in the app rather than loaded from a loose file;
+                             both are generated from assets/logo, never edited
   Data/schema.sql            the shape a database is created with; Database.Migrate
                              brings an older one up to it
   appsettings.example.json   configuration template, copied to the user's data
@@ -1545,9 +1546,13 @@ tests/UrDatabase.Tests/      xUnit suite; TempLog is how a test class stays out
 tool/                        Python helpers with their own unittest suite:
                              the version-bump check, the release gate and the
                              macOS bundler, Store payload/archive validation,
-                             checksum-locked ffprobe preparation
+                             checksum-locked ffprobe preparation, and
+                             make_icons.py, which renders every copy of the icon
 packaging/windows/           Store manifest and PNG assets derived from the app icon
 packaging/ffprobe/            helper pins, notices and source/rebuild provenance
+assets/logo/                 the app icon's editable SVG masters: UrDatabase.svg
+                             for 48px and up, UrDatabase-small.svg drawn on the
+                             pixel grid for 16-32px and the site favicon
 Directory.Build.props        the single <Version> for the whole solution
 web/                         the downloads site served by Firebase Hosting
 docs/                        design notes
@@ -1564,6 +1569,26 @@ and that a change under `src/` bumps the version.
 
 `dotnet build` and `dotnet test` must both be clean before you open a pull
 request.
+
+### Changing the app icon
+
+The icon is a clapperboard whose slate is a catalogue card. Edit the SVGs in
+`assets/logo/`, then regenerate every copy of it in one go:
+
+```bash
+pip install -r tool/requirements-icons.txt
+python tool/make_icons.py          # writes the .ico, .icns, Store PNGs and site favicon
+python tool/make_icons.py --check  # fails if any of them is stale
+```
+
+That writes `src/UrDatabase.App/Assets/UrDatabase.ico` and `.icns`, the PNGs in
+`packaging/windows/Assets/` and the inline favicon in `web/downloads/index.html`.
+Change the small master as well as the large one: it is a separate drawing,
+because a scaled-down large icon blurs at taskbar sizes. The renderer is pinned,
+since the tests compare the committed files with a fresh render byte for byte.
+Those tests are skipped when resvg is not installed, which is the case in CI. The
+tests that check the files' structure and that Windows and macOS carry identical
+frames always run.
 
 ### The suite never touches your install
 
