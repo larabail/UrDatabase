@@ -57,6 +57,7 @@ namespace UrDatabase.Views
         private bool _hasRelated;
         private int _viewerIndex = -1;
         private CancellationTokenSource? _viewerCts;
+        private readonly OwnedImageSlot<Avalonia.Media.Imaging.Bitmap> _viewerImage = new();
 
         /// <summary>
         /// Where to record a file the user links by hand. Null when the screen was shown without
@@ -515,9 +516,11 @@ namespace UrDatabase.Views
         }
 
         /// <summary>
-        /// Shows a still across the window: the thumbnail at once, already decoded, then the large
-        /// one when it arrives. The large one is never kept in memory afterwards — see
-        /// <see cref="ImageLoader.LoadAsync"/> — and when it cannot be fetched the thumbnail stays.
+        /// Shows a still across the window: the thumbnail first, then the large one when it
+        /// arrives. Both are loaded outside the shared cache and owned by
+        /// <see cref="_viewerImage"/>, which releases each one as soon as it is replaced, the
+        /// viewer steps or closes, or it arrives too late to be shown. When the large one cannot
+        /// be fetched the thumbnail stays.
         /// </summary>
         private void OpenStill(int index)
         {
@@ -528,7 +531,7 @@ namespace UrDatabase.Views
             _viewerCts = CancellationTokenSource.CreateLinkedTokenSource(_cts?.Token ?? CancellationToken.None);
             _viewerIndex = index;
 
-            StillViewerImage.Source = null;
+            var ticket = _viewerImage.Begin(ShowViewerImage);
             StillViewerCaption.Text = _stills.Count > 1
                 ? $"{index + 1} / {_stills.Count}   ·   ← → to move   ·   Esc to close"
                 : "Esc to close";
@@ -538,18 +541,19 @@ namespace UrDatabase.Views
             // go to the window instead of here.
             StillViewer.Focus();
 
-            _ = LoadViewerAsync(_stills[index], _viewerCts.Token);
+            _ = LoadViewerAsync(_stills[index], ticket, _viewerCts.Token);
         }
 
-        private async Task LoadViewerAsync(FilmStill still, CancellationToken ct)
+        private void ShowViewerImage(Avalonia.Media.Imaging.Bitmap? bitmap) => StillViewerImage.Source = bitmap;
+
+        private async Task LoadViewerAsync(FilmStill still, int ticket, CancellationToken ct)
         {
-            var thumbnail = await ImageLoader.LoadAsync(still.Thumbnail, ct);
-            if (ct.IsCancellationRequested) return;
-            if (thumbnail is not null) StillViewerImage.Source = thumbnail;
+            // A cancelled load still hands back whatever it decoded; Accept disposes a stale one.
+            var thumbnail = await ImageLoader.LoadAsync(still.Thumbnail, ct, cache: false);
+            if (thumbnail is not null && !_viewerImage.Accept(ticket, thumbnail, ShowViewerImage)) return;
 
             var full = await ImageLoader.LoadAsync(still.Full, ct, cache: false);
-            if (ct.IsCancellationRequested || full is null) return;
-            StillViewerImage.Source = full;
+            _viewerImage.Accept(ticket, full, ShowViewerImage);
         }
 
         private void CloseStill()
@@ -558,7 +562,7 @@ namespace UrDatabase.Views
             _viewerIndex = -1;
             var wasOpen = StillViewer.IsVisible;
             StillViewer.IsVisible = false;
-            StillViewerImage.Source = null;
+            _viewerImage.Release(ShowViewerImage);
 
             // Back inside the page, so Escape goes on meaning "back to the library".
             if (wasOpen && IsShowing) BackButton.Focus();

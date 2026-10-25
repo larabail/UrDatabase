@@ -20,14 +20,16 @@ namespace UrDatabase.Services
         private static readonly SemaphoreSlim DownloadGate = new(6);
 
         /// <param name="cache">
-        /// False for an image looked at once and then left — a full-size still. The cache keeps
-        /// every bitmap for the life of the app, and a dozen 1280-pixel frames would cost more
-        /// memory than every poster in a library.
+        /// False for an image the caller will let go of — a film still. The cache keeps every
+        /// bitmap for the life of the app, and a strip of stills on every film opened would cost
+        /// more memory than every poster in a library. With false the shared cache is neither read
+        /// nor written, so the bitmap returned is always a fresh one that <b>the caller owns and
+        /// must dispose</b>; see <see cref="OwnedImageSlot{T}"/>.
         /// </param>
         public static async Task<Bitmap?> LoadAsync(string? source, CancellationToken ct = default, bool cache = true)
         {
             if (string.IsNullOrWhiteSpace(source)) return null;
-            if (Cache.TryGetValue(source, out var cached)) return cached;
+            if (cache && Cache.TryGetValue(source, out var cached)) return cached;
 
             try
             {
