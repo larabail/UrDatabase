@@ -310,6 +310,21 @@ CREATE TABLE IF NOT EXISTS watchlist (
     added_at TEXT NOT NULL
 );
 
+-- Every disk the app has seen plugged in, so that one which dies can be missed: the operating
+-- system does not report a dead disk as missing, it just stops listing it. drive_id is the volume
+-- serial number where there is one ('serial:1A2B-3C4D', Windows) and the label and capacity where
+-- there is not ('volume:Films|4000787030016'), never the drive letter, which Windows hands out
+-- again to whatever is plugged in next. last_root is where to say it was. A row is deleted only
+-- when the owner forgets the disk. A new table, so CREATE ... IF NOT EXISTS is the migration.
+CREATE TABLE IF NOT EXISTS known_drives (
+    drive_id      TEXT PRIMARY KEY,
+    label         TEXT,
+    last_root     TEXT NOT NULL,
+    total_bytes   INTEGER,
+    first_seen_at TEXT NOT NULL,
+    last_seen_at  TEXT NOT NULL
+);
+
 -- Problems the owner has reported with a copy of a film: bad audio, a low resolution, a squashed
 -- aspect ratio. A person's judgement after watching it, which nothing in the file can measure, so it
 -- is kept apart from the media badges that are recomputed every time a film is opened.

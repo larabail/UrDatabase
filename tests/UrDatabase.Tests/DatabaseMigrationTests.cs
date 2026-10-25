@@ -471,6 +471,32 @@ INSERT INTO movies (title, year, poster_path) VALUES ('El Drama', 2026, '/wrong.
         }
 
         /// <summary>
+        /// The remembered disks are a new table, so the schema script's own CREATE TABLE IF NOT
+        /// EXISTS is what brings it to a library that predates it. Asserted because the drive check
+        /// writes to it on every launch, and a missing table there is a disk that is never missed.
+        /// </summary>
+        [Fact]
+        public void An_existing_library_gains_the_table_of_remembered_disks()
+        {
+            CreateOldLibrary();
+
+            using var conn = Database.Open(_dbPath);
+
+            Assert.True(Database.TableExists(conn, "known_drives"));
+            Assert.True(Database.ColumnExists(conn, "known_drives", "last_root"));
+
+            KnownDriveStore.Remember(conn, new[]
+            {
+                new KnownDrive("serial:1A2B-3C4D", "Films", @"E:\", 6_000_000_000_000, DateTime.UtcNow)
+            });
+            Assert.Equal(@"E:\", Assert.Single(KnownDriveStore.Load(conn)).LastRoot);
+
+            using var read = conn.CreateCommand();
+            read.CommandText = "SELECT title FROM jellyfin_movies WHERE item_id = 'abc'";
+            Assert.Equal("Ran", read.ExecuteScalar() as string);
+        }
+
+        /// <summary>
         /// Database.cs carries a copy of the schema for a publish layout that did not copy the
         /// file beside it. Two descriptions of one schema drift the moment somebody edits one of
         /// them, and the failure lands on a trimmed release build that cannot open its own

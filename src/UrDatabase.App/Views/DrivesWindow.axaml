@@ -1,0 +1,96 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="UrDatabase.Views.DrivesWindow"
+        Title="Drives"
+        Width="600"
+        Height="640"
+        MinWidth="440"
+        MinHeight="320"
+        Background="{StaticResource RoomBrush}"
+        WindowStartupLocation="CenterOwner">
+
+    <!--
+        Every drive: the disks plugged in now, the ones remembered from earlier
+        launches, and the ones the library lives on. A window rather than a
+        message box because a remembered disk that has been retired needs a
+        button of its own to forget it, and a message box cannot carry one per
+        line.
+    -->
+    <Grid Margin="20" RowDefinitions="Auto,*,Auto,Auto">
+
+        <TextBlock Grid.Row="0"
+                   Classes="dim"
+                   FontSize="12"
+                   TextWrapping="Wrap"
+                   Margin="0,0,0,14"
+                   Text="Every disk UrDatabase has seen is remembered, and if one stops appearing it says so when the app opens. Forget a disk you have retired and it will not be mentioned again."/>
+
+        <ScrollViewer Grid.Row="1"
+                      HorizontalScrollBarVisibility="Disabled">
+            <ItemsControl x:Name="DriveList">
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate>
+                        <Border BorderBrush="{StaticResource EdgeBrush}"
+                                BorderThickness="0,0,0,1"
+                                Padding="0,10">
+                            <Grid ColumnDefinitions="*,12,Auto">
+                                <StackPanel Grid.Column="0" Spacing="3">
+                                    <TextBlock Text="{Binding Title}"
+                                               FontWeight="SemiBold"
+                                               TextWrapping="Wrap"
+                                               Foreground="{StaticResource NoBrush}"
+                                               IsVisible="{Binding IsAlarm}"/>
+                                    <TextBlock Text="{Binding Title}"
+                                               FontWeight="SemiBold"
+                                               TextWrapping="Wrap"
+                                               Foreground="{StaticResource DimBrush}"
+                                               IsVisible="{Binding IsQuietlyDown}"/>
+                                    <TextBlock Text="{Binding Title}"
+                                               FontWeight="SemiBold"
+                                               TextWrapping="Wrap"
+                                               Foreground="{StaticResource BoneBrush}"
+                                               IsVisible="{Binding IsUp}"/>
+                                    <TextBlock Text="{Binding Body}"
+                                               Classes="dim"
+                                               FontSize="12"
+                                               TextWrapping="Wrap"/>
+                                </StackPanel>
+                                <Button Grid.Column="2"
+                                        Classes="ghost"
+                                        VerticalAlignment="Top"
+                                        Content="Forget"
+                                        ToolTip.Tip="Stop missing this disk. If it is plugged in again it will be remembered again."
+                                        IsVisible="{Binding CanForget}"
+                                        Tag="{Binding}"
+                                        Click="Forget_Click"/>
+                            </Grid>
+                        </Border>
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
+        </ScrollViewer>
+
+        <TextBlock x:Name="StatusText"
+                   Grid.Row="2"
+                   Classes="dim"
+                   FontSize="12"
+                   TextWrapping="Wrap"
+                   Margin="0,10,0,0"
+                   IsVisible="False"/>
+
+        <StackPanel Grid.Row="3"
+                    Orientation="Horizontal"
+                    HorizontalAlignment="Right"
+                    Spacing="10"
+                    Margin="0,16,0,0">
+            <Button x:Name="RecheckButton"
+                    Classes="ghost"
+                    Content="Check again"
+                    Click="Recheck_Click"/>
+            <Button x:Name="CloseButton"
+                    Classes="primary"
+                    Content="Close"
+                    Click="Close_Click"/>
+        </StackPanel>
+    </Grid>
+</Window>
