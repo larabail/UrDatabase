@@ -8,8 +8,23 @@ namespace UrDatabase.Models
     /// </summary>
     public sealed class EpisodeRow
     {
-        /// <summary>The Jellyfin item id. What Play asks the server to stream.</summary>
+        /// <summary>The Jellyfin item id. What Play asks the server to stream. Empty for a local episode.</summary>
         public string ItemId { get; set; } = "";
+
+        /// <summary>
+        /// The file Play opens, for an episode on this disk: the best copy the last scan still
+        /// found. Null for a server episode, and for a local one whose every copy has gone.
+        /// </summary>
+        public string? FilePath { get; set; }
+
+        /// <summary>
+        /// False for a local episode the last scan could not find. It stays listed — a gap in a
+        /// season is worth seeing — but dimmed, and Play says why rather than failing.
+        /// </summary>
+        public bool IsAvailable { get; set; } = true;
+
+        /// <summary>Bound to the row, so an episode that will not play looks like one.</summary>
+        public double RowOpacity => IsAvailable ? 1.0 : 0.45;
 
         /// <summary>
         /// <c>S01E02</c>, or <c>E02</c> when the season is unnumbered, or empty when the server

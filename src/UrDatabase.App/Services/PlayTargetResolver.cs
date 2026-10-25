@@ -62,11 +62,13 @@ ORDER BY COALESCE(size_bytes, 0) DESC, COALESCE(updated_at, '') DESC, file_path 
         /// still found. A file already linked to a different movie is, by the catalogue's own
         /// account, not this film, so offering it would be proposing to break a link that
         /// something already got right; and a file marked missing is not a candidate for anything.
+        /// Nor is an episode, which the scan has filed under its programme: "Fargo" the film must
+        /// not be offered <c>Fargo.S01E01.mkv</c> as its likely copy.
         /// </summary>
         private const string UnclaimedFilesSql = @"
 SELECT file_path
 FROM files
-WHERE (movie_id IS NULL OR movie_id = @movie_id) AND missing_since IS NULL
+WHERE (movie_id IS NULL OR movie_id = @movie_id) AND episode_id IS NULL AND missing_since IS NULL
 ORDER BY file_path ASC;
 ";
 
@@ -170,6 +172,10 @@ ORDER BY file_path ASC;
         /// the path was just checked and is there, so whatever a previous scan concluded about it
         /// is out of date. Leaving the mark would make the link take and then be ignored, since
         /// the queries above will not offer a file the catalogue still calls gone.
+        ///
+        /// And it marks the link as a person's, which is what stops the next scan re-filing a file
+        /// somebody has said is a film as the episode its name looks like. A file is a film or an
+        /// episode, so any episode it had been filed under lets go of it.
         /// </summary>
         /// <exception cref="ArgumentException">
         /// The file is missing, or is not one of the video types the app opens. Refusing here
@@ -189,13 +195,15 @@ ORDER BY file_path ASC;
             var modified = info.Exists ? info.LastWriteTimeUtc.ToString("o") : null;
 
             const string sql = @"
-INSERT INTO files (movie_id, file_path, size_bytes, created_at, updated_at)
-VALUES (@movie_id, @file_path, @size_bytes, @created_at, @updated_at)
+INSERT INTO files (movie_id, file_path, size_bytes, created_at, updated_at, linked_by_hand)
+VALUES (@movie_id, @file_path, @size_bytes, @created_at, @updated_at, 1)
 ON CONFLICT(file_path) DO UPDATE SET
-    movie_id      = excluded.movie_id,
-    size_bytes    = excluded.size_bytes,
-    updated_at    = excluded.updated_at,
-    missing_since = NULL;
+    movie_id       = excluded.movie_id,
+    episode_id     = NULL,
+    linked_by_hand = 1,
+    size_bytes     = excluded.size_bytes,
+    updated_at     = excluded.updated_at,
+    missing_since  = NULL;
 ";
 
             conn.Execute(sql, new

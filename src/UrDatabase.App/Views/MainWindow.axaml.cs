@@ -175,6 +175,8 @@ namespace UrDatabase.Views
         /// </summary>
         private SeriesLoader? _series;
 
+        /// <summary>The episodes of a programme on this disk. Rebuilt with the configuration, like the above.</summary>
+        private LocalSeriesLoader? _localSeries;
         /// <summary>
         /// What the last sync said the viewer is part way through. Read from the cache with the
         /// library, so the Continue watching row is on screen before the server has been asked
@@ -440,6 +442,7 @@ namespace UrDatabase.Views
                 _jellyfin,
                 onFailure: message => Dispatcher.UIThread.Post(() => SetStatus(message)));
 
+            _localSeries = new LocalSeriesLoader(_dbPath);
             if (JellyfinButton is not null) JellyfinButton.IsVisible = _jellyfin is not null;
 
             // The catalogue may have just moved.
@@ -499,11 +502,12 @@ namespace UrDatabase.Views
 
             // Before anything is warmed, so a fetch that answers immediately has somewhere to
             // report to. Last write wins on a duplicate id, which cannot happen for a local film
-            // but costs nothing to be safe about.
+            // but costs nothing to be safe about. Films only: a programme on this disk numbers its
+            // ids from one as well, and an answer about film 3 must not land on series 3.
             _moviesById = new Dictionary<long, UiMovie>();
             foreach (var movie in _allMovies)
             {
-                if (movie.Id <= 0) continue;
+                if (movie.Id <= 0 || !movie.IsFilm) continue;
                 _moviesById[movie.Id] = movie;
             }
 
@@ -1148,6 +1152,11 @@ namespace UrDatabase.Views
                 // copy has since gone is skipped again, because there is no longer a local copy
                 // for that artwork to belong to — it keeps whatever poster it already had.
                 if (m.IsRemote) continue;
+
+                // Nor a programme on this disk. The film pass asks TMDB's film catalogue, which
+                // would answer "Fargo" with the 1996 film; television is looked up apart.
+                if (!m.IsFilm) continue;
+
                 if (!includeKnown && !string.IsNullOrWhiteSpace(m.PosterPath)
                     && !string.IsNullOrWhiteSpace(m.Genres)
                     && (m.FactsKnown || loader.HasAskedForFacts(m.Id))) continue;
@@ -1383,7 +1392,7 @@ namespace UrDatabase.Views
         {
             foreach (var card in LibraryRoot.GetVisualDescendants().OfType<PosterCard>())
             {
-                if (movieId is null || card.DataContext is UiMovie movie && movie.Id == movieId)
+                if (movieId is null || card.DataContext is UiMovie { IsFilm: true } movie && movie.Id == movieId)
                     card.RetryArtwork();
             }
         }
@@ -2369,10 +2378,55 @@ namespace UrDatabase.Views
         /// <summary>
         /// Opens a television series. Everything on the page comes from the cache, so it opens
         /// instantly and opens at all with the server down; the episodes are asked for afterwards
-        /// and the screen says which of the two it is showing.
+        /// and the screen says which of the two it is showing. A programme on this disk opens
+        /// from the catalogue instead, and has nothing to ask anybody.
         /// </summary>
         private Task ShowSeriesDetailsAsync(UiMovie m) =>
-            ShowProgrammeAsync(m.RemoteId, m.DisplayPosterPath, openAtSeason: null);
+            m.Source == MovieSource.Local
+                ? ShowLocalSeriesAsync(m)
+                : ShowProgrammeAsync(m.RemoteId, m.DisplayPosterPath, openAtSeason: null);
+
+        /// <summary>
+        /// Opens a programme a scan found on this disk. Nothing about it is fetched: until it has
+        /// been identified, what the catalogue knows is its name, its year and its episodes, and
+        /// the screen says so rather than waiting on a lookup that is not going to happen.
+        /// </summary>
+        private async Task ShowLocalSeriesAsync(UiMovie m)
+        {
+            try
+            {
+                var vm = new SeriesDetailsVm
+                {
+                    LocalId = m.Id,
+                    Title = m.Title,
+                    Year = m.Year,
+                    Genres = m.Genres ?? "",
+                    PosterPath = m.DisplayPosterPath,
+                    SeasonCount = m.SeasonCount,
+                    EpisodeCount = m.EpisodeCount
+                };
+
+                LibraryRoot.IsVisible = false;
+
+                try
+                {
+                    await SeriesView.ShowAsync(vm, appLifetime: _cts.Token, localLoader: _localSeries);
+                }
+                finally
+                {
+                    if (ReferenceEquals(SeriesView.Vm, vm)) SeriesView.Close();
+                    LibraryRoot.IsVisible = true;
+                }
+            }
+            catch (OperationCanceledException) when (_cts.IsCancellationRequested)
+            {
+                // The window is closing.
+            }
+            catch (Exception ex)
+            {
+                await MessageBoxWindow.ShowAsync(this, "UrDatabase", $"Could not load details:{Environment.NewLine}{ex.Message}");
+            }
+        }
 
         /// <summary>
         /// Opens the programme an episode in the Continue watching row belongs to, on the season

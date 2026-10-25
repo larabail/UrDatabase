@@ -50,7 +50,9 @@ namespace UrDatabase.Models
         int Missing,
         int MoviesAdded,
         IReadOnlyList<string> Roots,
-        IReadOnlyList<string> SkippedRoots)
+        IReadOnlyList<string> SkippedRoots,
+        int SeriesAdded = 0,
+        int Refiled = 0)
     {
         /// <summary>A scan that never got as far as walking anything.</summary>
         public static ScanResult Nothing { get; } = new(
@@ -83,6 +85,7 @@ namespace UrDatabase.Models
                 };
 
                 if (Moved > 0) parts.Add($"{Moved} moved");
+                if (Refiled > 0) parts.Add($"{Refiled} re-filed as episodes");
                 if (Failed > 0) parts.Add($"{Failed} failed");
                 if (Missing > 0) parts.Add($"{Missing} now missing");
 
@@ -106,7 +109,8 @@ namespace UrDatabase.Models
             ScanCounts counts,
             int moviesAdded,
             IEnumerable<string> roots,
-            IEnumerable<string> skippedRoots) =>
+            IEnumerable<string> skippedRoots,
+            int seriesAdded = 0) =>
             new(scanId,
                 status,
                 counts.Inserted,
@@ -117,7 +121,9 @@ namespace UrDatabase.Models
                 counts.Missing,
                 moviesAdded,
                 roots.ToList(),
-                skippedRoots.ToList());
+                skippedRoots.ToList(),
+                seriesAdded,
+                counts.Refiled);
     }
 
     /// <summary>The mutable tally a scan keeps while it runs, before it becomes a result.</summary>
@@ -129,5 +135,11 @@ namespace UrDatabase.Models
         public int Unchanged;
         public int Failed;
         public int Missing;
+
+        /// <summary>
+        /// Files an earlier scan catalogued as films that this one read as episodes. Not a
+        /// partition of the walk like the five above: each of these is also counted as updated.
+        /// </summary>
+        public int Refiled;
     }
 }

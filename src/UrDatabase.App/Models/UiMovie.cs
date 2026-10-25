@@ -142,15 +142,15 @@ namespace UrDatabase.Models
         /// <summary>
         /// Whether this is a film, a television series, or one episode of one. Defaults to
         /// <see cref="MediaKind.Film"/> so every row read out of the <c>movies</c> table is right
-        /// without the query saying so — nothing on this machine is catalogued as television.
+        /// without the query saying so. A programme on this disk is read from the <c>series</c>
+        /// table, whose query says so explicitly.
         /// </summary>
         public MediaKind Kind { get; set; } = MediaKind.Film;
 
         /// <summary>
         /// True when this is a television series rather than a film. A question about what the
         /// card is, not about where it is — <see cref="IsRemote"/> and <see cref="IsOnServer"/>
-        /// answer that, and every series happens to be on a server, which is a fact about how
-        /// television reaches this app rather than part of what a series means.
+        /// answer that. A series may come from a server or from episodes a scan found on this disk.
         /// </summary>
         public bool IsSeries => Kind == MediaKind.Series;
 
@@ -165,10 +165,10 @@ namespace UrDatabase.Models
         /// Whether the card says the server holds this.
         /// </summary>
         /// <remarks>
-        /// Never on a series, although every series genuinely is on the server. The badge answers
-        /// "will this play away from home", and for television the answer is on the card already —
-        /// nothing local is ever a series, so the mark would appear on every single one of them
-        /// and say nothing that the series badge beside it did not.
+        /// Never on a series. The badge answers "will this play away from home", and for a
+        /// programme that is a question about each episode rather than about the card — a server
+        /// series is wholly on the server, which the series badge already implies, and a local one
+        /// is not on a server at all.
         ///
         /// An episode does carry it. It only ever appears in the Continue watching row, beside
         /// films of which some play offline and some do not, and there the badge is the one thing
@@ -365,6 +365,10 @@ namespace UrDatabase.Models
         /// server, an import, a fixture — a series and a film cannot silently become one card.
         /// An episode is keyed separately again, for the same reason and one more: an episode card
         /// and its programme's card can be on screen at once, with the row above the shelves.
+        ///
+        /// A programme on this disk is keyed apart from a film for a reason that is not
+        /// hypothetical: its id comes from the <c>series</c> table, which numbers from one exactly
+        /// as <c>movies</c> does, so series 3 and film 3 would otherwise be one card.
         /// </summary>
         public string Key => Source == MovieSource.Jellyfin
             ? Kind switch
@@ -373,7 +377,9 @@ namespace UrDatabase.Models
                 MediaKind.Episode => $"jellyfin:episode:{RemoteId}",
                 _ => $"jellyfin:{RemoteId}"
             }
-            : $"local:{Id.ToString(CultureInfo.InvariantCulture)}";
+            : Kind == MediaKind.Series
+                ? $"local:series:{Id.ToString(CultureInfo.InvariantCulture)}"
+                : $"local:{Id.ToString(CultureInfo.InvariantCulture)}";
 
         private string? _posterPath;
 

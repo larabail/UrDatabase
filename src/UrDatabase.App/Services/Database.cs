@@ -196,6 +196,21 @@ namespace UrDatabase.Services
             // its media streams until now, so every library synced before this has the column
             // absent and every film would fail on "no such column" the moment one was opened.
             AddColumnIfMissing(conn, "jellyfin_movies", "media_info", "TEXT");
+
+            // Which episode a file is, now that a scan can read one. Null on every existing row,
+            // which is the honest starting value: nothing had been filed as an episode before. The
+            // next scan re-files whatever it reads as an episode — see ScanService — and that is
+            // what turns a library of oddly titled films back into programmes.
+            AddColumnIfMissing(conn, "files", "episode_id", "INTEGER REFERENCES episodes(id) ON DELETE SET NULL");
+            AddColumnIfMissing(conn, "files", "linked_by_hand", "INTEGER NOT NULL DEFAULT 0");
+
+            // Here rather than in the schema script, which runs before the column above exists.
+            if (ColumnExists(conn, "files", "episode_id"))
+            {
+                using var index = conn.CreateCommand();
+                index.CommandText = "CREATE INDEX IF NOT EXISTS ix_files_episode ON files(episode_id)";
+                index.ExecuteNonQuery();
+            }
         }
 
         /// <summary>
@@ -300,10 +315,28 @@ CREATE TABLE IF NOT EXISTS files (
     updated_at TEXT,
     last_seen_at      TEXT,
     last_seen_scan_id INTEGER,
-    missing_since     TEXT
+    missing_since     TEXT,
+    episode_id        INTEGER REFERENCES episodes(id) ON DELETE SET NULL,
+    linked_by_hand    INTEGER NOT NULL DEFAULT 0
 );
 CREATE UNIQUE INDEX IF NOT EXISTS ux_files_path ON files(file_path);
 CREATE INDEX IF NOT EXISTS ix_files_movie ON files(movie_id);
+CREATE TABLE IF NOT EXISTS series (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    title       TEXT    NOT NULL,
+    year        INTEGER,
+    genres      TEXT,
+    poster_path TEXT,
+    created_at  TEXT
+);
+CREATE TABLE IF NOT EXISTS episodes (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    series_id      INTEGER NOT NULL REFERENCES series(id) ON DELETE CASCADE,
+    season_number  INTEGER,
+    episode_number INTEGER NOT NULL,
+    title          TEXT
+);
+CREATE UNIQUE INDEX IF NOT EXISTS ux_episodes_number ON episodes(series_id, IFNULL(season_number, -1), episode_number);
 CREATE TABLE IF NOT EXISTS scans (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
     started_at    TEXT NOT NULL,
@@ -467,6 +500,17 @@ END;
 CREATE TRIGGER IF NOT EXISTS movies_au AFTER UPDATE ON movies BEGIN
     INSERT INTO movies_fts(movies_fts, rowid, title, genres) VALUES ('delete', old.id, old.title, old.genres);
     INSERT INTO movies_fts(rowid, title, genres) VALUES (new.id, new.title, new.genres);
+END;
+CREATE VIRTUAL TABLE IF NOT EXISTS series_fts USING fts5(title, genres, content='series', content_rowid='id');
+CREATE TRIGGER IF NOT EXISTS series_ai AFTER INSERT ON series BEGIN
+    INSERT INTO series_fts(rowid, title, genres) VALUES (new.id, new.title, new.genres);
+END;
+CREATE TRIGGER IF NOT EXISTS series_ad AFTER DELETE ON series BEGIN
+    INSERT INTO series_fts(series_fts, rowid, title, genres) VALUES ('delete', old.id, old.title, old.genres);
+END;
+CREATE TRIGGER IF NOT EXISTS series_au AFTER UPDATE ON series BEGIN
+    INSERT INTO series_fts(series_fts, rowid, title, genres) VALUES ('delete', old.id, old.title, old.genres);
+    INSERT INTO series_fts(rowid, title, genres) VALUES (new.id, new.title, new.genres);
 END;
 ";
     }

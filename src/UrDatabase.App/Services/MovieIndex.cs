@@ -178,6 +178,31 @@ namespace UrDatabase.Services
             _byTitle.TryAdd(normalized, id);
         }
 
+        /// <summary>
+        /// Forgets a movie the caller has just deleted, under every name it was filed under, so a
+        /// later file in the same scan cannot resolve to a row that no longer exists.
+        /// </summary>
+        /// <remarks>
+        /// <see cref="Count"/> is left alone: it counts the films the index has registered, and a
+        /// scan reports how many it added as the difference between two of those counts. A row
+        /// the scan removed was never one it added.
+        /// </remarks>
+        public void Remove(long id)
+        {
+            RemoveValue(_byTitleAndYear, id);
+            RemoveValue(_byTitle, id);
+            RemoveValue(_yearlessByTitle, id);
+
+            static void RemoveValue(Dictionary<string, long> map, long value)
+            {
+                var stale = new List<string>();
+                foreach (var pair in map)
+                    if (pair.Value == value) stale.Add(pair.Key);
+
+                foreach (var key in stale) map.Remove(key);
+            }
+        }
+
         private static string RemoveDiacritics(string text)
         {
             var decomposed = text.Normalize(NormalizationForm.FormD);

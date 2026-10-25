@@ -354,5 +354,102 @@ namespace UrDatabase.Tests
 
             Assert.Equal("The Sopranos", parsed.SeriesTitle);
         }
+
+        /// <summary>
+        /// Standard-definition frame sizes are written exactly like a cross-numbered marker, and a
+        /// DVDRip of a film routinely carries one. Read as an episode, the film is filed under a
+        /// programme called by its own name, season six hundred and forty.
+        /// </summary>
+        [Theory]
+        [InlineData("Movie.Name.2003.DVDRip.XviD.640x272.avi")]
+        [InlineData("Some Film 640x480.avi")]
+        [InlineData("Some.Film.720x576.mkv")]
+        [InlineData("Some.Film.852x480.avi")]
+        [InlineData("/films/Some Film/Some.Film.720x480.avi")]
+        public void Refuses_a_standard_definition_frame_size(string path)
+        {
+            Assert.False(EpisodeParser.TryParse(path, out _));
+        }
+
+        /// <summary>
+        /// The rightmost marker wins, so a frame size after the real marker must not be it.
+        /// </summary>
+        [Fact]
+        public void A_frame_size_after_the_marker_does_not_replace_it()
+        {
+            Assert.True(EpisodeParser.TryParse("Show.1x02.720x480.avi", out var parsed));
+
+            Assert.Equal("Show", parsed.SeriesTitle);
+            Assert.Equal(1, parsed.SeasonNumber);
+            Assert.Equal(2, parsed.EpisodeNumber);
+        }
+
+        /// <summary>
+        /// A cross-numbered pair behind a release year is the film's own noise, not a marker. The
+        /// cost is that a programme named with a year has to use <c>S01E01</c> to be read.
+        /// </summary>
+        [Theory]
+        [InlineData("Movie Name (2003) 2x10.avi")]
+        [InlineData("Movie.Name.2003.10x20.avi")]
+        public void Refuses_a_cross_numbered_pair_behind_a_release_year(string name)
+        {
+            Assert.False(EpisodeParser.TryParse(name, out _));
+        }
+
+        [Fact]
+        public void A_year_named_programme_is_still_read_from_an_explicit_marker()
+        {
+            Assert.True(EpisodeParser.TryParse("Doctor Who (2005) S01E01.mkv", out var parsed));
+
+            Assert.Equal("Doctor Who", parsed.SeriesTitle);
+            Assert.Equal(2005, parsed.SeriesYear);
+        }
+
+        /// <summary>
+        /// A film filed under a folder that happens to be called Specials keeps being a film. A
+        /// leading number has to be set off as an episode number, not run into a title.
+        /// </summary>
+        [Theory]
+        [InlineData("/media/Films/Specials/300 (2006).mkv")]
+        [InlineData("/media/Films/Specials/12 Angry Men.mkv")]
+        [InlineData("/media/Films/Season 1/12 Monkeys.mkv")]
+        public void Refuses_a_film_whose_title_opens_with_a_number_in_a_season_folder(string path)
+        {
+            Assert.False(EpisodeParser.TryParse(path, out _));
+        }
+
+        /// <summary>
+        /// Only the folder a file is in can make it an episode. A season folder further up names
+        /// a programme's season, not every file somebody has nested under it.
+        /// </summary>
+        [Fact]
+        public void A_season_folder_further_up_does_not_make_a_leading_number_an_episode()
+        {
+            Assert.False(EpisodeParser.TryParse("/tv/Show/Season 01/Extras/01 - Behind the Scenes.mkv", out _));
+        }
+
+        [Theory]
+        [InlineData("/tv/Show/Season 01/02 - Title.mkv")]
+        [InlineData("/tv/Show/Season 01/02. Title.mkv")]
+        [InlineData("/tv/Show/Season 01/02_Title.mkv")]
+        [InlineData("/tv/Show/Season 01/02.mkv")]
+        public void Still_reads_a_leading_episode_number_set_off_by_a_separator(string path)
+        {
+            Assert.True(EpisodeParser.TryParse(path, out var parsed));
+
+            Assert.Equal(1, parsed.SeasonNumber);
+            Assert.Equal(2, parsed.EpisodeNumber);
+            Assert.True(parsed.IsInferred);
+        }
+
+        [Theory]
+        [InlineData("Show.S01E02.mkv", false)]
+        [InlineData("Show.1x02.mkv", true)]
+        public void Says_whether_the_episode_was_named_or_inferred(string name, bool inferred)
+        {
+            Assert.True(EpisodeParser.TryParse(name, out var parsed));
+
+            Assert.Equal(inferred, parsed.IsInferred);
+        }
     }
 }

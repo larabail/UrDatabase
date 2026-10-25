@@ -61,6 +61,8 @@ namespace UrDatabase.Services
             var rows = await conn.QueryAsync<ScanFileRow>(@"
 SELECT id            AS Id,
        movie_id      AS MovieId,
+       episode_id    AS EpisodeId,
+       linked_by_hand AS LinkedByHand,
        file_path     AS FilePath,
        size_bytes    AS SizeBytes,
        updated_at    AS UpdatedAt,
@@ -214,6 +216,13 @@ ORDER BY id");
     {
         public long Id { get; set; }
         public long? MovieId { get; set; }
+
+        /// <summary>The episode this file is, when a scan read it as one. Never set with <see cref="MovieId"/>.</summary>
+        public long? EpisodeId { get; set; }
+
+        /// <summary>True when a person linked the file to its film; a scan does not re-file it.</summary>
+        public bool LinkedByHand { get; set; }
+
         public string FilePath { get; set; } = string.Empty;
         public long? SizeBytes { get; set; }
         public string? UpdatedAt { get; set; }
@@ -232,6 +241,17 @@ ORDER BY id");
             SizeBytes != size
             || !string.Equals(UpdatedAt, modified, StringComparison.Ordinal)
             || MissingSince is not null
-            || (MovieId is null && movieId > 0);
+            || (MovieId is null && EpisodeId is null && movieId > 0);
+
+        /// <summary>
+        /// The same question for a file the scan reads as an episode. Being filed under a
+        /// different episode, or under a film until now, is a change like any other.
+        /// </summary>
+        public bool DiffersFromEpisode(long size, string? modified, long episodeId) =>
+            SizeBytes != size
+            || !string.Equals(UpdatedAt, modified, StringComparison.Ordinal)
+            || MissingSince is not null
+            || MovieId is not null
+            || EpisodeId != episodeId;
     }
 }

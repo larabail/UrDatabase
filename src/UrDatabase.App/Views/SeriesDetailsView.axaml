@@ -145,6 +145,7 @@
                                MaxWidth="520"/>
 
                     <TextBlock Grid.Column="2"
+                               x:Name="AttributionText"
                                Classes="attribution"
                                TextAlignment="Right"
                                MaxWidth="660"
@@ -344,6 +345,7 @@
                                         <Border Classes="episode"
                                                 Padding="0,9"
                                                 Cursor="Hand"
+                                                Opacity="{Binding RowOpacity}"
                                                 PointerPressed="Episode_Click"
                                                 ToolTip.Tip="{Binding Tip}">
                                             <Grid ColumnDefinitions="64,12,*,16,Auto">

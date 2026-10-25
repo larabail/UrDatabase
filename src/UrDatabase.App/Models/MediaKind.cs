@@ -9,9 +9,9 @@ namespace UrDatabase.Models
     /// two questions into one control buries whichever population is smaller.
     ///
     /// <see cref="Film"/> is the default everywhere, so every row the <c>movies</c> table
-    /// materialises and every existing test is right without saying so. Only a Jellyfin
-    /// <c>Series</c> is anything else — a scanned file is always catalogued as a film, because
-    /// nothing on this machine parses an episode out of a filename yet.
+    /// materialises and every existing test is right without saying so. A <c>Series</c> comes
+    /// from a Jellyfin server or from the <c>series</c> table a scan fills when it reads a file as
+    /// an episode (see <see cref="Services.EpisodeParser"/>).
     /// </remarks>
     public enum MediaKind
     {

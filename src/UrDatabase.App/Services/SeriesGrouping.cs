@@ -7,7 +7,8 @@ using UrDatabase.Models;
 namespace UrDatabase.Services
 {
     /// <summary>
-    /// Turns a server's seasons and episodes into the list the series screen shows.
+    /// Turns a server's seasons and episodes — or the episodes a scan found on this disk — into
+    /// the list the series screen shows.
     ///
     /// Out of the window and pure, for the usual reason: everything interesting about a television
     /// library is an edge case, and none of them can be asserted on from inside a view. Specials
@@ -154,6 +155,59 @@ namespace UrDatabase.Services
                 Title = EpisodeTitle(episode),
                 Runtime = RuntimeLabel(episode.RuntimeMinutes),
                 Overview = (episode.Overview ?? "").Trim()
+            };
+        }
+
+        /// <summary>
+        /// The seasons of a programme on this disk. Simpler than <see cref="Group"/>, because the
+        /// catalogue has no season list to reconcile: a season is whatever number its episodes
+        /// carry, in the same order a server's would be read in — the run, then specials, then
+        /// anything unnumbered.
+        /// </summary>
+        public static IReadOnlyList<SeasonGroup> GroupLocal(IEnumerable<LocalEpisode>? episodes)
+        {
+            return (episodes ?? Array.Empty<LocalEpisode>())
+                .Where(e => e is not null)
+                .GroupBy(e => e.SeasonNumber)
+                .Select(season => new { Builder = new Builder(SeasonName(season.Key), season.Key), Episodes = season })
+                .OrderBy(s => Rank(s.Builder))
+                .ThenBy(s => s.Builder.Number ?? int.MaxValue)
+                .Select(s => new SeasonGroup
+                {
+                    Name = s.Builder.Name,
+                    Number = s.Builder.Number,
+                    Episodes = s.Episodes
+                        .OrderBy(e => e.EpisodeNumber)
+                        .ThenBy(e => e.Id)
+                        .Select(ToRow)
+                        .ToList()
+                })
+                .ToList();
+        }
+
+        /// <summary>
+        /// One local episode as a row. Its plot line is where the file is, because until something
+        /// has looked the programme up that is the one thing worth knowing about it; and a copy the
+        /// last scan could not find says so there instead, rather than leaving Play to discover it.
+        /// </summary>
+        public static EpisodeRow ToRow(LocalEpisode episode)
+        {
+            if (episode is null) throw new ArgumentNullException(nameof(episode));
+
+            var name = (episode.Title ?? "").Trim();
+            var file = System.IO.Path.GetFileName(episode.FilePath ?? episode.AnyPath ?? "");
+
+            return new EpisodeRow
+            {
+                FilePath = episode.FilePath,
+                IsAvailable = episode.IsAvailable,
+                Label = EpisodeLabel(episode.SeasonNumber, episode.EpisodeNumber),
+                Title = name.Length > 0
+                    ? name
+                    : $"Episode {episode.EpisodeNumber.ToString(CultureInfo.InvariantCulture)}",
+                Overview = episode.IsAvailable
+                    ? file
+                    : $"Not found by the last scan — {file}"
             };
         }
 

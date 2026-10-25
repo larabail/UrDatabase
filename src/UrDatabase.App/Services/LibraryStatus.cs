@@ -26,18 +26,26 @@ namespace UrDatabase.Services
         /// television and no films used to be summarised as "0 films", which is true of films and
         /// false about the library.
         /// </param>
+        /// <param name="localSeriesCount">
+        /// Programmes a scan found on this disk. Named after the poster count rather than inside
+        /// it, because that count is about films and a programme has no film poster to count.
+        /// </param>
         public static string Describe(
             int localCount,
             int localWithPosters,
             int remoteCount,
             bool hasLocalDatabase,
             string databasePath,
-            int remoteSeriesCount = 0)
+            int remoteSeriesCount = 0,
+            int localSeriesCount = 0)
         {
             if (!hasLocalDatabase && remoteCount == 0 && remoteSeriesCount == 0)
                 return $"No library yet. Expected a database at {databasePath}.";
 
             var posters = $"Posters present: {localWithPosters.ToString(CultureInfo.InvariantCulture)}/{localCount.ToString(CultureInfo.InvariantCulture)}";
+
+            if (localSeriesCount > 0)
+                posters += $" · {localSeriesCount.ToString(CultureInfo.InvariantCulture)} series on this computer";
 
             if (remoteCount == 0 && remoteSeriesCount == 0) return posters;
 

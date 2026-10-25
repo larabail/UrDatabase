@@ -21,6 +21,15 @@ namespace UrDatabase.Models
         /// <summary>The Jellyfin item id of the series itself. What its episodes are asked for by.</summary>
         public string RemoteId { get; set; } = "";
 
+        /// <summary>
+        /// The <c>series</c> row, for a programme a scan found on this disk. Zero for a server
+        /// programme. A series is one or the other: a show held in both places is two cards.
+        /// </summary>
+        public long LocalId { get; set; }
+
+        /// <summary>True when the episodes are files on this disk rather than items on a server.</summary>
+        public bool IsLocal => LocalId > 0;
+
         public string Title { get; set; } = "";
 
         /// <summary>The year it began. Jellyfin reports one year, not a range.</summary>
