@@ -50,11 +50,19 @@ namespace UrDatabase.Views
         private bool _choosing;
 
         /// <summary>
-        /// True once Wrong series? has changed which programme this is. Read by the library after
-        /// <see cref="ShowAsync"/> returns: the card behind this screen has the old name, poster
-        /// and shelf, and only reading the catalogue again moves it.
+        /// Whether the last Wrong series? on this screen changed the catalogue: true the moment
+        /// the new identification is committed, false once an attempt ends without one. Already
+        /// false when nothing was chosen.
         /// </summary>
-        public bool CorrectedSomething { get; private set; }
+        /// <remarks>
+        /// A task rather than a flag read when <see cref="ShowAsync"/> returns, because the two do
+        /// not line up. The identification is written before TMDB is asked for the description,
+        /// so pressing Back mid-fetch leaves a correction in the catalogue whose description was
+        /// cancelled, and the screen can be gone before the write has happened at all. The library
+        /// awaits this after the screen closes and re-reads itself when it says true — which keeps
+        /// it from showing the old name, poster and shelf over a catalogue that has moved on.
+        /// </remarks>
+        public Task<bool> CorrectionSettled { get; private set; } = Task.FromResult(false);
 
         /// <summary>
         /// Which season is on screen, by name. Kept rather than an index because a refresh from
@@ -135,7 +143,7 @@ namespace UrDatabase.Views
             _selectedSeason = null;
             _openAtSeason = openAtSeason;
             _appLifetime = appLifetime;
-            CorrectedSomething = false;
+            CorrectionSettled = Task.FromResult(false);
 
             var session = _session = new SeriesRefreshSession(appLifetime);
             _closed = new TaskCompletionSource();
@@ -491,59 +499,72 @@ namespace UrDatabase.Views
             var choice = new SeriesChoice(chosen.TmdbId, chosen.TmdbTitle, chosen.PosterPath);
             var loadRating = _loadRating;
 
-            await RunPageWorkAsync(session, async ct =>
+            // Settled true from inside the correction, the moment it commits, and false here once
+            // the attempt is over without having done so — failed, refused, cancelled by Back, or
+            // never started because the screen had already gone.
+            var recorded = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            CorrectionSettled = recorded.Task;
+
+            try
             {
-                SetRefreshNote("Fetching that programme from TMDB…");
-
-                SeriesCorrection? correction;
-                try
+                await RunPageWorkAsync(session, async ct =>
                 {
-                    correction = await Task.Run(() => loader.CorrectAsync(vm.LocalId, choice, config.DownloadPosters, ct), ct);
-                }
-                catch (OperationCanceledException)
-                {
-                    throw;
-                }
-                catch (Exception ex)
-                {
-                    AppLog.Write("posters.log", $"seriesId={vm.LocalId} could not apply tmdb {choice.TmdbId}: {ex}");
-                    if (IsCurrent(session))
-                        SetRefreshNote($"Could not change the programme: {ex.Message}");
-                    return;
-                }
+                    SetRefreshNote("Fetching that programme from TMDB…");
 
-                if (correction is null)
-                {
-                    if (IsCurrent(session))
-                        SetRefreshNote("Choosing a programme needs a TMDB key. Add one under Settings.");
-                    return;
-                }
+                    SeriesCorrection? correction;
+                    try
+                    {
+                        correction = await Task.Run(
+                            () => loader.CorrectAsync(vm.LocalId, choice, config.DownloadPosters, ct,
+                                onRecorded: () => recorded.TrySetResult(true)),
+                            ct);
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        throw;
+                    }
+                    catch (Exception ex)
+                    {
+                        AppLog.Write("posters.log", $"seriesId={vm.LocalId} could not apply tmdb {choice.TmdbId}: {ex}");
+                        if (IsCurrent(session))
+                            SetRefreshNote($"Could not change the programme: {ex.Message}");
+                        return;
+                    }
 
-                // Before the currency check: the catalogue has changed whether or not this screen
-                // is still showing it, and the library behind it has to catch up either way.
-                CorrectedSomething = true;
-                if (!IsCurrent(session) || !ReferenceEquals(Vm, vm)) return;
+                    if (correction is null)
+                    {
+                        if (IsCurrent(session))
+                            SetRefreshNote("Choosing a programme needs a TMDB key. Add one under Settings.");
+                        return;
+                    }
 
-                var next = LocalSeriesPage.Corrected(vm, correction.Details);
-                Vm = next;
-                BindMetadata(next);
-                PosterImage.Source = null;
-                BackdropImage.Source = null;
-                SetRefreshNote(LocalSeriesPage.CorrectionNote(correction));
+                    if (!IsCurrent(session) || !ReferenceEquals(Vm, vm)) return;
 
-                await LoadArtworkAsync(next, session, ct);
-                if (!IsCurrent(session)) return;
+                    var next = LocalSeriesPage.Corrected(vm, correction.Details);
+                    Vm = next;
+                    BindMetadata(next);
+                    PosterImage.Source = null;
+                    BackdropImage.Source = null;
+                    SetRefreshNote(LocalSeriesPage.CorrectionNote(correction));
 
-                // Every episode's TMDB name was dropped with the old programme, so this lists them
-                // by their files first and then asks for every season of the new one.
-                await ShowLocalEpisodesAsync(next, session, ct);
+                    await LoadArtworkAsync(next, session, ct);
+                    if (!IsCurrent(session)) return;
 
-                if (loadRating is not null && !string.IsNullOrWhiteSpace(next.ImdbId) && IsCurrent(session))
-                {
-                    var rating = await loadRating(next.ImdbId, ct);
-                    if (IsCurrent(session)) UpdateRating(next, rating);
-                }
-            }, manual: false);
+                    // Every episode's TMDB name was dropped with the old programme, so this lists them
+                    // by their files first and then asks for every season of the new one.
+                    await ShowLocalEpisodesAsync(next, session, ct);
+
+                    if (loadRating is not null && !string.IsNullOrWhiteSpace(next.ImdbId) && IsCurrent(session))
+                    {
+                        var rating = await loadRating(next.ImdbId, ct);
+                        if (IsCurrent(session)) UpdateRating(next, rating);
+                    }
+                }, manual: false);
+            }
+            finally
+            {
+                recorded.TrySetResult(false);
+            }
         }
 
         /// <summary>

@@ -2469,6 +2469,7 @@ namespace UrDatabase.Views
 
                 LibraryRoot.IsVisible = false;
                 using var loading = new DetailLoading(_cts.Token, message => SeriesView.ReportLoadNotice(vm, message));
+                var corrected = Task.FromResult(false);
 
                 try
                 {
@@ -2488,17 +2489,23 @@ namespace UrDatabase.Views
                             load => load.RunAsync("IMDb rating",
                                 ct => LoadImdbRatingAsync(vm.ImdbId, null, ct),
                                 rating => SeriesView.UpdateRating(vm, rating)));
-
-                    // A corrected programme has a new name, poster and shelf that the card behind
-                    // this screen does not show yet.
-                    if (SeriesView.CorrectedSomething)
-                        await _searchLoop.RefreshAsync(SearchBox.Text);
                 }
                 finally
                 {
-                    if (ReferenceEquals(SeriesView.Vm, vm)) SeriesView.Close();
+                    // Taken before anything else can open the screen and start it afresh. A
+                    // correction replaces the screen's model, so the programme is matched by row.
+                    corrected = SeriesView.CorrectionSettled;
+                    if (SeriesView.Vm is { } shown && (ReferenceEquals(shown, vm) || shown.LocalId == vm.LocalId))
+                        SeriesView.Close();
                     LibraryRoot.IsVisible = true;
                 }
+
+                // A corrected programme has a new name, poster and shelf that the card behind this
+                // screen does not show yet. Awaited after the library is back on screen, not
+                // before: leaving mid-fetch cancels the description, but the correction itself may
+                // be committed a moment after the screen has gone, and only this knows when.
+                if (await corrected)
+                    await _searchLoop.RefreshAsync(SearchBox.Text);
             }
             catch (OperationCanceledException) when (_cts.IsCancellationRequested)
             {

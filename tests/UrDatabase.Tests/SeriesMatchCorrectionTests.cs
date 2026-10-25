@@ -523,6 +523,90 @@ INSERT INTO series (id, title) VALUES (2, 'The Office');");
             Assert.Equal(2316, result!.Details.TmdbId);
         }
 
+        // ---------- telling the library ----------
+
+        /// <summary>
+        /// The identification is committed before the description is asked for, so leaving the
+        /// screen mid-fetch cancels a correction that is already in the catalogue. Whoever has to
+        /// refresh the library must hear about it then, not only when the whole thing succeeds.
+        /// </summary>
+        [Fact]
+        public async Task A_correction_cancelled_after_it_was_recorded_still_reports_that_it_was()
+        {
+            Seed(title: "Office US");
+            using var cts = new CancellationTokenSource();
+            var json = Tmdb();
+            using var handler = new FakeHttpMessageHandler(request =>
+            {
+                // The person presses Back while TMDB is describing the programme.
+                if (request.RequestUri!.AbsolutePath.StartsWith("/3/tv/2316", StringComparison.Ordinal))
+                {
+                    cts.Cancel();
+                    throw new OperationCanceledException(cts.Token);
+                }
+
+                return json.Respond(request);
+            });
+            using var tmdb = Service(handler);
+            using var conn = Database.Open(_dbPath);
+
+            var recorded = 0;
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => SeriesMatchCorrection.ApplyAsync(
+                tmdb, conn, 1, TheOffice, downloadPosters: false, cts.Token, onRecorded: () => recorded++));
+
+            Assert.Equal(1, recorded);
+            Assert.Equal(2316L, conn.ExecuteScalar<long>("SELECT tmdb_id FROM series WHERE id = 1"));
+            Assert.Equal("The Office", conn.ExecuteScalar<string>("SELECT title FROM series WHERE id = 1"));
+        }
+
+        [Fact]
+        public async Task A_correction_reports_that_it_was_recorded_once_and_before_it_returns()
+        {
+            Seed();
+            using var handler = Tmdb();
+            using var tmdb = Service(handler);
+            using var conn = Database.Open(_dbPath);
+
+            var recorded = 0;
+            var describedWhenTold = true;
+            await SeriesMatchCorrection.ApplyAsync(tmdb, conn, 1, TheOffice, downloadPosters: false, CancellationToken.None,
+                onRecorded: () =>
+                {
+                    recorded++;
+                    describedWhenTold = LocalSeriesLookup.Read(conn, 1)!.Described;
+                });
+
+            Assert.Equal(1, recorded);
+            Assert.False(describedWhenTold);
+        }
+
+        [Fact]
+        public async Task A_correction_that_fails_before_anything_is_recorded_reports_nothing()
+        {
+            using var handler = Tmdb();
+            using var tmdb = Service(handler);
+            using var conn = Database.Open(_dbPath);
+
+            var recorded = 0;
+            await Assert.ThrowsAsync<InvalidOperationException>(() => SeriesMatchCorrection.ApplyAsync(
+                tmdb, conn, 1, TheOffice, downloadPosters: false, CancellationToken.None, onRecorded: () => recorded++));
+
+            Assert.Equal(0, recorded);
+        }
+
+        [Fact]
+        public async Task The_loader_passes_the_recorded_signal_through()
+        {
+            Seed();
+            using var handler = Tmdb();
+            var loader = new LocalSeriesLoader(_dbPath, () => Service(handler));
+
+            var recorded = 0;
+            await loader.CorrectAsync(1, TheOffice, false, CancellationToken.None, onRecorded: () => recorded++);
+
+            Assert.Equal(1, recorded);
+        }
+
         // ---------- the schema ----------
 
         [Fact]

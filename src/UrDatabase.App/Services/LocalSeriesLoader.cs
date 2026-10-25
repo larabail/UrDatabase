@@ -123,8 +123,9 @@ WHERE e.series_id = @series_id
         /// TMDB key is configured, which the screen has already refused to get this far without.
         /// </summary>
         /// <remarks>See <see cref="SeriesMatchCorrection"/> for what it writes and why.</remarks>
+        /// <param name="onRecorded">See <see cref="SeriesMatchCorrection.ApplyAsync"/>.</param>
         public async Task<SeriesCorrection?> CorrectAsync(
-            long seriesId, SeriesChoice choice, bool downloadPosters, CancellationToken ct)
+            long seriesId, SeriesChoice choice, bool downloadPosters, CancellationToken ct, Action? onRecorded = null)
         {
             if (_tmdb is null || seriesId <= 0 || string.IsNullOrWhiteSpace(_dbPath)) return null;
 
@@ -132,7 +133,7 @@ WHERE e.series_id = @series_id
             if (tmdb is null || !tmdb.HasApiKey) return null;
 
             using var conn = Database.Open(_dbPath);
-            return await SeriesMatchCorrection.ApplyAsync(tmdb, conn, seriesId, choice, downloadPosters, ct)
+            return await SeriesMatchCorrection.ApplyAsync(tmdb, conn, seriesId, choice, downloadPosters, ct, onRecorded)
                 .ConfigureAwait(false);
         }
     }

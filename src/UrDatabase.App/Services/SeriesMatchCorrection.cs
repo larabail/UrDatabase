@@ -79,6 +79,12 @@ namespace UrDatabase.Services
         /// Whether the poster is cached to disk. When it is not, or the download fails, TMDB's URL
         /// is stored instead, so the card still shows the right poster over the network.
         /// </param>
+        /// <param name="onRecorded">
+        /// Called once the identification, poster and name are committed — before TMDB is asked
+        /// for the description, which may fail or be cancelled. From that moment the catalogue
+        /// holds the correction whatever happens next, so this, and not the method returning, is
+        /// what tells a caller the library has to be read again.
+        /// </param>
         /// <exception cref="InvalidOperationException">There is no such programme, or no TMDB key.</exception>
         public static async Task<SeriesCorrection> ApplyAsync(
             TmdbService tmdb,
@@ -86,7 +92,8 @@ namespace UrDatabase.Services
             long seriesId,
             SeriesChoice choice,
             bool downloadPosters,
-            CancellationToken ct)
+            CancellationToken ct,
+            Action? onRecorded = null)
         {
             if (!tmdb.HasApiKey) throw new InvalidOperationException("Choosing a programme needs a TMDB key.");
             if (choice.TmdbId <= 0) throw new ArgumentOutOfRangeException(nameof(choice), "Not a TMDB programme.");
@@ -99,6 +106,7 @@ namespace UrDatabase.Services
             var renamed = MovieMatch.RenameTo(known.Title, choice.Name);
 
             await RecordAsync(conn, seriesId, choice.TmdbId, poster, renamed, ct).ConfigureAwait(false);
+            onRecorded?.Invoke();
 
             var described = await DescribeAsync(tmdb, conn, seriesId, choice.TmdbId, poster is null, downloadPosters, ct)
                 .ConfigureAwait(false);

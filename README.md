@@ -225,7 +225,8 @@ It runs on Windows and macOS from one codebase, built with
   as *The Office* with no year to say which. The name the scan gave the
   programme is kept, so the next scan still files its episodes under the same
   card, and nothing a scan or the background pass does undoes your choice. If
-  TMDB fails to answer after you pick, your choice is still saved and the
+  TMDB fails to answer after you pick, or you leave the page before it has, your
+  choice is still saved, the library card moves to it straight away, and the
   description arrives on the next launch. A server programme has no **Wrong
   series?**: the server describes it (`Services/SeriesMatchCorrection`,
   `Services/TmdbMatchWording`, `Views/TmdbMatchWindow`).
