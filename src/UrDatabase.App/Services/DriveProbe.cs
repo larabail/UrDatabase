@@ -21,6 +21,9 @@ namespace UrDatabase.Services
     {
         public static FileSystemDriveProbe Instance { get; } = new();
 
+        /// <summary>Well inside the time limit the caller puts on the whole probe.</summary>
+        private static readonly TimeSpan DiskutilTimeout = TimeSpan.FromSeconds(4);
+
         public DriveProbeResult Probe(string root)
         {
             try
@@ -54,8 +57,21 @@ namespace UrDatabase.Services
                 string? format = null;
                 try { format = info.DriveFormat; } catch { }
 
+                var serial = SerialOf(root);
+
+                // The folder macOS mounted a disk at is not its name: a stale "Films" folder left by
+                // an unclean eject puts the disk at "Films 1". diskutil knows the real name and the
+                // volume UUID, which survives either. Skipped for network mounts, which have neither.
+                if (OperatingSystem.IsMacOS() && info.DriveType != DriveType.Network)
+                {
+                    var (name, uuid) = DriveEnumeration.ParseDiskutilInfo(
+                        SystemDriveEnumerator.RunTool("diskutil", new[] { "info", "-plist", root }, DiskutilTimeout));
+                    if (name is not null) label = name;
+                    serial ??= uuid;
+                }
+
                 return new DriveProbeResult(
-                    true, label, info.TotalSize, info.AvailableFreeSpace, SerialOf(root), format);
+                    true, label, info.TotalSize, info.AvailableFreeSpace, serial, format);
             }
             catch
             {

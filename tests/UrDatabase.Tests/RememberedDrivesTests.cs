@@ -533,6 +533,179 @@ namespace UrDatabase.Tests
             }
         }
 
+        // ---- when the list of drives cannot be had ---------------------------------------------
+
+        /// <summary>
+        /// A catalogue that remembers the boot disk and a second disk, with the library on the
+        /// boot disk — the shape of every real install after its first launch.
+        /// </summary>
+        private void RememberTwoDisks()
+        {
+            using var conn = Database.Open(_db);
+            KnownDriveStore.Remember(conn, new[]
+            {
+                new KnownDrive("serial:0001-0001", null, @"C:\", 4_000_000_000_000, LastWeek),
+                Known("serial:0004-0004", "K3.0_12TB", @"K:\")
+            });
+        }
+
+        private static FakeProbe BothDisksPresent() => new()
+        {
+            [@"C:\"] = Disk(null, "0001-0001"),
+            [@"K:\"] = Disk("K3.0_12TB", "0004-0004")
+        };
+
+        [Fact]
+        public async Task A_listing_that_fails_does_not_report_every_remembered_disk_missing()
+        {
+            // Not having the list is not the same as every disk having gone. Treating it as such
+            // put the whole machine, boot disk included, on the banner — and listed the library
+            // drive twice, once as connected and once as not.
+            RememberTwoDisks();
+            var monitor = new DriveMonitor(BothDisksPresent(), drives: new ThrowingDrives(), clock: () => Now);
+
+            var reports = await monitor.CheckDrivesAsync(new[] { @"C:\Films" }, _db);
+
+            Assert.Null(DriveStatusText.Headline(reports));
+            Assert.Single(reports, r => r.Root == @"C:\");
+            Assert.All(reports, r => Assert.Equal(DriveState.Connected, r.State));
+        }
+
+        [Fact]
+        public async Task A_listing_that_never_finishes_does_not_report_every_remembered_disk_missing()
+        {
+            RememberTwoDisks();
+            using var never = new ManualResetEventSlim(false);
+            try
+            {
+                var monitor = new DriveMonitor(
+                    BothDisksPresent(), TimeSpan.FromSeconds(1), new HangingDrives(never), () => Now);
+
+                var reports = await monitor.CheckDrivesAsync(new[] { @"C:\Films" }, _db);
+
+                Assert.Null(DriveStatusText.Headline(reports));
+                Assert.Single(reports, r => r.Root == @"C:\");
+            }
+            finally
+            {
+                never.Set();
+            }
+        }
+
+        [Fact]
+        public async Task Without_the_list_a_remembered_disk_absent_from_its_own_letter_is_still_missed()
+        {
+            RememberTwoDisks();
+            var probe = new FakeProbe { [@"C:\"] = Disk(null, "0001-0001"), [@"K:\"] = DriveProbeResult.Unavailable };
+            var monitor = new DriveMonitor(probe, drives: new ThrowingDrives(), clock: () => Now);
+
+            var reports = await monitor.CheckDrivesAsync(null, _db);
+
+            Assert.Equal(@"K:\ (K3.0_12TB) is not connected", DriveStatusText.Headline(reports));
+        }
+
+        [Fact]
+        public async Task Without_the_list_another_disk_at_a_remembered_letter_is_not_proof_the_old_one_is_gone()
+        {
+            // It may only have moved to a letter nobody could list.
+            RememberTwoDisks();
+            var probe = new FakeProbe { [@"C:\"] = Disk(null, "0001-0001"), [@"K:\"] = Disk("NEW", "9999-9999") };
+            var monitor = new DriveMonitor(probe, drives: new ThrowingDrives(), clock: () => Now);
+
+            var reports = await monitor.CheckDrivesAsync(null, _db);
+
+            Assert.Null(DriveStatusText.Headline(reports));
+        }
+
+        [Fact]
+        public void A_drive_whose_type_cannot_be_read_in_time_is_taken_for_a_network_mount()
+        {
+            // On a Mac reading a drive's type is a statfs, and a statfs on a dead SMB mount hangs.
+            // One such mount must not cost the list of every other disk.
+            using var never = new ManualResetEventSlim(false);
+            try
+            {
+                var started = DateTime.UtcNow;
+                var volumes = DriveEnumeration.Classify(
+                    new (string, Func<DriveType>)[]
+                    {
+                        ("/", () => DriveType.Fixed),
+                        ("/Volumes/share", () => { never.Wait(); return DriveType.Fixed; }),
+                        ("/Volumes/Films", () => DriveType.Fixed),
+                        ("/Volumes/broken", () => throw new IOException("no"))
+                    },
+                    TimeSpan.FromMilliseconds(500));
+
+                Assert.True(DateTime.UtcNow - started < TimeSpan.FromSeconds(10));
+                Assert.Equal(DriveKind.Fixed, volumes.Single(v => v.Root == "/").Kind);
+                Assert.Equal(DriveKind.Fixed, volumes.Single(v => v.Root == "/Volumes/Films").Kind);
+                Assert.Equal(DriveKind.Network, volumes.Single(v => v.Root == "/Volumes/share").Kind);
+                Assert.Equal(DriveKind.Virtual, volumes.Single(v => v.Root == "/Volumes/broken").Kind);
+            }
+            finally
+            {
+                never.Set();
+            }
+        }
+
+        // ---- a Mac mounting a disk under another folder name -----------------------------------
+
+        [Fact]
+        public void A_mac_disk_mounted_as_Films_1_is_still_the_disk_called_Films()
+        {
+            // macOS mounts a disk at "/Volumes/Films 1" when a stale "/Volumes/Films" folder is in
+            // the way, and .NET reports the folder as the disk's name.
+            var known = new[] { new KnownDrive("volume:Films|4000", "Films", "/Volumes/Films", 4000, LastWeek) };
+
+            var result = DriveInventory.Build(
+                new[] { Fixed("/Volumes/Films 1") },
+                Probes(("/Volumes/Films 1", new DriveProbeResult(true, "Films 1", 4000, 100))),
+                null, known, canRemember: true, Now);
+
+            Assert.Null(DriveStatusText.Headline(result.Reports));
+            Assert.Equal("/Volumes/Films 1", Assert.Single(result.Reports).Root);
+            Assert.Equal("volume:Films|4000", Assert.Single(result.Seen).Id);
+        }
+
+        [Fact]
+        public void A_mac_disk_with_a_volume_uuid_is_known_by_it_whatever_folder_it_is_mounted_at()
+        {
+            var known = new[] { new KnownDrive("serial:6F1C2A5E-0000-4C9A-9B1E-123456789ABC", "Films", "/Volumes/Films", 4000, LastWeek) };
+
+            var result = DriveInventory.Build(
+                new[] { Fixed("/Volumes/Films 2") },
+                Probes(("/Volumes/Films 2", new DriveProbeResult(true, "Films", 4000, 100, "6F1C2A5E-0000-4C9A-9B1E-123456789ABC", "apfs"))),
+                null, known, canRemember: true, Now);
+
+            Assert.Null(DriveStatusText.Headline(result.Reports));
+            Assert.Equal("/Volumes/Films 2", Assert.Single(result.Seen).LastRoot);
+        }
+
+        [Fact]
+        public void The_real_name_and_uuid_are_read_from_what_diskutil_prints()
+        {
+            const string plist = @"<?xml version=""1.0"" encoding=""UTF-8""?>
+<plist version=""1.0"">
+<dict>
+	<key>MountPoint</key>
+	<string>/Volumes/Films 1</string>
+	<key>VolumeName</key>
+	<string>Films &amp; Series</string>
+	<key>VolumeUUID</key>
+	<string>6F1C2A5E-0000-4C9A-9B1E-123456789ABC</string>
+	<key>DiskUUID</key>
+	<string>AAAAAAAA-0000-0000-0000-000000000000</string>
+</dict>
+</plist>";
+
+            var (name, uuid) = DriveEnumeration.ParseDiskutilInfo(plist);
+
+            Assert.Equal("Films & Series", name);
+            Assert.Equal("6F1C2A5E-0000-4C9A-9B1E-123456789ABC", uuid);
+            Assert.Equal((null, null), DriveEnumeration.ParseDiskutilInfo("Could not find disk"));
+            Assert.Equal((null, null), DriveEnumeration.ParseDiskutilInfo(null));
+        }
+
         // ---- helpers ---------------------------------------------------------------------------
 
         private static MountedVolume Fixed(string root) => new(root, DriveKind.Fixed);

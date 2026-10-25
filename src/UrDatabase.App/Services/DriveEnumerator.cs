@@ -3,6 +3,10 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Net;
+using System.Text.RegularExpressions;
+using System.Threading;
+using System.Threading.Tasks;
 using UrDatabase.Models;
 
 namespace UrDatabase.Services
@@ -30,12 +34,18 @@ namespace UrDatabase.Services
         /// <summary>How long <c>hdiutil</c> gets to say which volumes are disk images.</summary>
         private static readonly TimeSpan DiskImageTimeout = TimeSpan.FromSeconds(3);
 
+        /// <summary>
+        /// How long reading every drive's type may take, together. Short, because it is normally
+        /// instant and a drive still being read after this is a dead network mount.
+        /// </summary>
+        private static readonly TimeSpan TypeTimeout = TimeSpan.FromSeconds(2);
+
         public IReadOnlyList<MountedVolume> Enumerate()
         {
             var drives = DriveInfo.GetDrives();
             var images = OperatingSystem.IsMacOS() ? MacDiskImageMounts() : new HashSet<string>();
 
-            var volumes = new List<MountedVolume>();
+            var candidates = new List<(string Root, Func<DriveType> TypeOf)>();
 
             foreach (var drive in drives)
             {
@@ -47,13 +57,10 @@ namespace UrDatabase.Services
                     if (images.Contains(root)) continue;
                 }
 
-                var kind = DriveEnumeration.KindOf(drive.DriveType);
-                if (kind is null) continue;
-
-                volumes.Add(new MountedVolume(root, kind.Value));
+                candidates.Add((root, () => drive.DriveType));
             }
 
-            return volumes;
+            return DriveEnumeration.Classify(candidates, TypeTimeout);
         }
 
         /// <summary>
@@ -62,31 +69,42 @@ namespace UrDatabase.Services
         /// <c>/Volumes</c> exactly like a disk, and remembering one would raise the alarm the
         /// moment it was ejected. Empty when <c>hdiutil</c> is missing, slow or fails.
         /// </summary>
-        private static HashSet<string> MacDiskImageMounts()
+        private static HashSet<string> MacDiskImageMounts() =>
+            DriveEnumeration.ParseDiskImageMounts(RunTool("hdiutil", new[] { "info" }, DiskImageTimeout));
+
+        /// <summary>
+        /// Runs a command-line tool and returns what it printed, or null when it is missing,
+        /// fails, or is not finished in time — in which case it is killed rather than left behind.
+        /// </summary>
+        internal static string? RunTool(string file, IEnumerable<string> arguments, TimeSpan timeout)
         {
             try
             {
-                using var process = Process.Start(new ProcessStartInfo("hdiutil", "info")
+                var start = new ProcessStartInfo(file)
                 {
                     RedirectStandardOutput = true,
                     RedirectStandardError = true,
                     UseShellExecute = false,
                     CreateNoWindow = true
-                });
-                if (process is null) return new HashSet<string>();
+                };
+                foreach (var argument in arguments) start.ArgumentList.Add(argument);
+
+                using var process = Process.Start(start);
+                if (process is null) return null;
 
                 var output = process.StandardOutput.ReadToEndAsync();
-                if (!process.WaitForExit((int)DiskImageTimeout.TotalMilliseconds) || !output.Wait(DiskImageTimeout))
+                _ = process.StandardError.ReadToEndAsync();
+                if (!process.WaitForExit((int)timeout.TotalMilliseconds) || !output.Wait(timeout))
                 {
                     try { process.Kill(entireProcessTree: true); } catch { }
-                    return new HashSet<string>();
+                    return null;
                 }
 
-                return DriveEnumeration.ParseDiskImageMounts(output.Result);
+                return process.ExitCode == 0 ? output.Result : null;
             }
             catch
             {
-                return new HashSet<string>();
+                return null;
             }
         }
     }
@@ -111,6 +129,59 @@ namespace UrDatabase.Services
             DriveType.Unknown => DriveKind.Virtual,
             _ => null
         };
+
+        /// <summary>
+        /// Each drive's kind, read with a time limit on all of them together. On a Mac the type
+        /// comes from a <c>statfs</c>, and a <c>statfs</c> on a dead SMB mount does not return:
+        /// left unguarded, one such mount would cost the whole list, and without the list every
+        /// remembered disk looks missing. A drive whose type is not back in time is almost
+        /// certainly such a mount, so it is taken for a network drive — listed when it answers,
+        /// never remembered. One whose type cannot be read at all is not taken for a disk.
+        /// </summary>
+        public static IReadOnlyList<MountedVolume> Classify(
+            IEnumerable<(string Root, Func<DriveType> TypeOf)> drives, TimeSpan timeout)
+        {
+            var reads = drives
+                .Select(d => (d.Root, Type: Task.Factory.StartNew(
+                    d.TypeOf, CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default)))
+                .ToList();
+
+            try { Task.WaitAll(reads.Select(r => (Task)r.Type).ToArray(), timeout); }
+            catch (AggregateException) { }
+
+            var volumes = new List<MountedVolume>();
+            foreach (var (root, type) in reads)
+            {
+                DriveKind? kind = !type.IsCompleted ? DriveKind.Network
+                    : type.IsCompletedSuccessfully ? KindOf(type.Result)
+                    : DriveKind.Virtual;
+
+                if (kind is not null) volumes.Add(new MountedVolume(root, kind.Value));
+            }
+
+            return volumes;
+        }
+
+        /// <summary>
+        /// The volume's real name and its UUID from <c>diskutil info -plist</c>. The name is the one
+        /// the disk was given, not the folder macOS mounted it at — which becomes <c>Films 1</c>
+        /// when a stale <c>Films</c> folder is in the way — and the UUID survives either. Nulls for
+        /// anything that is not such a plist.
+        /// </summary>
+        public static (string? Name, string? Uuid) ParseDiskutilInfo(string? plist)
+        {
+            if (string.IsNullOrEmpty(plist)) return (null, null);
+
+            static string? Value(string text, string key)
+            {
+                var match = Regex.Match(text, $@"<key>{key}</key>\s*<string>(.*?)</string>", RegexOptions.Singleline);
+                if (!match.Success) return null;
+                var value = WebUtility.HtmlDecode(match.Groups[1].Value).Trim();
+                return value.Length == 0 ? null : value;
+            }
+
+            return (Value(plist, "VolumeName"), Value(plist, "VolumeUUID"));
+        }
 
         /// <summary><c>/Volumes/Films/</c> and <c>/Volumes/Films</c> are one mount; <c>/</c> stays <c>/</c>.</summary>
         public static string NormaliseUnixMount(string mount)

@@ -88,7 +88,16 @@ namespace UrDatabase.Services
             {
                 var usages = DriveVolumes.Collect(folders, ReadCataloguedFiles(databasePath));
                 var known = ReadKnownDrives(databasePath);
-                var mounted = await EnumerateAsync(ct).ConfigureAwait(false);
+                var (listed, complete) = await EnumerateAsync(ct).ConfigureAwait(false);
+
+                // Without the list, each remembered disk is looked for where it was last seen, as a
+                // disk. Nothing else can be said about it — see DriveInventory.Build.
+                var mounted = complete
+                    ? listed
+                    : known.Select(k => new MountedVolume(k.LastRoot, DriveKind.Fixed))
+                        .GroupBy(v => v.Root, StringComparer.OrdinalIgnoreCase)
+                        .Select(g => g.First())
+                        .ToList();
 
                 var roots = mounted.Select(v => v.Root)
                     .Concat(usages.Select(u => u.Root))
@@ -102,7 +111,7 @@ namespace UrDatabase.Services
                 for (var i = 0; i < roots.Count; i++) probes[roots[i]] = outcomes[i];
 
                 var canRemember = CatalogueExists(databasePath);
-                var inventory = DriveInventory.Build(mounted, probes, usages, known, canRemember, _clock());
+                var inventory = DriveInventory.Build(mounted, probes, usages, known, canRemember, _clock(), complete);
 
                 if (canRemember && inventory.Seen.Count > 0)
                     await RememberAsync(databasePath!, inventory.Seen, ct).ConfigureAwait(false);
@@ -206,12 +215,13 @@ namespace UrDatabase.Services
         }
 
         /// <summary>
-        /// What the operating system lists, under the same time limit as a probe. Listing is
-        /// normally instant, but it is a call into the operating system about drives, one of which
-        /// may be the dead share this whole check exists for. An answer that never comes, or an
-        /// error, is an empty list: the library's own drives are still probed by path.
+        /// What the operating system lists, under the same time limit as a probe, and whether it
+        /// listed anything at all. Listing is normally instant, but it is a call into the operating
+        /// system about drives, one of which may be the dead share this whole check exists for. An
+        /// answer that never comes, or an error, is reported as no list rather than as an empty
+        /// one: an empty list would say every remembered disk had gone.
         /// </summary>
-        private async Task<IReadOnlyList<MountedVolume>> EnumerateAsync(CancellationToken ct)
+        private async Task<(IReadOnlyList<MountedVolume> Volumes, bool Complete)> EnumerateAsync(CancellationToken ct)
         {
             var listing = Task.Factory.StartNew(
                 () => _drives.Enumerate(),
@@ -223,17 +233,18 @@ namespace UrDatabase.Services
             if (finished != listing)
             {
                 AppLog.Write("drives.log", "listing the drives did not finish in time");
-                return Array.Empty<MountedVolume>();
+                return (Array.Empty<MountedVolume>(), false);
             }
 
             try
             {
-                return await listing.ConfigureAwait(false) ?? Array.Empty<MountedVolume>();
+                var volumes = await listing.ConfigureAwait(false);
+                return volumes is null ? (Array.Empty<MountedVolume>(), false) : (volumes, true);
             }
             catch (Exception ex)
             {
                 AppLog.Write("drives.log", $"could not list the drives: {ex.Message}");
-                return Array.Empty<MountedVolume>();
+                return (Array.Empty<MountedVolume>(), false);
             }
         }
 

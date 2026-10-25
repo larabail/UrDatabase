@@ -389,10 +389,14 @@ It runs on Windows and macOS from one codebase, built with
   **Forget** button there so it stops raising the banner (plug it in again and
   it is remembered again). Remove a dead drive's library folder in Settings and
   the banner stops naming that too. Disks are recognised by their volume serial
-  number on Windows, and by name and capacity on macOS, never by drive letter,
-  so a disk Windows gives another letter is found at the new one rather than
-  reported missing, and a different disk given an old letter does not hide that
-  the old one is gone. Only disks are remembered: a cloud drive such as Google
+  number on Windows and their volume UUID on macOS (from `diskutil`), never by
+  drive letter or mount folder, so a disk Windows gives another letter, or macOS
+  mounts at `/Volumes/Films 1` beside a stale `Films` folder, is found where it
+  now is rather than reported missing, and a different disk given an old letter
+  does not hide that the old one is gone. If the list of drives cannot be read in
+  time, the check does not take that as every disk having gone: each remembered
+  disk is looked for where it was last seen, and only one absent from there is
+  reported. Only disks are remembered: a cloud drive such as Google
   Drive, a network drive, an optical drive, a USB stick holding nothing in the
   library, and on macOS a mounted disk image are listed when they are there but
   never missed, and an empty card reader is not listed at all. The check only
@@ -1921,13 +1925,14 @@ Stated plainly, so nobody has to find out by using it:
   server-only film does not follow it once it is downloaded and becomes a local
   card, and there is no filter yet for "films with a problem" — the badge is the
   only way to find them.
-- **A disk is remembered by what the operating system can tell about it, and on
-  macOS that is not much.** Windows gives every volume a serial number, and that
-  is what a disk is known by there. .NET on macOS offers no serial and no way to
-  tell a USB stick from a disk, so a Mac remembers every volume under
-  `/Volumes` that is not a disk image by its name and capacity: renaming a disk
-  makes it look like a new one with the old one missing, and a USB stick plugged
-  in once is missed after it is unplugged. **Forget** in the Drives dialog clears
+- **A disk is remembered by what the operating system can tell about it.**
+  Windows gives every volume a serial number and macOS a volume UUID, and that is
+  what a disk is known by. A volume with neither — when `diskutil` cannot answer,
+  say — falls back to its name and capacity, so renaming it makes it look like a
+  new disk with the old one missing. .NET on macOS has no way to tell a USB stick
+  from a disk, so a Mac remembers every volume under `/Volumes` that is not a
+  disk image or a network mount, and a USB stick plugged in once is missed after
+  it is unplugged. **Forget** in the Drives dialog clears
   either. On Windows, a USB hard disk whose enclosure calls itself removable is
   treated like a stick — listed, but only remembered once the library has films
   on it — and two disks cloned sector for sector share a serial and are

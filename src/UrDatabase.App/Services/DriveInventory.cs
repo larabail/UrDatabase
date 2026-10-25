@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text.RegularExpressions;
 using UrDatabase.Models;
 
 namespace UrDatabase.Services
@@ -34,8 +35,20 @@ namespace UrDatabase.Services
             if (probe is null || !probe.IsAvailable) return null;
             if (!string.IsNullOrWhiteSpace(probe.Serial)) return "serial:" + probe.Serial.Trim();
             if (!string.IsNullOrWhiteSpace(probe.Label) && probe.TotalBytes is > 0)
-                return $"volume:{probe.Label.Trim()}|{probe.TotalBytes.Value}";
+                return $"volume:{BaseName(probe.Label)}|{probe.TotalBytes.Value}";
             return null;
+        }
+
+        /// <summary>
+        /// A volume name without the " 1", " 2" macOS appends to the folder it mounts a disk at
+        /// when one of that name is already there. Only matters when the real name could not be
+        /// read; the capacity alongside it keeps two different disks apart.
+        /// </summary>
+        private static string BaseName(string label)
+        {
+            var name = label.Trim();
+            var stripped = Regex.Replace(name, @" \d+$", "");
+            return stripped.Length == 0 ? name : stripped;
         }
 
         /// <param name="mounted">What the operating system lists right now.</param>
@@ -47,13 +60,20 @@ namespace UrDatabase.Services
         /// remembered, so nothing claims it will be missed.
         /// </param>
         /// <param name="nowUtc">When this check ran.</param>
+        /// <param name="listingComplete">
+        /// False when the operating system's list of drives could not be had, and the volumes passed
+        /// in are only the roots worth probing directly. A remembered disk that was not found is then
+        /// not evidence of anything — it may be plugged in at a letter nobody could list — so only a
+        /// disk absent from its own last root is reported missing.
+        /// </param>
         public static DriveInventoryResult Build(
             IEnumerable<MountedVolume>? mounted,
             IReadOnlyDictionary<string, DriveProbeOutcome>? probes,
             IEnumerable<DriveUsage>? usages,
             IEnumerable<KnownDrive>? known,
             bool canRemember,
-            DateTime nowUtc)
+            DateTime nowUtc,
+            bool listingComplete = true)
         {
             var volumes = (mounted ?? Array.Empty<MountedVolume>())
                 .Where(v => !string.IsNullOrWhiteSpace(v.Root))
@@ -169,7 +189,7 @@ namespace UrDatabase.Services
             }
 
             // And the point of remembering: a disk that is simply not there any more.
-            foreach (var record in knownList.Where(k => !matched.Contains(k.Id)))
+            foreach (var record in knownList.Where(k => listingComplete && !matched.Contains(k.Id)))
             {
                 reports.Add(new DriveReport(
                     record.LastRoot,
