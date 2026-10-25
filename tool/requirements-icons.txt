@@ -1,0 +1,4 @@
+# Only for tool/make_icons.py, which regenerates the app icon from assets/logo.
+# Pinned because the committed PNGs are compared byte for byte with a fresh
+# render, and a different resvg may anti-alias an edge differently.
+resvg-py==0.5.0

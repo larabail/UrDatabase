@@ -242,9 +242,11 @@ The tooling rejects values outside the 16-bit component range. Compare against
 any previously submitted package before adopting a different mapping.
 
 The 100/200/400% square logos, all five Store logo scales and a 44px unplated
-taskbar asset come from the existing 1024px app artwork, not a new icon design.
-Regenerate them on macOS with `bash scripts/make-store-assets.sh`; MakePri builds
-`resources.pri` on Windows for the qualified assets.
+taskbar asset are rendered from the same SVG masters as the app icon, in
+`assets/logo/`. Regenerate them, together with the `.ico`, the `.icns` and the
+site favicon, on any platform with
+`pip install -r tool/requirements-icons.txt` and `python tool/make_icons.py`;
+MakePri builds `resources.pri` on Windows for the qualified assets.
 
 ### Build locally or obtain the CI artifact
 

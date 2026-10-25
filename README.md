@@ -169,6 +169,19 @@ It runs on Windows and macOS from one codebase, built with
   explicitly say "according to the filename" in their tooltips
   (`Services/LocalMediaReader`, `Services/FfprobeRunner`, `Services/MediaFlags`,
   `Services/LanguageTag`).
+- **Mark a copy as having a problem.** **Report problem…** on a film's details
+  screen opens a short list — **Audio**, **Low resolution**, **Wrong aspect
+  ratio**, **Subtitles**, **Picture glitches**, **Other** — and a note for
+  anything that fits none of them. The film's card then carries a red-orange
+  **Problem** badge in its top-left corner, whose tooltip lists what was
+  reported, and the details screen shows the same list above the genres. **Clear**
+  (on that banner, or in the list) takes it off once the copy has been replaced;
+  unticking everything and saving does the same. Works for local and server films
+  alike. Reports are kept in the catalogue's `film_problems` table, apart from the
+  media badges above: those are measured from the file every time, and a squashed
+  picture or an out-of-sync track is something only somebody who watched it can
+  say. Nothing is sent to Jellyfin (`Services/FilmProblems`,
+  `Services/FilmProblemStore`).
 - **What to put on next, and you already own it.** Where a series lists its
   episodes, a film gets a shelf of other films — and every poster on it is one
   already in this library, so every one of them plays. TMDB supplies the
@@ -1278,7 +1291,8 @@ and `files` tables, the `scans` table each scan records itself in, the
 `jellyfin_movies` cache and its television counterparts `jellyfin_series`,
 `jellyfin_seasons` and `jellyfin_episodes`, the `jellyfin_resume` positions
 behind the Continue watching row and the `jellyfin_resume_dismissals` that are
-taken back out of it, the `movies_fts` FTS5 index and the
+taken back out of it, the `film_problems` you have reported about a copy, the
+`movies_fts` FTS5 index and the
 triggers that keep it current — and every statement is `IF NOT EXISTS`, so it
 runs against a library you already have without touching your data.
 
@@ -1553,7 +1567,8 @@ src/UrDatabase.App/          the application: one cross-platform project
                              local media-track inspection, the update check
   Assets/UrDatabase.icns     the macOS application icon
   Assets/UrDatabase.ico      multi-resolution Windows executable and window icon,
-                             embedded in the app rather than loaded from a loose file
+                             embedded in the app rather than loaded from a loose file;
+                             both are generated from assets/logo, never edited
   Data/schema.sql            the shape a database is created with; Database.Migrate
                              brings an older one up to it
   appsettings.example.json   configuration template, copied to the user's data
@@ -1565,9 +1580,13 @@ tests/UrDatabase.Tests/      xUnit suite; TempLog is how a test class stays out
 tool/                        Python helpers with their own unittest suite:
                              the version-bump check, the release gate and the
                              macOS bundler, Store payload/archive validation,
-                             checksum-locked ffprobe preparation
+                             checksum-locked ffprobe preparation, and
+                             make_icons.py, which renders every copy of the icon
 packaging/windows/           Store manifest and PNG assets derived from the app icon
 packaging/ffprobe/            helper pins, notices and source/rebuild provenance
+assets/logo/                 the app icon's editable SVG masters: UrDatabase.svg
+                             for 48px and up, UrDatabase-small.svg drawn on the
+                             pixel grid for 16-32px and the site favicon
 Directory.Build.props        the single <Version> for the whole solution
 web/                         the downloads site served by Firebase Hosting
 docs/                        design notes
@@ -1584,6 +1603,26 @@ and that a change under `src/` bumps the version.
 
 `dotnet build` and `dotnet test` must both be clean before you open a pull
 request.
+
+### Changing the app icon
+
+The icon is a clapperboard whose slate is a catalogue card. Edit the SVGs in
+`assets/logo/`, then regenerate every copy of it in one go:
+
+```bash
+pip install -r tool/requirements-icons.txt
+python tool/make_icons.py          # writes the .ico, .icns, Store PNGs and site favicon
+python tool/make_icons.py --check  # fails if any of them is stale
+```
+
+That writes `src/UrDatabase.App/Assets/UrDatabase.ico` and `.icns`, the PNGs in
+`packaging/windows/Assets/` and the inline favicon in `web/downloads/index.html`.
+Change the small master as well as the large one: it is a separate drawing,
+because a scaled-down large icon blurs at taskbar sizes. The renderer is pinned,
+since the tests compare the committed files with a fresh render byte for byte.
+Those tests are skipped when resvg is not installed, which is the case in CI. The
+tests that check the files' structure and that Windows and macOS carry identical
+frames always run.
 
 ### The suite never touches your install
 
@@ -1724,6 +1763,12 @@ Stated plainly, so nobody has to find out by using it:
   to maintain, but something abandoned at a position nothing will ever move is
   gone from the row for good, and the only record of it is a row in
   `jellyfin_resume_dismissals`.
+- **A reported problem belongs to the card, not to the film.** It is stored under
+  the same identity the library deduplicates on: a film on this disk by its
+  catalogue row, a server-only film by its Jellyfin id. So a problem reported on a
+  server-only film does not follow it once it is downloaded and becomes a local
+  card, and there is no filter yet for "films with a problem" — the badge is the
+  only way to find them.
 - **One Jellyfin server.** There is no way to add a second. The setup screen
   configures the first one and tests it, but a household with two servers has to
   pick one.
