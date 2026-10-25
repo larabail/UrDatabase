@@ -148,6 +148,57 @@ namespace UrDatabase.Tests
             Assert.Equal(expected, FilenameParser.Parse(name).Title);
         }
 
+        [Theory]
+        [InlineData("www.site.com.Back.to.the.Future.1985.mkv", "Back to the Future", 1985)]
+        [InlineData("www.newpct1.com.La.Casa.de.Papel.HDRip.avi", "La Casa de Papel", null)]
+        [InlineData("www.DivxTotaL.com.El.Laberinto.de.la.Muerte.avi", "El Laberinto de la Muerte", null)]
+        [InlineData("www.site.com.es.Mar.Adentro.2004.avi", "Mar Adentro", 2004)]
+        [InlineData("www.site.net - Me Before You (2016).mkv", "Me Before You", 2016)]
+        public void A_site_name_is_removed_without_eating_title_words_that_look_like_domains(
+            string name, string expectedTitle, int? expectedYear)
+        {
+            var parsed = FilenameParser.Parse(name);
+
+            Assert.Equal(expectedTitle, parsed.Title);
+            Assert.Equal(expectedYear, parsed.Year);
+        }
+
+        [Theory]
+        [InlineData("The Rip (2026).mkv", "The Rip")]
+        [InlineData("The Rip 1080p.mkv", "The Rip")]
+        [InlineData("The Sub (2023).mkv", "The Sub")]
+        [InlineData("The Sub 2023 1080p.mkv", "The Sub")]
+        [InlineData("Pump Up the Audio (2001).mkv", "Pump Up the Audio")]
+        [InlineData("Pump.Up.the.Audio.720p.mkv", "Pump Up the Audio")]
+        [InlineData("The Latino (2010).mkv", "The Latino")]
+        [InlineData("The Web 1080p.mkv", "The Web")]
+        public void A_word_that_is_only_sometimes_a_tag_stays_when_nothing_says_it_is_one(string name, string expected)
+        {
+            Assert.Equal(expected, FilenameParser.Parse(name).Title);
+        }
+
+        [Theory]
+        [InlineData("Gladiator BD Rip.mkv", "Gladiator")]
+        [InlineData("Gladiator Dual Audio.mkv", "Gladiator")]
+        [InlineData("Gladiator Castellano Latino.mkv", "Gladiator")]
+        public void A_word_that_is_only_sometimes_a_tag_goes_when_another_tag_vouches_for_it(string name, string expected)
+        {
+            Assert.Equal(expected, FilenameParser.Parse(name).Title);
+        }
+
+        [Theory]
+        [InlineData("Origen MicroHD", true)]
+        [InlineData("Coco 1080p", true)]
+        [InlineData("www.site.com Coco", true)]
+        [InlineData("The Rip", false)]
+        [InlineData("Pump Up the Audio", false)]
+        [InlineData("Charlotte's Web", false)]
+        [InlineData("4K", false)]
+        public void Only_a_title_holding_an_unambiguous_release_tag_is_said_to_carry_one(string title, bool expected)
+        {
+            Assert.Equal(expected, FilenameParser.CarriesReleaseTag(title));
+        }
+
         [Fact]
         public void A_title_already_carrying_release_tags_cleans_down_to_the_film()
         {

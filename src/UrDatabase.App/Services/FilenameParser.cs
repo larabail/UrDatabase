@@ -17,11 +17,12 @@ namespace UrDatabase.Services
     /// "The Matrix [1999].mp4") is to be able to assert on them directly.
     ///
     /// Known limits, all deliberate: a dotted name loses genuine full stops ("S.W.A.T." becomes
-    /// "S W A T"). Release noise is cut in two strengths. A token that can only ever describe a
+    /// "S W A T"). Release noise is cut in three strengths. A token that can only ever describe a
     /// release — "1080p", "x264", "BDRip", "MicroHD", "Castellano" — ends the title, and
     /// everything after it goes whether it is recognised or not. A token that is also a word —
-    /// "Web", "Dual", "Spanish", "4K" — is only stripped from the end, so "Charlotte's Web" still
-    /// loses its last word but "The Spanish Prisoner" keeps its middle one.
+    /// "Web", "Dual", "4K" — is only stripped from the end, so "Charlotte's Web" still loses its
+    /// last word. Ordinary words and languages — "Rip", "Audio", "Spanish" — need another tag
+    /// beside them as well, so "The Rip" and "Pump Up the Audio" keep theirs.
     ///
     /// Nothing here understands television, and that is now a division of labour rather than a
     /// gap: <see cref="EpisodeParser"/> reads a path that names a season and an episode, and a
@@ -75,9 +76,14 @@ namespace UrDatabase.Services
         /// A site name stamped onto the file by whoever shared it, as in
         /// "www.DivxTotaL.com - Film.avi". Only with the "www.", because "the.net.1995" is a
         /// dotted name and not a domain.
+        ///
+        /// Exactly one name label, then a top-level domain or one of a few known two-part ones
+        /// ("com.es"). Nothing looser: a dotted release name carries on straight after the domain,
+        /// and a pattern allowed to roam over further labels backtracks to whichever title word
+        /// is also a domain — "www.site.com.Back.to.the.Future" lost everything up to "to".
         /// </summary>
         private static readonly Regex SiteName =
-            new(@"(?<![\p{L}\p{N}])www\.[\p{L}\p{N}-]+(\.[\p{L}\p{N}-]+)*\.(com|net|org|info|biz|es|tv|to|me|cc|ws|mx|ar|eu|co|io|nu|la|ch|cx)(?![\p{L}\p{N}])",
+            new(@"(?<![\p{L}\p{N}])www\.[\p{L}\p{N}-]+\.(?:(?:com|net|org)\.(?:es|mx|ar|uk|br|cl|pe)|com|net|org|info|biz|es|tv|to|me|cc|ws|mx|ar|eu|co|io|nu|la|ch|cx)(?![\p{L}\p{N}])",
                 RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
         /// <summary>
@@ -110,27 +116,57 @@ namespace UrDatabase.Services
         };
 
         /// <summary>
-        /// Tokens that are noise at the end of a title but can be a word of one: "4K" is a film,
-        /// "Charlotte's Web" ends in a source tag and "The Spanish Prisoner" holds a language.
-        /// Only ever removed from the end, and never down to nothing.
+        /// Tokens that are noise at the end of a title but can be a word of one: "4K" is a film
+        /// and "Charlotte's Web" ends in a source tag. Only ever removed from the end, never down
+        /// to nothing, and never down to a lone article.
         /// </summary>
         private static readonly HashSet<string> TrailingNoise = new(StringComparer.OrdinalIgnoreCase)
         {
             // source
-            "web", "dvd", "cam", "r5", "screener", "rip", "bd",
+            "web", "dvd", "cam", "r5", "screener",
             // resolution and picture
             "4k", "hd", "sd", "sdr", "imax",
             // audio
-            "atmos", "mp3", "opus", "dd", "ddp", "dual", "multi", "audio",
+            "atmos", "mp3", "opus", "dd", "ddp", "dual", "multi",
             // edition and release state
             "proper", "extended", "theatrical", "unrated", "uncut", "remastered", "restored",
-            "limited", "internal", "subbed", "dubbed", "subs", "sub",
-            // language
-            "spanish", "espanol", "español", "latino", "ingles", "inglés", "vo", "vos",
+            "limited", "internal", "subbed", "dubbed", "subs",
             // streaming service tags
             "nf", "hulu", "itunes", "stan", "pcok",
             // release groups that are also words
             "sparks", "evo",
+        };
+
+        /// <summary>
+        /// Ordinary words that are only a tag when another tag says so: "BD Rip" and "Dual Audio"
+        /// are noise, "The Rip" and "Pump Up the Audio" are films. Removed from the end only when
+        /// the word before them is noise too.
+        /// </summary>
+        private static readonly HashSet<string> VouchedNoise = new(StringComparer.OrdinalIgnoreCase)
+        {
+            "rip", "bd", "audio", "sub",
+        };
+
+        /// <summary>
+        /// Language names. Noise in "Coco SPANISH 1080p", a word in "The Latino". Removed from the
+        /// end only in a release context: after another tag, or straight before the release tag
+        /// the title was cut at.
+        /// </summary>
+        private static readonly HashSet<string> LanguageNoise = new(StringComparer.OrdinalIgnoreCase)
+        {
+            "spanish", "espanol", "español", "latino", "ingles", "inglés", "vo", "vos",
+        };
+
+        /// <summary>
+        /// Articles and connectives, English and Spanish. A word after one of these is part of a
+        /// phrase ("The Rip", "Pump Up the Audio"), so an ambiguous word there is never noise,
+        /// and a title is never cut back to one of these alone.
+        /// </summary>
+        private static readonly HashSet<string> Connectives = new(StringComparer.OrdinalIgnoreCase)
+        {
+            "a", "an", "and", "as", "at", "but", "by", "for", "from", "in", "into", "nor", "of",
+            "on", "or", "over", "the", "to", "vs", "with",
+            "el", "la", "los", "las", "lo", "un", "una", "de", "del", "y", "en", "con", "por",
         };
 
         /// <summary>
@@ -273,16 +309,7 @@ namespace UrDatabase.Services
         /// </summary>
         private static string CleanTitle(string raw)
         {
-            if (string.IsNullOrWhiteSpace(raw)) return "";
-
-            var text = AnyBracket.Replace(SiteName.Replace(raw, " "), " ").Replace('_', ' ');
-
-            // Bracket removal and mixed release separators can introduce spaces into a dotted
-            // filename. Split internal dots, but keep "Mr. Nobody" and audio tags such as DD5.1.
-            text = string.Join(' ', text.Split(' ', StringSplitOptions.RemoveEmptyEntries)
-                .Select(token => Classify(token) != Noise.None ? token : Regex.Replace(token, @"(?<=\S)\.(?=\S)", " ")));
-
-            var tokens = text.Split(' ', StringSplitOptions.RemoveEmptyEntries).ToList();
+            var tokens = Tokenize(raw);
 
             // Release tags in front of the title say nothing about it either.
             while (tokens.Count > 0 && Classify(tokens[0]) == Noise.ReleaseTag)
@@ -292,10 +319,8 @@ namespace UrDatabase.Services
             var cut = tokens.FindIndex(token => Classify(token) == Noise.ReleaseTag);
             if (cut >= 0) tokens.RemoveRange(cut, tokens.Count - cut);
 
-            // Words that are noise only at the end come off one at a time, but never the first:
-            // a film called "4K" or "2.0" is still a film.
-            while (tokens.Count > 1 && Classify(tokens[^1]) != Noise.None)
-                tokens.RemoveAt(tokens.Count - 1);
+            TrimTrailingNoise(tokens, wasCut: cut >= 0);
+
             if (tokens.Count == 1 && IsPunctuationOnly(tokens[0]))
                 tokens.Clear();
 
@@ -303,12 +328,90 @@ namespace UrDatabase.Services
             return ApplyTitleCase(title);
         }
 
+        /// <summary>
+        /// Takes words that are noise only at the end off one at a time. Never the first word — a
+        /// film called "4K" or "2.0" is still a film — and never down to a lone article, so
+        /// "The Web 1080p" keeps its name.
+        /// </summary>
+        /// <remarks>
+        /// The ambiguous words need more than their position. A word from
+        /// <see cref="VouchedNoise"/> goes only when the word before it is noise too ("Dual
+        /// Audio", "BD Rip"), and the word that vouched for it then goes as well. A language goes
+        /// in that case or when it is the last thing before a release tag or other noise, which is
+        /// how "Coco SPANISH 1080p" reads. Neither goes straight after an article or connective,
+        /// because "The Rip" and "Pump Up the Audio" are phrases and not tags.
+        /// </remarks>
+        private static void TrimTrailingNoise(List<string> tokens, bool wasCut)
+        {
+            var releaseContext = wasCut;
+            var vouched = false;
+
+            while (tokens.Count > 1)
+            {
+                var kind = Classify(tokens[^1]);
+                var before = tokens[^2];
+                var beforeIsNoise = Classify(before) != Noise.None;
+                var afterConnective = Connectives.Contains(before);
+
+                var remove = kind switch
+                {
+                    Noise.Trailing or Noise.ReleaseTag => true,
+                    Noise.Vouched => !afterConnective && (beforeIsNoise || vouched),
+                    Noise.Language => !afterConnective && (beforeIsNoise || vouched || releaseContext),
+                    _ => false,
+                };
+
+                if (!remove) break;
+                if (tokens.Count == 2 && Connectives.Contains(tokens[0])) break;
+
+                tokens.RemoveAt(tokens.Count - 1);
+                vouched = kind is Noise.Vouched or Noise.Language && beforeIsNoise;
+                releaseContext = true;
+            }
+        }
+
+        /// <summary>
+        /// Splits a fragment into words: site names, brackets and underscores go, and dots inside
+        /// a word become spaces — except in "Mr. Nobody" and audio tags such as DD5.1.
+        /// </summary>
+        private static List<string> Tokenize(string? raw)
+        {
+            if (string.IsNullOrWhiteSpace(raw)) return new List<string>();
+
+            var text = AnyBracket.Replace(SiteName.Replace(raw, " "), " ").Replace('_', ' ');
+
+            text = string.Join(' ', text.Split(' ', StringSplitOptions.RemoveEmptyEntries)
+                .Select(token => Classify(token) != Noise.None ? token : Regex.Replace(token, @"(?<=\S)\.(?=\S)", " ")));
+
+            return text.Split(' ', StringSplitOptions.RemoveEmptyEntries).ToList();
+        }
+
+        /// <summary>
+        /// True when a title holds something that can only be release noise: a site name, or a
+        /// token such as "1080p", "x264", "MicroHD" or "Castellano".
+        /// </summary>
+        /// <remarks>
+        /// The scanner asks this before it rewrites a title an older build gave a row. A title
+        /// that merely ends in an ambiguous word — "The Rip", "Charlotte's Web" — is far more
+        /// likely to be exactly right than to be noise, and renaming it would be a loss nobody
+        /// asked for.
+        /// </remarks>
+        public static bool CarriesReleaseTag(string? title) =>
+            !string.IsNullOrWhiteSpace(title) &&
+            (SiteName.IsMatch(title) || Tokenize(title).Any(token => Classify(token) == Noise.ReleaseTag));
+
         private enum Noise
         {
             None,
 
             /// <summary>Noise only when it ends a title.</summary>
             Trailing,
+
+            /// <summary>An ordinary word, noise at the end only when another tag stands before it.</summary>
+            Vouched,
+
+            /// <summary>A language, noise at the end only in a release context.</summary>
+            Language,
 
             /// <summary>Never part of a title: it and everything after it go.</summary>
             ReleaseTag,
@@ -345,6 +448,9 @@ namespace UrDatabase.Services
 
             if (TrailingNoise.Contains(token) || BareChannels.IsMatch(token))
                 return Noise.Trailing;
+
+            if (VouchedNoise.Contains(token)) return Noise.Vouched;
+            if (LanguageNoise.Contains(token)) return Noise.Language;
 
             return Noise.None;
         }

@@ -484,11 +484,6 @@ WHERE id = @id;
         }
 
         /// <summary>
-        /// Returns the id of the movie a parsed filename belongs to, creating the row when nothing
-        /// matches. Matching happens in <see cref="MovieIndex"/> rather than in SQL so that two
-        /// spellings of one title collapse onto a single row.
-        /// </summary>
-        /// <summary>
         /// Which movie a walked file belongs to.
         /// </summary>
         /// <remarks>
@@ -501,10 +496,13 @@ WHERE id = @id;
         ///
         /// The last case is also worth repairing rather than merely not making worse: the row is
         /// called "Origen MicroHD", and that name is why TMDB never found it. When the row's own
-        /// title cleans down to exactly what the file now parses as, and nothing has identified
-        /// it yet, the row takes the clean title. A title a person or a corrected match chose
-        /// never cleans down to the filename like that, and one TMDB already identified is left
-        /// exactly as it is.
+        /// title holds an unambiguous release tag, cleans down to exactly what the file now
+        /// parses as, and nothing has identified it yet, the row takes the clean title and keeps
+        /// the old one in <c>scan_title</c> — the same place a corrected match keeps the name it
+        /// replaced, so the rename is recorded and the old name still resolves. A title that only
+        /// ends in an ambiguous word ("The Rip", "Charlotte's Web") is never touched: it is far
+        /// likelier to be right than noisy. Nor is a title a person or a corrected match chose, or
+        /// one TMDB already identified.
         /// </remarks>
         private static async Task<long> MovieForFileAsync(
             SqliteConnection conn,
@@ -522,11 +520,14 @@ WHERE id = @id;
 
             if (row is not null && IsStaleScannedTitle(row, parsed))
             {
-                await conn.ExecuteAsync(
-                    "UPDATE movies SET title = @title, year = COALESCE(year, @year) WHERE id = @id AND tmdb_id IS NULL",
+                // SQLite evaluates every SET expression against the old row, so scan_title takes
+                // the title being replaced.
+                var renamed = await conn.ExecuteAsync(
+                    @"UPDATE movies SET scan_title = title, title = @title, year = COALESCE(year, @year)
+                      WHERE id = @id AND tmdb_id IS NULL AND scan_title IS NULL",
                     new { title = parsed.Title, year = parsed.Year, id = linked }, tx);
 
-                movies.Add(linked, parsed.Title, row.Year ?? parsed.Year);
+                if (renamed > 0) movies.Add(linked, parsed.Title, row.Year ?? parsed.Year);
             }
 
             return linked;
@@ -538,6 +539,7 @@ WHERE id = @id;
             if (string.IsNullOrWhiteSpace(row.Title) || string.IsNullOrWhiteSpace(parsed.Title)) return false;
             if (string.Equals(row.Title, parsed.Title, StringComparison.Ordinal)) return false;
             if (row.Year.HasValue && parsed.Year.HasValue && row.Year != parsed.Year) return false;
+            if (!FilenameParser.CarriesReleaseTag(row.Title)) return false;
 
             var cleaned = MovieIndex.NormalizeTitle(FilenameParser.CleanText(row.Title));
             return cleaned.Length > 0 && cleaned == MovieIndex.NormalizeTitle(parsed.Title);
@@ -551,6 +553,11 @@ WHERE id = @id;
             public string? ScanTitle { get; set; }
         }
 
+        /// <summary>
+        /// Returns the id of the movie a parsed filename belongs to, creating the row when nothing
+        /// matches. Matching happens in <see cref="MovieIndex"/> rather than in SQL so that two
+        /// spellings of one title collapse onto a single row.
+        /// </summary>
         private static async Task<long> EnsureMovieAsync(SqliteConnection conn, SqliteTransaction tx, MovieIndex index, ParsedMedia parsed)
         {
             if (string.IsNullOrWhiteSpace(parsed.Title))
