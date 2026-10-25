@@ -49,6 +49,17 @@ namespace UrDatabase.Views
         private string _mediaNotice = "";
 
         /// <summary>
+        /// How to fetch the strip of stills for a film, owned by the main window like the other
+        /// lookups. The flag asks past the cache, which only Refresh does.
+        /// </summary>
+        private Func<MovieDetailsVm, bool, CancellationToken, Task<IReadOnlyList<FilmStill>>>? _stillsLookup;
+        private IReadOnlyList<FilmStill> _stills = Array.Empty<FilmStill>();
+        private bool _hasRelated;
+        private int _viewerIndex = -1;
+        private CancellationTokenSource? _viewerCts;
+        private readonly OwnedImageSlot<Avalonia.Media.Imaging.Bitmap> _viewerImage = new();
+
+        /// <summary>
         /// Where to record a file the user links by hand. Null when the screen was shown without
         /// one — a Jellyfin film, or the XAML designer — in which case linking still updates what
         /// is on screen and simply does not outlive it.
@@ -182,6 +193,29 @@ namespace UrDatabase.Views
                     Tag = kind
                 });
             }
+
+            // Tunnelling, so the arrows reach the open still before the focused button's
+            // directional navigation takes them.
+            AddHandler(KeyDownEvent, StillViewer_KeyDown, RoutingStrategies.Tunnel);
+        }
+
+        /// <summary>A still open across the window is what Escape and the arrows mean first.</summary>
+        private void StillViewer_KeyDown(object? sender, KeyEventArgs e)
+        {
+            if (!StillViewer.IsVisible) return;
+
+            if (e.Key == Key.Escape)
+            {
+                CloseStill();
+                e.Handled = true;
+                return;
+            }
+
+            var step = e.Key switch { Key.Left => -1, Key.Right => 1, _ => 0 };
+            if (step == 0 || _stills.Count == 0) return;
+
+            OpenStill((_viewerIndex + step + _stills.Count) % _stills.Count);
+            e.Handled = true;
         }
 
         /// <summary>
@@ -198,7 +232,8 @@ namespace UrDatabase.Views
             RelatedShelf? related = null,
             Func<string, CancellationToken, Task<JellyfinMovie?>>? movieLookup = null,
             Func<MovieDetailsVm, CancellationToken, Task<RelatedShelf>>? relatedLookup = null,
-            Action? cancelEnrichment = null)
+            Action? cancelEnrichment = null,
+            Func<MovieDetailsVm, bool, CancellationToken, Task<IReadOnlyList<FilmStill>>>? stillsLookup = null)
         {
             // Leaving one film open behind another would strand its completion source and hang
             // whichever caller was awaiting it.
@@ -209,9 +244,11 @@ namespace UrDatabase.Views
             _config = config;
             _ratingLookup = ratingLookup;
             _awardsLookup = awardsLookup;
+            _stillsLookup = stillsLookup;
             _jellyfin = jellyfin;
             _appLifetime = appLifetime;
-            _pageRefresh = new MoviePageRefresh(config, dbPath, jellyfin, movieLookup, ratingLookup, awardsLookup, relatedLookup);
+            _pageRefresh = new MoviePageRefresh(config, dbPath, jellyfin, movieLookup, ratingLookup, awardsLookup, relatedLookup,
+                stillsLookup: stillsLookup);
             _changingMovie = false;
             _refreshCts = null;
             _cancelEnrichment = cancelEnrichment;
@@ -235,6 +272,7 @@ namespace UrDatabase.Views
             Bind(vm);
             SetRefreshControls(refreshing: false);
             RefreshStatus.Text = "";
+            ShowStills(null);
             ShowRelated(related);
             IsVisible = true;
 
@@ -406,6 +444,7 @@ namespace UrDatabase.Views
             _pageRefresh?.Dispose();
             _pageRefresh = null;
             _artworkCts?.Cancel();
+            ShowStills(null);
             IsVisible = false;
 
             BackdropImage.Source = null;
@@ -444,6 +483,11 @@ namespace UrDatabase.Views
         public void RefreshRelated(MovieDetailsVm vm, RelatedShelf related)
         {
             if (ReferenceEquals(Vm, vm)) ShowRelated(related);
+        }
+
+        public void RefreshStills(MovieDetailsVm vm, IReadOnlyList<FilmStill> stills)
+        {
+            if (ReferenceEquals(Vm, vm)) ShowStills(stills);
         }
 
         private void Bind(MovieDetailsVm vm)
@@ -556,10 +600,9 @@ namespace UrDatabase.Views
         /// Fills the shelf of films to watch next, or hides it and gives the space back.
         /// </summary>
         /// <remarks>
-        /// The row heights are swapped rather than left fixed. With a shelf, the plot is capped so
-        /// the posters have somewhere to be; without one, the plot takes the star again and the
-        /// screen is exactly what it was before this existed. Leaving the plot capped either way
-        /// would reintroduce the empty band this shelf was added to fill, only higher up.
+        /// The row heights are swapped rather than left fixed — see <see cref="DetailsLayout"/>.
+        /// Leaving the plot capped with no shelf under it would reintroduce the empty band this
+        /// shelf was added to fill, only higher up.
         /// </remarks>
         private void ShowRelated(RelatedShelf? related)
         {
@@ -569,13 +612,128 @@ namespace UrDatabase.Views
             RelatedList.ItemsSource = shelf.Any ? shelf.Films : null;
             RelatedHeading.Text = shelf.Heading;
 
-            var rows = ((Grid)RelatedPane.Parent!).RowDefinitions;
-            rows[3].Height = shelf.Any ? GridLength.Auto : new GridLength(1, GridUnitType.Star);
-            rows[4].Height = shelf.Any ? new GridLength(1, GridUnitType.Star) : GridLength.Auto;
+            _hasRelated = shelf.Any;
+            ApplyColumnLayout();
+        }
 
-            // Only capped when something is competing for the space. A film with a long plot and
-            // a shelf scrolls the plot, which is what the ScrollViewer around it was always for.
-            PlotPane.MaxHeight = shelf.Any ? 168 : double.PositiveInfinity;
+        /// <summary>
+        /// Fills the strip of stills under the plot, or hides it. Any still open full-screen
+        /// belongs to the strip being replaced, so it closes.
+        /// </summary>
+        private void ShowStills(IReadOnlyList<FilmStill>? stills)
+        {
+            CloseStill();
+            _stills = stills ?? Array.Empty<FilmStill>();
+
+            StillsPane.IsVisible = _stills.Count > 0;
+            StillsList.ItemsSource = _stills.Count > 0 ? _stills : null;
+            ApplyColumnLayout();
+        }
+
+        private void ApplyColumnLayout()
+        {
+            var layout = DetailsLayout.For(_hasRelated, _stills.Count > 0);
+            var rows = ((Grid)RelatedPane.Parent!).RowDefinitions;
+            rows[3].Height = Fill(layout.PlotFills);
+            rows[4].Height = Fill(layout.StillsFill);
+            rows[5].Height = Fill(layout.RelatedFills);
+
+            // A long plot under a cap scrolls, which is what the ScrollViewer around it is for.
+            PlotPane.MaxHeight = layout.PlotMaxHeight;
+
+            static GridLength Fill(bool fills) => fills ? new GridLength(1, GridUnitType.Star) : GridLength.Auto;
+        }
+
+        private async Task ReloadStillsAsync(MovieDetailsVm vm, CancellationToken ct)
+        {
+            ShowStills(null);
+            if (_stillsLookup is null) return;
+
+            try
+            {
+                var stills = await _stillsLookup(vm, false, ct);
+                if (!ct.IsCancellationRequested && ReferenceEquals(Vm, vm)) ShowStills(stills);
+            }
+            catch (OperationCanceledException)
+            {
+            }
+            catch (Exception ex)
+            {
+                // Decoration. The correction it follows has already succeeded.
+                AppLog.Write("posters.log", $"stills could not be reloaded ({ex.GetType().Name})");
+            }
+        }
+
+        private void StillCard_Click(object? sender, PointerPressedEventArgs e)
+        {
+            if (!e.GetCurrentPoint(sender as Control).Properties.IsLeftButtonPressed) return;
+            if ((sender as Control)?.DataContext is not FilmStill still) return;
+
+            var index = -1;
+            for (var i = 0; i < _stills.Count; i++)
+                if (ReferenceEquals(_stills[i], still)) { index = i; break; }
+
+            OpenStill(index);
+            e.Handled = true;
+        }
+
+        private void StillViewer_Click(object? sender, PointerPressedEventArgs e)
+        {
+            CloseStill();
+            e.Handled = true;
+        }
+
+        /// <summary>
+        /// Shows a still across the window: the thumbnail first, then the large one when it
+        /// arrives. Both are loaded outside the shared cache and owned by
+        /// <see cref="_viewerImage"/>, which releases each one as soon as it is replaced, the
+        /// viewer steps or closes, or it arrives too late to be shown. When the large one cannot
+        /// be fetched the thumbnail stays.
+        /// </summary>
+        private void OpenStill(int index)
+        {
+            if (index < 0 || index >= _stills.Count) return;
+
+            _viewerCts?.Cancel();
+            _viewerCts?.Dispose();
+            _viewerCts = CancellationTokenSource.CreateLinkedTokenSource(_cts?.Token ?? CancellationToken.None);
+            _viewerIndex = index;
+
+            var ticket = _viewerImage.Begin(ShowViewerImage);
+            StillViewerCaption.Text = _stills.Count > 1
+                ? $"{index + 1} / {_stills.Count}   ·   ← → to move   ·   Esc to close"
+                : "Esc to close";
+            StillViewer.IsVisible = true;
+
+            // Clicking a still leaves focus on nothing in this screen, and the arrows would then
+            // go to the window instead of here.
+            StillViewer.Focus();
+
+            _ = LoadViewerAsync(_stills[index], ticket, _viewerCts.Token);
+        }
+
+        private void ShowViewerImage(Avalonia.Media.Imaging.Bitmap? bitmap) => StillViewerImage.Source = bitmap;
+
+        private async Task LoadViewerAsync(FilmStill still, int ticket, CancellationToken ct)
+        {
+            // A cancelled load still hands back whatever it decoded; Accept disposes a stale one.
+            var thumbnail = await ImageLoader.LoadAsync(still.Thumbnail, ct, cache: false);
+            if (thumbnail is not null && !_viewerImage.Accept(ticket, thumbnail, ShowViewerImage)) return;
+
+            var full = await ImageLoader.LoadAsync(still.Full, ct, cache: false);
+            _viewerImage.Accept(ticket, full, ShowViewerImage);
+        }
+
+        private void CloseStill()
+        {
+            _viewerCts?.Cancel();
+            _viewerIndex = -1;
+            var wasOpen = StillViewer.IsVisible;
+            StillViewer.IsVisible = false;
+            _viewerImage.Release(ShowViewerImage);
+
+            // Back inside the page, so Escape goes on meaning "back to the library".
+            if (wasOpen && IsShowing) BackButton.Focus();
         }
 
         /// <summary>
@@ -755,6 +913,7 @@ namespace UrDatabase.Views
                 }
                 Bind(vm);
                 if (result.Related is not null) ShowRelated(result.Related);
+                if (result.Stills is not null) ShowStills(result.Stills);
                 // Always load again, even when the source string is unchanged: a failed image is
                 // not cached, and assigning the same bound path would never retry that request.
                 var artworkNotices = await LoadArtworkAsync(cts.Token, keepCurrent: true, previousSources: previousSources);
@@ -1490,6 +1649,7 @@ namespace UrDatabase.Views
                 // is worth saying so rather than looking like nothing happened.
                 Bind(vm);
                 LoadArtwork(cts.Token);
+                _ = ReloadStillsAsync(vm, _cts?.Token ?? CancellationToken.None);
 
                 await MessageBoxWindow.ShowAsync(Owner(), "UrDatabase",
                     "The poster was changed, but TMDB did not return the rest of the details. " +
@@ -1537,6 +1697,9 @@ namespace UrDatabase.Views
 
             Bind(vm);
             LoadArtwork(cts.Token);
+
+            // The strip on screen is frames from the film the user has just said this is not.
+            await ReloadStillsAsync(vm, cts.Token);
         }
 
         /// <summary>

@@ -121,7 +121,7 @@ It runs on Windows and macOS from one codebase, built with
   **Library** goes back.
 
   Network lookups no longer stand between the click and the page. Ratings,
-  awards and recommendations load independently where their inputs are already
+  awards, recommendations and stills load independently where their inputs are already
   known, and each lookup gets its own twelve-second deadline rather than sharing
   one deadline across all the services. A slow or unreachable service leaves the
   page open, says which lookup timed out, and records it in `details.log`;
@@ -199,6 +199,24 @@ It runs on Windows and macOS from one codebase, built with
   sharing the most genres, and says so in its heading rather than claiming a
   resemblance nobody computed. When there is nothing to show it hides entirely
   and the plot takes the space back (`Services/RelatedFilms`).
+- **Stills from the film, under its plot.** A strip of up to eight frames sits
+  directly beneath the synopsis, and clicking one fills the window with it at
+  1280 pixels wide; the arrow keys step through the strip and Escape puts it
+  away. They are TMDB's backdrops for the film — for nearly every film,
+  stills from it — with the ones carrying a title or tagline left out unless
+  there is nothing else, and the backdrop already behind the page left off so
+  the first frame is not the picture directly behind it.
+
+  They load like everything else on the page: after it is open, on their own
+  deadline, and never in its way. With **DownloadPosters** on, the thumbnails
+  are cached in a `stills` folder inside the poster cache, staged and checked
+  like posters, so a film opened once shows its strip again offline and with
+  no key. A strip is only trusted from disk once every frame on it arrived, so
+  an interrupted one is asked for again rather than shown half-empty forever.
+  **Refresh** goes past the cache, and **Wrong film?** fetches the strip of the
+  film you chose. With no TMDB key, nothing cached, or a film nothing has
+  identified, the strip is hidden rather than left as an empty heading
+  (`Services/FilmStills`, `Services/DetailsLayout`).
 - **The Academy, under the poster.** A film that was nominated for an Oscar says
   so: wins first, marked with a star, then the nominations, with the category and
   who it was for. The panel is hidden outright for the great majority of films
@@ -1582,7 +1600,8 @@ is `urdatabase-downloads`.
 ```
 src/UrDatabase.App/          the application: one cross-platform project
   Views/                     windows, screens and their code-behind
-  Controls/                  reusable pieces, e.g. the poster card
+  Controls/                  reusable pieces, e.g. the poster card and the
+                             self-loading image the stills strip uses
   Styles/                    Tokens.axaml: every colour, face and metric, plus
                              the Fluent resources the theme would otherwise
                              paint in the system accent.
@@ -1747,6 +1766,16 @@ Stated plainly, so nobody has to find out by using it:
   genre fallback behind it needs genres, which the same pass fills in, so on a
   library that has never reached TMDB at all the shelf is simply absent. Nothing
   on it is ever a film you do not own, which is the one guarantee it does make.
+- **Stills come from TMDB, not from the file.** The strip under the plot is
+  TMDB's backdrops, so it needs a TMDB key and a film TMDB has identified —
+  for a server film, the TMDB id the server gave it. Reading frames out of the
+  file was considered and left out: the app bundles ffprobe and not ffmpeg, a
+  server film has no file on this disk, and a frame picked by timestamp is as
+  often a black fade or a title card as a picture of anything. A strip already
+  cached keeps showing without a key; one never fetched does not appear.
+  Without **DownloadPosters** nothing is cached and the strip needs the network
+  every time, like the posters. A film whose backdrops are all title cards
+  shows those, because they are all there is.
 - **A series has no awards panel.** The Academy does not give programmes Oscars,
   and the archive is searched by title, so a series is never asked about at all —
   a programme sharing a name with a film would otherwise be handed the film's

@@ -130,6 +130,24 @@ namespace UrDatabase.Services
         public string BuildImageUrl(string posterPath) =>
             $"{ImageBaseUrl}/{_imageSize}/{(posterPath ?? "").TrimStart('/')}";
 
+        /// <summary>The same image at a size chosen by the caller rather than by configuration.</summary>
+        public static string BuildSizedImageUrl(string size, string imagePath) =>
+            $"{ImageBaseUrl}/{size}/{(imagePath ?? "").TrimStart('/')}";
+
+        /// <summary>
+        /// Every image TMDB holds for a film. No language filter: without one TMDB returns them
+        /// all, and which of the backdrops are text-free stills is decided in
+        /// <see cref="FilmStills.Pick"/> rather than by a parameter whose behaviour has changed
+        /// before.
+        /// </summary>
+        public string BuildImagesUrl(int tmdbId) =>
+            $"{ApiBaseUrl}/movie/{tmdbId}/images?api_key={Uri.EscapeDataString(_apiKey)}";
+
+        public bool HasApiKey => !string.IsNullOrWhiteSpace(_apiKey);
+
+        /// <summary>Where cached artwork lives, already expanded.</summary>
+        public string PosterCacheDirectory => _posterCacheDir;
+
         // ---------- API calls ----------
 
         /// <summary>
@@ -471,8 +489,19 @@ namespace UrDatabase.Services
         {
             Directory.CreateDirectory(_posterCacheDir);
             SweepOnce();
+            return await DownloadToAsync(url, _posterCacheDir, fileName, ct);
+        }
 
-            var dst = Path.Combine(_posterCacheDir, fileName);
+        /// <summary>
+        /// <see cref="DownloadAsync"/> into a directory of the caller's choosing, with the same
+        /// staging and the same refusal of anything that is not an image. Film stills use it to
+        /// keep their own folder beside the posters.
+        /// </summary>
+        internal async Task<string?> DownloadToAsync(string url, string directory, string fileName, CancellationToken ct)
+        {
+            Directory.CreateDirectory(directory);
+
+            var dst = Path.Combine(directory, fileName);
             if (File.Exists(dst)) return dst;
 
             // Headers first, then the body straight to disk. Buffering the whole poster into
@@ -488,7 +517,7 @@ namespace UrDatabase.Services
             // atomic within one volume, and a cache configured onto another disk would quietly
             // turn the move back into the copy this exists to avoid. The GUID keeps two fetches
             // of the same poster — or a second copy of the app — off each other's staging file.
-            var staging = Path.Combine(_posterCacheDir, $"{fileName}.{Guid.NewGuid():N}{StagingSuffix}");
+            var staging = Path.Combine(directory, $"{fileName}.{Guid.NewGuid():N}{StagingSuffix}");
 
             try
             {
@@ -720,6 +749,41 @@ namespace UrDatabase.Services
             // leave it zero, and every caller uses it to ask for credits next.
             if (details != null) details.Id = tmdbId;
             return details;
+        }
+
+        /// <summary>
+        /// The film's backdrops, in TMDB's order. Empty without a key or an id; a failed request
+        /// throws rather than answering empty, so a caller that caches the answer never records
+        /// an outage as "this film has no stills".
+        /// </summary>
+        public async Task<IReadOnlyList<TmdbImage>> GetBackdropsAsync(int tmdbId, CancellationToken ct)
+        {
+            if (!HasApiKey || tmdbId <= 0) return Array.Empty<TmdbImage>();
+
+            using var resp = await GetWithRetryAsync(BuildImagesUrl(tmdbId), ct);
+            RequireSuccess(resp, "images");
+
+            await using var stream = await resp.Content.ReadAsStreamAsync(ct);
+            var doc = await JsonSerializer.DeserializeAsync<TmdbImages>(stream, _json, ct);
+            return doc?.Backdrops ?? new List<TmdbImage>();
+        }
+
+        public sealed class TmdbImage
+        {
+            [JsonPropertyName("file_path")] public string? FilePath { get; set; }
+            [JsonPropertyName("width")] public int Width { get; set; }
+            [JsonPropertyName("height")] public int Height { get; set; }
+
+            /// <summary>Null for an image with no words on it, which is what a still is.</summary>
+            [JsonPropertyName("iso_639_1")] public string? Language { get; set; }
+            [JsonPropertyName("vote_average")] public double VoteAverage { get; set; }
+            [JsonPropertyName("vote_count")] public int VoteCount { get; set; }
+        }
+
+        /// <summary>The body of <c>/movie/{id}/images</c>; posters and logos are not read.</summary>
+        private sealed class TmdbImages
+        {
+            [JsonPropertyName("backdrops")] public List<TmdbImage>? Backdrops { get; set; }
         }
 
         public async Task<TmdbCredits?> GetCreditsByIdAsync(int tmdbId, CancellationToken ct)

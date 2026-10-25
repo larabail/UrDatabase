@@ -7,7 +7,7 @@ namespace UrDatabase.Tests
     {
         [Theory]
         [InlineData("MainWindow.axaml", 2)]
-        [InlineData("MovieDetailsView.axaml", 1)]
+        [InlineData("MovieDetailsView.axaml", 2)]
         [InlineData("SeriesDetailsView.axaml", 1)]
         public void Every_horizontal_row_has_mouse_navigation(string file, int count)
         {
