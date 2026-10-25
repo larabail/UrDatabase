@@ -480,6 +480,44 @@ namespace UrDatabase.Views
             SetStatus(view.Status, isLibrarySummary: view.Tally is not null);
             WarmPosters(_allMovies, includeKnown: _refreshing);
             ReapplyFilters();
+
+            _ = AdoptWatchlistKeysAsync(_allMovies);
+        }
+
+        /// <summary>
+        /// Moves Watchlist entries held under a server key onto the catalogue row the film now
+        /// has, while the match that links the two still holds. See <see cref="Watchlist.Adoptions"/>.
+        /// The shelf is already right, because a card matches both keys; this keeps it right once
+        /// the server is gone.
+        /// </summary>
+        private async Task AdoptWatchlistKeysAsync(IReadOnlyList<UiMovie> library)
+        {
+            var moves = Watchlist.Adoptions(library, _watchlist);
+            if (moves.Count == 0) return;
+
+            try
+            {
+                using var conn = Database.Open(_dbPath);
+                await DatabaseWriteLane.RunAsync(
+                    conn,
+                    _ =>
+                    {
+                        WatchlistStore.Adopt(conn, moves);
+                        return Task.CompletedTask;
+                    },
+                    _cts.Token);
+            }
+            catch (OperationCanceledException)
+            {
+                return;
+            }
+            catch (Exception ex)
+            {
+                AppLog.Write("app.log", $"could not move watchlist entries onto catalogued films: {ex.Message}");
+                return;
+            }
+
+            LoadWatchlist();
         }
 
         /// <summary>

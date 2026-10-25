@@ -356,8 +356,10 @@ It runs on Windows and macOS from one codebase, built with
   on a **Watchlist** shelf directly below Continue watching, most recently added
   first. The button then reads **✓ On Watchlist** and pressing it again takes the
   film off; the menu offers **Remove from Watchlist**. Kept in the catalogue on
-  this computer and never sent to the server, and a server film you add and later
-  download stays on it (`Services/Watchlist`, `Services/WatchlistStore`).
+  this computer and never sent to the server. A server film you add and later
+  download stays on it: once the film has a catalogue row of its own its entry is
+  moved onto that row, so it survives the server being switched off or the match
+  changing (`Services/Watchlist`, `Services/WatchlistStore`).
 - **Download a server film to watch offline.** A film on the server has a
   **Download** button that keeps a copy on this disk, named the way the scanner
   reads it and catalogued the moment it finishes — so it is playable and

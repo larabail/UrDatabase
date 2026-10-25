@@ -316,6 +316,100 @@ INSERT INTO movies (title, year) VALUES ('Ran', 1985);";
             Assert.Equal("Ran", read.ExecuteScalar() as string);
         }
 
+        // ---- re-keying onto the catalogue -------------------------------------------------------
+
+        [Fact]
+        public void A_downloaded_film_with_no_server_link_is_still_on_the_watchlist()
+        {
+            var added = new DateTime(2026, 10, 1, 0, 0, 0, DateTimeKind.Utc);
+
+            using var conn = Database.Open(_dbPath);
+
+            // Added while only the server had it, then downloaded and catalogued as row 42.
+            WatchlistStore.Add(conn, Watchlist.KeysFor(Server("abc", "Ran")), added);
+            Assert.True(WatchlistStore.AdoptDownload(conn, "abc", 42));
+
+            // Later the server is switched off, or the match breaks: the card has no RemoteId.
+            var stranded = Local(42, "Ran");
+            var entries = WatchlistStore.Load(conn);
+
+            Assert.True(Watchlist.Contains(entries, stranded));
+            Assert.Same(stranded, Assert.Single(Watchlist.Build(new[] { stranded }, entries)));
+            Assert.Equal(added, Assert.Single(entries).AddedAt);
+        }
+
+        [Fact]
+        public void An_entry_left_under_a_server_key_is_lost_to_a_film_with_no_server_link()
+        {
+            // The failure the re-keying exists for: left under jellyfin:abc, nothing links local:42.
+            var entries = new[] { Entry("jellyfin:abc", 1) };
+
+            Assert.Empty(Watchlist.Build(new[] { Local(42, "Ran") }, entries));
+        }
+
+        [Fact]
+        public void A_film_matched_through_its_server_key_is_moved_onto_its_catalogue_row()
+        {
+            var linked = Local(42, "Ran", remoteId: "ABC");
+            var plain = Local(7, "Heat");
+            var serverOnly = Server("xyz", "Alien");
+
+            var entries = new[] { Entry("jellyfin:abc", 1), Entry("local:7", 2), Entry("jellyfin:xyz", 3) };
+
+            var moves = Watchlist.Adoptions(new[] { linked, plain, serverOnly, linked }, entries);
+
+            Assert.Equal(new[] { ("jellyfin:ABC", "local:42") }, moves);
+        }
+
+        [Fact]
+        public void Once_moved_the_film_comes_off_the_list_even_with_the_match_broken()
+        {
+            using var conn = Database.Open(_dbPath);
+            WatchlistStore.Add(conn, new[] { "jellyfin:abc" });
+
+            var moves = Watchlist.Adoptions(new[] { Local(42, "Ran", remoteId: "abc") }, WatchlistStore.Load(conn));
+            Assert.Equal(1, WatchlistStore.Adopt(conn, moves));
+
+            // Removed from a card that no longer knows its server id.
+            WatchlistStore.Remove(conn, Watchlist.KeysFor(Local(42, "Ran")));
+
+            Assert.Empty(WatchlistStore.Load(conn));
+        }
+
+        [Fact]
+        public void Moving_onto_a_row_already_on_the_list_keeps_one_entry_and_the_earlier_date()
+        {
+            var earlier = new DateTime(2026, 10, 1, 0, 0, 0, DateTimeKind.Utc);
+
+            using var conn = Database.Open(_dbPath);
+            using (var cmd = conn.CreateCommand())
+            {
+                cmd.CommandText = @"
+INSERT INTO watchlist (item_key, added_at) VALUES ('jellyfin:abc', '2026-10-01T00:00:00.0000000Z');
+INSERT INTO watchlist (item_key, added_at) VALUES ('local:42', '2026-10-05T00:00:00.0000000Z');";
+                cmd.ExecuteNonQuery();
+            }
+
+            Assert.True(WatchlistStore.Rekey(conn, "jellyfin:abc", "local:42"));
+
+            var entry = Assert.Single(WatchlistStore.Load(conn));
+            Assert.Equal("local:42", entry.ItemKey);
+            Assert.Equal(earlier, entry.AddedAt);
+        }
+
+        [Fact]
+        public void Re_keying_something_not_on_the_list_changes_nothing()
+        {
+            using var conn = Database.Open(_dbPath);
+            WatchlistStore.Add(conn, new[] { "local:1" });
+
+            Assert.False(WatchlistStore.Rekey(conn, "jellyfin:nope", "local:2"));
+            Assert.False(WatchlistStore.AdoptDownload(conn, null, 2));
+            Assert.False(WatchlistStore.AdoptDownload(conn, "abc", 0));
+
+            Assert.Equal(new[] { "local:1" }, WatchlistStore.Load(conn).Select(e => e.ItemKey));
+        }
+
         // ---- the markup ------------------------------------------------------------------------
 
         [Fact]

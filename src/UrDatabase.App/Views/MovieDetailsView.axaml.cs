@@ -925,7 +925,12 @@ namespace UrDatabase.Views
             try
             {
                 using var conn = Database.Open(_dbPath);
-                await ScanService.RecordSingleFileAsync(conn, path);
+                var movieId = await ScanService.RecordSingleFileAsync(conn, path);
+
+                // The film now has a row of its own. Move its Watchlist entry onto that row now,
+                // while the server id is still at hand. See Watchlist.Adoptions.
+                if (WatchlistStore.AdoptDownload(conn, Vm?.RemoteId, movieId))
+                    WatchlistChanged = true;
             }
             catch (Exception ex)
             {

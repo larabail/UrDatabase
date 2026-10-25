@@ -77,7 +77,7 @@ namespace UrDatabase.Services
         {
             var keys = new List<string>();
 
-            if (localId > 0) keys.Add($"local:{localId.ToString(CultureInfo.InvariantCulture)}");
+            if (localId > 0) keys.Add(LocalKey(localId));
             if (!string.IsNullOrWhiteSpace(remoteId)) keys.Add(FilmKey(remoteId));
 
             return keys;
@@ -143,10 +143,53 @@ namespace UrDatabase.Services
         }
 
         /// <summary>
+        /// Entries held under a server key that a catalogued film now answers to, paired with the
+        /// catalogue key they should be moved to.
+        /// </summary>
+        /// <remarks>
+        /// The link from <c>local:N</c> to <c>jellyfin:X</c> is the card's
+        /// <see cref="UiMovie.RemoteId"/>, and that is worked out by matching on every load and
+        /// never stored. It goes away when the server is disconnected, when the item is
+        /// re-identified there, or when a correction renames the film here. An entry left under
+        /// the server key then drops off the shelf without a word, and taking the film off the list
+        /// while the match is broken would delete only <c>local:N</c> and leave the old entry to come
+        /// back later. So once a film has a row of its own, its entry is moved onto that row while
+        /// the link still holds.
+        /// </remarks>
+        public static IReadOnlyList<(string From, string To)> Adoptions(
+            IEnumerable<UiMovie>? library,
+            IEnumerable<WatchlistEntry>? entries)
+        {
+            if (library is null || entries is null) return Array.Empty<(string, string)>();
+
+            var held = Index(entries);
+            if (held.Count == 0) return Array.Empty<(string, string)>();
+
+            var moves = new List<(string From, string To)>();
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            foreach (var card in library)
+            {
+                if (card is null || card.Source != MovieSource.Local || !card.IsFilm || card.Id <= 0) continue;
+                if (card.RemoteId is not { Length: > 0 } remote) continue;
+
+                var from = FilmKey(remote);
+                if (!held.ContainsKey(from) || !seen.Add(from)) continue;
+
+                moves.Add((from, LocalKey(card.Id)));
+            }
+
+            return moves;
+        }
+
+        /// <summary>The key a catalogued film's card carries.</summary>
+        public static string LocalKey(long localId) => $"local:{localId.ToString(CultureInfo.InvariantCulture)}";
+
+        /// <summary>
         /// The key a server film's card carries. Jellyfin ids are compared case-insensitively
         /// everywhere else in the app, so they are here too.
         /// </summary>
-        private static string FilmKey(string remoteId) => $"jellyfin:{remoteId.Trim()}";
+        public static string FilmKey(string remoteId) => $"jellyfin:{remoteId.Trim()}";
 
         private static Dictionary<string, DateTime> Index(IEnumerable<WatchlistEntry> entries)
         {
