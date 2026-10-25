@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.Linq;
 using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
 
@@ -20,6 +21,10 @@ namespace UrDatabase.Services
     /// agree exactly once normalised, the year has to corroborate rather than contradict, and a
     /// result that satisfies neither is refused. No poster is a smaller wrong than another film's
     /// poster, because an empty frame invites the fix and a confident wrong one does not.
+    ///
+    /// The one exception is <see cref="ChooseSoleResult"/>: a search scoped to the catalogued year
+    /// that finds a single film, which is accepted without its title agreeing, for the reasons
+    /// given there.
     /// </summary>
     public static class TmdbMatch
     {
@@ -121,6 +126,102 @@ namespace UrDatabase.Services
 
             return bestRank == Rejected || ambiguous ? null : best;
         }
+
+        /// <summary>
+        /// The one film a year-scoped search found, when finding only one is itself the evidence.
+        /// </summary>
+        /// <remarks>
+        /// <see cref="ChooseBest"/> refuses a film whose title is spelt differently, and the
+        /// "Wrong film?" picker then lists the same search unfiltered — so a person opened it to a
+        /// single poster of the right year and had nothing to do but click it. That is the case
+        /// accepted here: a catalogued year, exactly one result in that year, and the result's own
+        /// year within the same tolerance <see cref="ChooseBest"/> allows. A subtitle the file
+        /// left off, a translated title, a leading article — TMDB matched those on a name it
+        /// knows the film by and did not send back, and with no second candidate there is no
+        /// one else it could be.
+        ///
+        /// Two refusals keep this from reopening the bug <see cref="TmdbMatch"/> exists for.
+        /// A result whose title merely contains the catalogued one with other words in front of
+        /// it is TMDB's relevance ranking being generous, not an identification: <em>El Drama</em>
+        /// is not <em>El Sabor del Drama</em>, even when that is all the year holds. A trailing
+        /// subtitle is fine; the catalogued words have to be where the title starts. And when any
+        /// result seen on the way carries the catalogued title exactly, that title names a real
+        /// film from another year — the catalogue's year is wrong or it is the remake — and the
+        /// lone result in the asked-for year is something else.
+        ///
+        /// With no year there is nothing to corroborate a lone result, so it is refused.
+        ///
+        /// A lookup searches more than one spelling of the title — as catalogued, and cleaned of
+        /// release noise — so all of them are judged together. The film has to be the only one
+        /// any of those year-scoped searches found, and each refusal applies whichever spelling
+        /// triggers it. Judged one spelling at a time, "El Drama SPANISH 1080p" would accept
+        /// <em>El Sabor del Drama</em> on the raw name's extra words after the cleaned
+        /// "El Drama" had refused it, and the raw name's lone hit would be taken although the
+        /// cleaned one found a choice.
+        /// </remarks>
+        /// <param name="yearScoped">
+        /// TMDB's results for every spelling searched with the catalogued year, together.
+        /// </param>
+        /// <param name="titles">Every spelling of the catalogued title that was searched.</param>
+        /// <param name="year">The catalogued year. Null refuses.</param>
+        /// <param name="alsoSeen">Every other result the identification has seen, from any query.</param>
+        public static Candidate? ChooseSoleResult(IEnumerable<Candidate?>? yearScoped, IReadOnlyList<string?> titles,
+            int? year, IEnumerable<Candidate?>? alsoSeen = null)
+        {
+            if (year is null || yearScoped is null) return null;
+
+            var found = yearScoped.OfType<Candidate>().DistinctBy(candidate => candidate.Id).ToArray();
+            if (found.Length != 1) return null;
+
+            var sole = found[0];
+            if (sole.Id <= 0 || sole.Year is not int soleYear) return null;
+            if (Math.Abs(soleYear - year.Value) > YearTolerance) return null;
+
+            var wanted = titles.Select(NormalizeTitle).Where(title => title.Length > 0).Distinct().ToArray();
+            if (wanted.Length == 0 || wanted.Any(title => SignificantWords(title).Length == 0)) return null;
+
+            if (alsoSeen is not null && alsoSeen.Any(other => other is not null && other.Id != sole.Id
+                    && wanted.Any(title => TitlesAgree(other, title))))
+                return null;
+
+            var soleTitles = new[] { sole.Title, sole.OriginalTitle }
+                .Select(candidateTitle => SignificantWords(NormalizeTitle(candidateTitle)))
+                .Where(words => words.Length > 0).ToArray();
+            if (soleTitles.Length == 0) return null;
+
+            return wanted.All(title => Admits(soleTitles, SignificantWords(title))) ? sole : null;
+        }
+
+        /// <summary>The same rule for a title searched under one spelling only.</summary>
+        public static Candidate? ChooseSoleResult(IReadOnlyList<Candidate>? yearScoped, string? title, int? year,
+            IEnumerable<Candidate?>? alsoSeen = null) =>
+            ChooseSoleResult(yearScoped, new[] { title }, year, alsoSeen);
+
+        private static bool Admits(string[][] soleTitles, string[] wantedWords) =>
+            soleTitles.Any(words => StartsWith(words, wantedWords))
+            || !soleTitles.Any(words => Buries(words, wantedWords));
+
+        // Articles, prepositions and conjunctions in the languages a library is likely to be
+        // named in. They are what lets "El Drama" share words with "El Sabor del Drama" at all,
+        // so they are left out of the question of which words the titles have in common.
+        private static readonly HashSet<string> MinorWords = new(StringComparer.Ordinal)
+        {
+            "the", "a", "an", "of", "and", "in", "on", "at", "to", "for",
+            "el", "la", "los", "las", "lo", "un", "una", "unos", "unas", "de", "del", "y", "e", "en", "al",
+            "le", "les", "l", "des", "du", "et", "il", "i", "gli", "di", "da",
+            "der", "die", "das", "den", "dem", "ein", "eine", "und", "o", "os", "as", "do"
+        };
+
+        private static string[] SignificantWords(string normalized) =>
+            normalized.Split(' ', StringSplitOptions.RemoveEmptyEntries)
+                .Where(word => !MinorWords.Contains(word)).ToArray();
+
+        private static bool StartsWith(string[] words, string[] prefix) =>
+            words.Length >= prefix.Length && words.Take(prefix.Length).SequenceEqual(prefix, StringComparer.Ordinal);
+
+        // Every catalogued word is present, there are more besides, and they do not come after it.
+        private static bool Buries(string[] words, string[] wanted) =>
+            words.Length > wanted.Length && wanted.All(word => words.Contains(word, StringComparer.Ordinal));
 
         private static int Rank(Candidate candidate, string wantedTitle, int? wantedYear)
         {

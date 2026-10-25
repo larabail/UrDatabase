@@ -167,6 +167,84 @@ namespace UrDatabase.Tests
             Assert.Null(TmdbMatch.ChooseBest(new List<TmdbMatch.Candidate> { Result(1, "Fight Club", "1999") }, "   ", 1999));
         }
 
+        [Theory]
+        // A subtitle the file name left off.
+        [InlineData("Borat", "Borat: Cultural Learnings of America for Make Benefit Glorious Nation of Kazakhstan", null, "2006", 2006)]
+        // Translated, sharing only the proper nouns.
+        [InlineData("Harry Potter y la piedra filosofal", "Harry Potter and the Philosopher's Stone", null, "2001", 2001)]
+        // Translated, sharing nothing at all: TMDB found it under a name it did not send back.
+        [InlineData("La vida de los otros", "The Lives of Others", "Das Leben der Anderen", "2006", 2006)]
+        // A leading article TMDB does not use, and a release that crossed new year.
+        [InlineData("The Shawshank Redemption", "Shawshank Redemption", null, "1994", 1995)]
+        public void The_only_result_of_a_year_scoped_search_is_accepted(
+            string catalogued, string title, string? originalTitle, string resultYear, int year)
+        {
+            var results = new[] { Result(7, title, resultYear, originalTitle) };
+
+            Assert.Null(TmdbMatch.ChooseBest(results, catalogued, year));
+            Assert.Equal(7, TmdbMatch.ChooseSoleResult(results, catalogued, year)!.Id);
+        }
+
+        [Fact]
+        public void A_sole_result_that_merely_contains_a_short_title_is_still_refused()
+        {
+            // The original bug, in exactly the shape the sole-result rule would otherwise accept.
+            Assert.Null(TmdbMatch.ChooseSoleResult(new[] { Result(900, "El Sabor del Drama", "2026") }, "El Drama", 2026));
+            Assert.Null(TmdbMatch.ChooseSoleResult(new[] { Result(900, "Sabor de Drama", "2026") }, "El Drama", 2026));
+            Assert.Null(TmdbMatch.ChooseSoleResult(new[] { Result(901, "Mission: Impossible - Dead Reckoning", "2023") },
+                "Dead Reckoning", 2023));
+        }
+
+        [Fact]
+        public void A_sole_result_needs_a_year_on_both_sides_that_agrees()
+        {
+            var results = new[] { Result(7, "The Lives of Others", "2006") };
+
+            Assert.Null(TmdbMatch.ChooseSoleResult(results, "La vida de los otros", null));
+            Assert.Null(TmdbMatch.ChooseSoleResult(results, "La vida de los otros", 2008));
+            Assert.Null(TmdbMatch.ChooseSoleResult(new[] { Result(7, "The Lives of Others") }, "La vida de los otros", 2006));
+        }
+
+        [Fact]
+        public void Two_results_are_a_choice_for_a_person_not_a_sole_result()
+        {
+            var results = new[] { Result(7, "The Lives of Others", "2006"), Result(8, "Other Lives", "2006") };
+
+            Assert.Null(TmdbMatch.ChooseSoleResult(results, "La vida de los otros", 2006));
+            Assert.Null(TmdbMatch.ChooseSoleResult(Array.Empty<TmdbMatch.Candidate>(), "La vida de los otros", 2006));
+            Assert.Null(TmdbMatch.ChooseSoleResult(null, "La vida de los otros", 2006));
+            Assert.Null(TmdbMatch.ChooseSoleResult(new[] { Result(0, "The Lives of Others", "2006") }, "La vida de los otros", 2006));
+        }
+
+        [Fact]
+        public void A_sole_result_is_refused_when_the_title_names_a_film_from_another_year()
+        {
+            // Dune catalogued with the wrong year: that year's only hit is some other film, and
+            // the film the file is really called was seen in the broader search.
+            var scoped = new[] { Result(7, "Dune Drifter", "2020") };
+            var seen = new[] { Result(7, "Dune Drifter", "2020"), Result(438631, "Dune", "2021") };
+
+            Assert.NotNull(TmdbMatch.ChooseSoleResult(scoped, "Dune", 2020));
+            Assert.Null(TmdbMatch.ChooseSoleResult(scoped, "Dune", 2020, seen));
+        }
+
+        [Fact]
+        public void Every_searched_spelling_must_admit_the_sole_result()
+        {
+            var sabor = new[] { Result(900, "El Sabor del Drama", "2026") };
+            Assert.NotNull(TmdbMatch.ChooseSoleResult(sabor, "El Drama SPANISH", 2026));
+            Assert.Null(TmdbMatch.ChooseSoleResult(sabor, new[] { "El Drama SPANISH", "El Drama" }, 2026));
+
+            var drifter = new[] { Result(7, "Dune Drifter", "2018") };
+            var seen = new[] { Result(438631, "Dune", "2021"), Result(7, "Dune Drifter", "2018") };
+            Assert.NotNull(TmdbMatch.ChooseSoleResult(drifter, "Dune SPANISH", 2018, seen));
+            Assert.Null(TmdbMatch.ChooseSoleResult(drifter, new[] { "Dune SPANISH", "Dune" }, 2018, seen));
+
+            // Two spellings that each found the same film once still found one film.
+            var lives = new[] { Result(582, "The Lives of Others", "2006"), Result(582, "The Lives of Others", "2006") };
+            Assert.Equal(582, TmdbMatch.ChooseSoleResult(lives, new[] { "La vida de los otros 1080p", "La vida de los otros" }, 2006)!.Id);
+        }
+
         [Fact]
         public void A_result_with_no_title_at_all_cannot_be_matched()
         {
