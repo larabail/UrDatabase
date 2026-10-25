@@ -288,6 +288,75 @@ namespace UrDatabase.Tests
             await new ScanService().ScanAsync(conn, new[] { moviesDir });
 
             Assert.Equal(chosen, conn.QuerySingle<long>("SELECT movie_id FROM files WHERE file_path = @path", new { path }));
+            Assert.Equal(1L, conn.QuerySingle<long>("SELECT COUNT(*) FROM movies"));
+            Assert.Equal("Something Else", conn.QuerySingle<string>("SELECT title FROM movies"));
+        }
+
+        /// <summary>
+        /// A library scanned before the parser learned to cut a title at its first release tag
+        /// holds rows named "Origen MicroHD". The next scan reads the same file as "Origen", which
+        /// no row answers to; creating one would leave the file on the noisy row and an empty
+        /// duplicate beside it, which is worse than not cleaning anything.
+        /// </summary>
+        [Fact]
+        public async Task A_title_an_older_scan_left_noisy_is_cleaned_in_place_by_the_next_one()
+        {
+            var moviesDir = MakeFiles("Origen.MicroHD.1080p.DUAL.Castellano.mkv");
+            var path = Path.Combine(moviesDir, "Origen.MicroHD.1080p.DUAL.Castellano.mkv");
+
+            using var conn = Database.Open(DbPath);
+            conn.Execute("INSERT INTO movies (title, year) VALUES ('Origen MicroHD', NULL)");
+            var id = conn.QuerySingle<long>("SELECT id FROM movies");
+            conn.Execute("INSERT INTO files (movie_id, file_path) VALUES (@id, @path)", new { id, path });
+
+            await new ScanService().ScanAsync(conn, new[] { moviesDir });
+
+            Assert.Equal(1L, conn.QuerySingle<long>("SELECT COUNT(*) FROM movies"));
+            Assert.Equal("Origen", conn.QuerySingle<string>("SELECT title FROM movies WHERE id = @id", new { id }));
+            Assert.Equal(id, conn.QuerySingle<long>("SELECT movie_id FROM files WHERE file_path = @path", new { path }));
+            Assert.Equal(0L, conn.QuerySingle<long>("SELECT COUNT(*) FROM movies_fts WHERE movies_fts MATCH 'MicroHD'"));
+
+            // The old name is kept, so the rename is recorded and the noisy name still resolves.
+            Assert.Equal("Origen MicroHD", conn.QuerySingle<string>("SELECT scan_title FROM movies WHERE id = @id", new { id }));
+        }
+
+        [Theory]
+        [InlineData("The Rip", "The.Rip.1080p.mkv")]
+        [InlineData("The Rip", "The Rip (2026).mkv")]
+        [InlineData("Pump Up the Audio", "Pump.Up.the.Audio.720p.mkv")]
+        [InlineData("Charlotte's Web", "Charlottes.Web.2006.1080p.mkv")]
+        public async Task A_title_that_only_ends_in_an_ambiguous_word_survives_a_rescan(string title, string fileName)
+        {
+            var moviesDir = MakeFiles(fileName);
+            var path = Path.Combine(moviesDir, fileName);
+
+            using var conn = Database.Open(DbPath);
+            conn.Execute("INSERT INTO movies (title, year) VALUES (@title, NULL)", new { title });
+            var id = conn.QuerySingle<long>("SELECT id FROM movies");
+            conn.Execute("INSERT INTO files (movie_id, file_path) VALUES (@id, @path)", new { id, path });
+
+            await new ScanService().ScanAsync(conn, new[] { moviesDir });
+
+            Assert.Equal(1L, conn.QuerySingle<long>("SELECT COUNT(*) FROM movies"));
+            Assert.Equal(title, conn.QuerySingle<string>("SELECT title FROM movies WHERE id = @id", new { id }));
+            Assert.Null(conn.QuerySingle<string?>("SELECT scan_title FROM movies WHERE id = @id", new { id }));
+        }
+
+        [Fact]
+        public async Task A_noisy_title_that_tmdb_already_identified_is_left_alone()
+        {
+            var moviesDir = MakeFiles("Origen.MicroHD.1080p.mkv");
+            var path = Path.Combine(moviesDir, "Origen.MicroHD.1080p.mkv");
+
+            using var conn = Database.Open(DbPath);
+            conn.Execute("INSERT INTO movies (title, year, tmdb_id) VALUES ('Origen MicroHD', NULL, 27205)");
+            var id = conn.QuerySingle<long>("SELECT id FROM movies");
+            conn.Execute("INSERT INTO files (movie_id, file_path) VALUES (@id, @path)", new { id, path });
+
+            await new ScanService().ScanAsync(conn, new[] { moviesDir });
+
+            Assert.Equal(1L, conn.QuerySingle<long>("SELECT COUNT(*) FROM movies"));
+            Assert.Equal("Origen MicroHD", conn.QuerySingle<string>("SELECT title FROM movies WHERE id = @id", new { id }));
         }
 
         [Fact]

@@ -1742,7 +1742,8 @@ namespace UrDatabase.Views
                 // A downloaded film is a row the library behind this screen does not have yet: it
                 // would still be shown as living only on the server until something reloaded it.
                 // A renamed one is a row whose name, sort position and genre shelf have all moved.
-                if (DetailsView.DownloadedSomething || DetailsView.RenamedSomething)
+                // A reported problem is a badge the card behind this screen does not carry yet.
+                if (DetailsView.DownloadedSomething || DetailsView.RenamedSomething || DetailsView.ChangedProblems)
                     await _searchLoop.RefreshAsync(SearchBox.Text);
             }
             finally
