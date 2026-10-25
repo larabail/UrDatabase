@@ -187,18 +187,22 @@ namespace UrDatabase.Services
 
         /// <summary>
         /// One local episode as a row. TMDB's name, plot and length when its season has been
-        /// described, and otherwise what the file said — its own title, and where it is, because
-        /// until something has looked the programme up that is the one thing worth knowing about
-        /// it. A copy the last scan could not find says so in place of the plot, whatever TMDB
-        /// knows, rather than leaving Play to discover it.
+        /// described and TMDB's name is this file's episode — see
+        /// <see cref="LocalSeriesLookup.Describes"/> — and otherwise what the file said: its own
+        /// title, and where it is. All of TMDB's description or none of it, so a row never pairs
+        /// one episode's name with another's plot. Checked here as well as when the season is
+        /// stored, because a later scan can give an episode a title it did not have then. A copy
+        /// the last scan could not find says so in place of the plot, whatever TMDB knows, rather
+        /// than leaving Play to discover it.
         /// </summary>
         public static EpisodeRow ToRow(LocalEpisode episode)
         {
             if (episode is null) throw new ArgumentNullException(nameof(episode));
 
-            var described = (episode.TmdbTitle ?? "").Trim();
             var parsed = (episode.Title ?? "").Trim();
-            var plot = (episode.Overview ?? "").Trim();
+            var tmdb = LocalSeriesLookup.Describes(episode.SeasonNumber, parsed, episode.TmdbTitle);
+            var described = tmdb ? (episode.TmdbTitle ?? "").Trim() : "";
+            var plot = tmdb ? (episode.Overview ?? "").Trim() : "";
             var file = System.IO.Path.GetFileName(episode.FilePath ?? episode.AnyPath ?? "");
 
             return new EpisodeRow
@@ -211,7 +215,7 @@ namespace UrDatabase.Services
                     : parsed.Length > 0
                         ? parsed
                         : $"Episode {episode.EpisodeNumber.ToString(CultureInfo.InvariantCulture)}",
-                Runtime = RuntimeLabel(episode.RuntimeMinutes),
+                Runtime = tmdb ? RuntimeLabel(episode.RuntimeMinutes) : "",
                 Overview = !episode.IsAvailable
                     ? $"Not found by the last scan — {file}"
                     : plot.Length > 0 ? plot : file

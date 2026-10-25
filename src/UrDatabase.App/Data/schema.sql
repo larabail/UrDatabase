@@ -109,6 +109,8 @@ CREATE TABLE IF NOT EXISTS series (
 -- and still_path are TMDB's description of the episode, fetched a season at a time when the
 -- programme is opened; tmdb_fetched_at is set on every episode of a season that was asked about,
 -- including one TMDB does not list, so a season is asked about once rather than on every open.
+-- TMDB is asked by number, so its description is written only when its name agrees with title
+-- (or title is empty), and never for season 0: DVD order and specials number differently.
 CREATE TABLE IF NOT EXISTS episodes (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     series_id       INTEGER NOT NULL REFERENCES series(id) ON DELETE CASCADE,

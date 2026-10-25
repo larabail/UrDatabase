@@ -280,11 +280,13 @@ WHERE id = @id",
         /// </summary>
         /// <returns>How many seasons were asked about. Zero when the programme is not identified.</returns>
         /// <remarks>
-        /// Only seasons with a number, because TMDB has nothing to call an unnumbered one; and
-        /// only seasons with a file, because a season nobody can play is not worth a request.
-        /// Every episode of an asked-about season is marked as fetched, including one TMDB does
-        /// not list — this disk's numbering and TMDB's do not always agree, and an episode TMDB
-        /// does not know would otherwise cost a request on every open, for ever.
+        /// Only seasons with a number, because TMDB has nothing to call an unnumbered one; never
+        /// season 0, whose numbering TMDB assigns arbitrarily so a number says nothing about which
+        /// special a file is; and only seasons with a file, because a season nobody can play is
+        /// not worth a request. Every episode of an asked-about season is marked as fetched,
+        /// including one TMDB does not list or whose title disagrees — this disk's numbering and
+        /// TMDB's do not always agree, and such an episode would otherwise cost a request on every
+        /// open, for ever.
         ///
         /// A season that fails stops the pass and throws, leaving the seasons already written
         /// written and the rest unmarked, so they are asked about again next time.
@@ -303,7 +305,7 @@ WHERE id = @id",
 
             var seasons = conn.Query<int>(@"
 SELECT DISTINCT e.season_number FROM episodes e
-WHERE e.series_id = @id AND e.season_number IS NOT NULL
+WHERE e.series_id = @id AND e.season_number IS NOT NULL AND e.season_number <> 0
   AND (@force OR e.tmdb_fetched_at IS NULL)
   AND EXISTS (SELECT 1 FROM files f WHERE f.episode_id = e.id)
 ORDER BY e.season_number", new { id = seriesId, force }).ToList();
@@ -323,9 +325,11 @@ ORDER BY e.season_number", new { id = seriesId, force }).ToList();
 
         /// <summary>
         /// Writes one season's descriptions onto the episodes this disk holds of it, matched on
-        /// the episode number. Written only while the programme is still the one TMDB was asked
-        /// about, so a correction landing mid-fetch is not overwritten with the old programme's
-        /// episodes.
+        /// the episode number and then checked against the title the file gave — a number alone
+        /// does not say which episode a file is (see <see cref="TitlesAgree"/>), and an episode
+        /// whose title disagrees is stored with no description at all rather than another's.
+        /// Written only while the programme is still the one TMDB was asked about, so a
+        /// correction landing mid-fetch is not overwritten with the old programme's episodes.
         /// </summary>
         public static Task SaveSeasonAsync(
             SqliteConnection conn,
@@ -349,14 +353,16 @@ ORDER BY e.season_number", new { id = seriesId, force }).ToList();
                 foreach (var episode in episodes)
                     byNumber.TryAdd(episode.EpisodeNumber, episode);
 
-                var rows = conn.Query<(long Id, int Number)>(
-                    "SELECT id, episode_number FROM episodes WHERE series_id = @id AND season_number = @season",
+                var rows = conn.Query<(long Id, int Number, string? Title)>(
+                    "SELECT id, episode_number, title FROM episodes WHERE series_id = @id AND season_number = @season",
                     new { id = seriesId, season }, tx).ToList();
 
                 var fetched = Now();
-                foreach (var (rowId, number) in rows)
+                foreach (var (rowId, number, fileTitle) in rows)
                 {
-                    byNumber.TryGetValue(number, out var described);
+                    if (!byNumber.TryGetValue(number, out TmdbService.TmdbEpisode? described)
+                        || !Describes(season, fileTitle, described.Name))
+                        described = null;
 
                     conn.Execute(@"
 UPDATE episodes
@@ -380,6 +386,44 @@ WHERE id = @id",
             }, ct);
 
         private static string? Blank(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+
+        /// <summary>
+        /// Whether TMDB's name for an episode number is the episode the file says it is.
+        /// </summary>
+        /// <remarks>
+        /// TMDB is asked by number, and numbers are not an identity: Firefly on DVD opens with
+        /// "Serenity", TMDB's aired order with "The Train Job". A file that names itself is
+        /// believed over a number, so TMDB's description is only taken when the two names agree
+        /// once case, punctuation, a leading article and spacing are set aside — or when the file
+        /// names nothing, and the number is all there is to go on.
+        /// </remarks>
+        public static bool TitlesAgree(string? fileTitle, string? tmdbTitle)
+        {
+            var file = Fold(fileTitle);
+            return file.Length == 0 || file == Fold(tmdbTitle);
+
+            static string Fold(string? title)
+            {
+                var normalized = MovieIndex.NormalizeTitle(title);
+                foreach (var article in new[] { "the ", "a ", "an " })
+                    if (normalized.StartsWith(article, StringComparison.Ordinal))
+                    {
+                        normalized = normalized[article.Length..];
+                        break;
+                    }
+
+                return normalized.Replace(" ", "", StringComparison.Ordinal);
+            }
+        }
+
+        /// <summary>
+        /// Whether TMDB's description may be shown on, or stored against, a local episode. Never
+        /// for season 0, whose numbering TMDB assigns as it pleases; otherwise when the titles
+        /// agree. All of TMDB's description or none of it: a row never mixes two episodes.
+        /// </summary>
+        public static bool Describes(int? season, string? fileTitle, string? tmdbTitle) =>
+            season is int number && number != SeriesGrouping.SpecialsSeasonNumber
+            && TitlesAgree(fileTitle, tmdbTitle);
 
         private static object? NullIfEmpty(string value) => value.Length == 0 ? null : value;
 

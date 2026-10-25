@@ -204,7 +204,12 @@ It runs on Windows and macOS from one codebase, built with
   Fantasy* on **Science Fiction** and **Fantasy**, *Action & Adventure* on
   **Action** and **Adventure**. Episode names, plots and lengths are fetched a
   season at a time when a programme is opened, kept in the catalogue, and read
-  from there first the next time; **Refresh** on the programme asks again. The
+  from there first the next time; **Refresh** on the programme asks again. TMDB
+  is asked by episode number, and a number is not an identity — Firefly on DVD
+  opens with *Serenity*, TMDB's aired order with *The Train Job* — so a file
+  that names its episode keeps that name, and TMDB's description is used only
+  when the two names agree or the file names nothing. Specials (season 0, which
+  TMDB numbers as it pleases) are never asked about. The
   programme keeps the name the scan gave it, because that name is what the next
   scan files its episodes under. With no key, nothing is asked and the programme
   reads exactly as the scan left it (`Services/LocalSeriesLookup`,
@@ -1483,7 +1488,9 @@ is the identification, and `tmdb_fetched_at` is when its description —
 it is still to be asked for. `series.title` is never rewritten, because it is the
 identity a re-scan files episodes against. Each episode keeps TMDB's
 `tmdb_title`, `overview`, `runtime_minutes`, `air_date` and `still_path` beside
-the `title` its filename gave it, and `tmdb_fetched_at` is set on every episode
+the `title` its filename gave it — written only when TMDB's name for that number
+agrees with the file's own title, or the file has none, and never for season 0 —
+and `tmdb_fetched_at` is set on every episode
 of a season that was asked about, so a season TMDB numbers differently is not
 asked about on every open. Changing a programme's `tmdb_id` clears its episodes'
 TMDB columns in the same transaction, since they describe the old programme.
@@ -1904,9 +1911,12 @@ Stated plainly, so nobody has to find out by using it:
   to tell them apart, a name spelt too differently — keeps no poster, no plot and
   no genres, so it sits in **Uncategorised** with its episodes called what their
   filenames call them. There is no **Wrong series?** to choose its match by hand
-  yet, and no way to correct a match the app got wrong. A programme TMDB numbers
-  differently from the files (absolute or DVD order) keeps its filenames' episode
-  names. Without a TMDB key nothing is looked up at all.
+  yet, and no way to correct a match the app got wrong. Where TMDB numbers a
+  programme differently from the files (absolute or DVD order), an episode whose
+  file names it keeps that name and gets no TMDB plot or length; an episode whose
+  file names nothing takes TMDB's description of its number, which may then be
+  the wrong episode's. Specials are never described from TMDB. Without a TMDB key
+  nothing is looked up at all.
   The parser declines what it cannot read with confidence: absolute numbering
   (`Show - 137.mkv`, ordinary for anime), date-named daily shows and three-digit
   `102` numbering all stay films, and so does a `1x02` pair written after a year

@@ -80,7 +80,7 @@ INSERT INTO files (episode_id, file_path) VALUES (4, '/tv/Fargo.S02E01.mkv');", 
         private T Scalar<T>(string sql)
         {
             using var conn = Database.Open(_dbPath);
-            return conn.ExecuteScalar<T>(sql);
+            return conn.ExecuteScalar<T>(sql)!;
         }
 
         private static int Count(FakeHttpMessageHandler handler, string fragment) =>
@@ -374,6 +374,116 @@ INSERT INTO files (episode_id, file_path) VALUES (4, '/tv/Fargo.S02E01.mkv');", 
             Assert.Equal("Episode 2", row.Title);
             Assert.Equal("Fargo.S01E02.mkv", row.Overview);
             Assert.Equal("", row.Runtime);
+        }
+
+        /// <summary>
+        /// Firefly on DVD puts "Serenity" first; TMDB's aired order puts "The Train Job" there.
+        /// Matched on the number alone, the row would wear the other episode's name and plot.
+        /// The file named itself, so its name stands and nothing of TMDB's is mixed into the row.
+        /// </summary>
+        [Fact]
+        public void A_file_whose_own_title_disagrees_with_TMDB_keeps_its_title_and_takes_nothing_from_TMDB()
+        {
+            var row = SeriesGrouping.ToRow(new LocalEpisode
+            {
+                SeasonNumber = 1, EpisodeNumber = 1, Title = "Serenity",
+                TmdbTitle = "The Train Job", Overview = "A train heist goes wrong.", RuntimeMinutes = 42,
+                FilePath = "/tv/Firefly.S01E01.Serenity.mkv"
+            });
+
+            Assert.Equal("Serenity", row.Title);
+            Assert.Equal("Firefly.S01E01.Serenity.mkv", row.Overview);
+            Assert.Equal("", row.Runtime);
+        }
+
+        /// <summary>TMDB numbers specials however it likes; season 0 is never described from it.</summary>
+        [Fact]
+        public void A_special_is_never_described_by_TMDB_episode_number()
+        {
+            var row = SeriesGrouping.ToRow(new LocalEpisode
+            {
+                SeasonNumber = 0, EpisodeNumber = 1,
+                TmdbTitle = "Some Other Special", Overview = "Not this one.", RuntimeMinutes = 30,
+                FilePath = "/tv/Show.S00E01.mkv"
+            });
+
+            Assert.Equal("Episode 1", row.Title);
+            Assert.Equal("Show.S00E01.mkv", row.Overview);
+            Assert.Equal("", row.Runtime);
+        }
+
+        [Fact]
+        public void An_untitled_file_takes_TMDB_name_plot_and_length()
+        {
+            var row = SeriesGrouping.ToRow(new LocalEpisode
+            {
+                SeasonNumber = 1, EpisodeNumber = 2,
+                TmdbTitle = "The Rooster Prince", Overview = "Lester hides.", RuntimeMinutes = 47,
+                FilePath = "/tv/Fargo.S01E02.mkv"
+            });
+
+            Assert.Equal("The Rooster Prince", row.Title);
+            Assert.Equal("Lester hides.", row.Overview);
+            Assert.Equal("47 min", row.Runtime);
+        }
+
+        [Theory]
+        [InlineData("Crocodiles Dilemma", "The Crocodile's Dilemma", true)]
+        [InlineData("the train job", "The Train Job", true)]
+        [InlineData("Serenity", "The Train Job", false)]
+        [InlineData(null, "The Train Job", true)]
+        [InlineData("", "The Train Job", true)]
+        public void A_file_title_and_a_TMDB_name_agree_once_normalised(string? file, string tmdb, bool agree)
+        {
+            Assert.Equal(agree, LocalSeriesLookup.TitlesAgree(file, tmdb));
+        }
+
+        /// <summary>The catalogue must not hold another episode's description on this row either.</summary>
+        [Fact]
+        public async Task A_season_in_another_order_stores_nothing_on_an_episode_whose_title_disagrees()
+        {
+            Seed();
+            using (var conn = Database.Open(_dbPath))
+                conn.Execute("UPDATE episodes SET title = 'Serenity' WHERE id = 2");
+
+            using var handler = Tmdb();
+            using var tmdb = Service(handler);
+            using (var conn = Database.Open(_dbPath))
+                await LocalSeriesLookup.IdentifyAsync(tmdb, conn, 1, downloadPosters: false, CancellationToken.None);
+
+            var episodes = await new LocalSeriesLoader(_dbPath).RefreshEpisodesAsync(tmdb, 1, force: false, CancellationToken.None);
+
+            var disagreeing = episodes!.Single(e => e.Id == 2);
+            Assert.Null(disagreeing.TmdbTitle);
+            Assert.Null(disagreeing.Overview);
+            Assert.Null(disagreeing.RuntimeMinutes);
+            Assert.Equal("Serenity", SeriesGrouping.ToRow(disagreeing).Title);
+
+            // Marked as asked about, so it is not asked about on every open.
+            Assert.NotNull(Scalar<string?>("SELECT tmdb_fetched_at FROM episodes WHERE id = 2"));
+
+            // The episode whose title agrees still gets TMDB's description.
+            Assert.Equal("The Crocodile's Dilemma", episodes!.Single(e => e.Id == 1).TmdbTitle);
+        }
+
+        [Fact]
+        public async Task Specials_are_not_asked_about()
+        {
+            Seed();
+            using (var conn = Database.Open(_dbPath))
+                conn.Execute(@"
+INSERT INTO episodes (id, series_id, season_number, episode_number) VALUES (5, 1, 0, 1);
+INSERT INTO files (episode_id, file_path) VALUES (5, '/tv/Fargo.S00E01.mkv');");
+
+            using var handler = Tmdb();
+            using var tmdb = Service(handler);
+            using (var conn = Database.Open(_dbPath))
+                await LocalSeriesLookup.IdentifyAsync(tmdb, conn, 1, downloadPosters: false, CancellationToken.None);
+
+            await new LocalSeriesLoader(_dbPath).RefreshEpisodesAsync(tmdb, 1, force: true, CancellationToken.None);
+
+            Assert.Equal(0, Count(handler, "/season/0"));
+            Assert.Null(Scalar<string?>("SELECT tmdb_title FROM episodes WHERE id = 5"));
         }
 
         [Fact]
