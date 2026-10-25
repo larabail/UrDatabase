@@ -169,6 +169,19 @@ It runs on Windows and macOS from one codebase, built with
   explicitly say "according to the filename" in their tooltips
   (`Services/LocalMediaReader`, `Services/FfprobeRunner`, `Services/MediaFlags`,
   `Services/LanguageTag`).
+- **Mark a copy as having a problem.** **Report problem…** on a film's details
+  screen opens a short list — **Audio**, **Low resolution**, **Wrong aspect
+  ratio**, **Subtitles**, **Picture glitches**, **Other** — and a note for
+  anything that fits none of them. The film's card then carries a red-orange
+  **Problem** badge in its top-left corner, whose tooltip lists what was
+  reported, and the details screen shows the same list above the genres. **Clear**
+  (on that banner, or in the list) takes it off once the copy has been replaced;
+  unticking everything and saving does the same. Works for local and server films
+  alike. Reports are kept in the catalogue's `film_problems` table, apart from the
+  media badges above: those are measured from the file every time, and a squashed
+  picture or an out-of-sync track is something only somebody who watched it can
+  say. Nothing is sent to Jellyfin (`Services/FilmProblems`,
+  `Services/FilmProblemStore`).
 - **What to put on next, and you already own it.** Where a series lists its
   episodes, a film gets a shelf of other films — and every poster on it is one
   already in this library, so every one of them plays. TMDB supplies the
@@ -1278,7 +1291,8 @@ and `files` tables, the `scans` table each scan records itself in, the
 `jellyfin_movies` cache and its television counterparts `jellyfin_series`,
 `jellyfin_seasons` and `jellyfin_episodes`, the `jellyfin_resume` positions
 behind the Continue watching row and the `jellyfin_resume_dismissals` that are
-taken back out of it, the `movies_fts` FTS5 index and the
+taken back out of it, the `film_problems` you have reported about a copy, the
+`movies_fts` FTS5 index and the
 triggers that keep it current — and every statement is `IF NOT EXISTS`, so it
 runs against a library you already have without touching your data.
 
@@ -1729,6 +1743,12 @@ Stated plainly, so nobody has to find out by using it:
   to maintain, but something abandoned at a position nothing will ever move is
   gone from the row for good, and the only record of it is a row in
   `jellyfin_resume_dismissals`.
+- **A reported problem belongs to the card, not to the film.** It is stored under
+  the same identity the library deduplicates on: a film on this disk by its
+  catalogue row, a server-only film by its Jellyfin id. So a problem reported on a
+  server-only film does not follow it once it is downloaded and becomes a local
+  card, and there is no filter yet for "films with a problem" — the badge is the
+  only way to find them.
 - **One Jellyfin server.** There is no way to add a second. The setup screen
   configures the first one and tests it, but a household with two servers has to
   pick one.
