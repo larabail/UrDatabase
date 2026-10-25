@@ -63,24 +63,77 @@ namespace UrDatabase.Services
             long movieId,
             FilmFacts facts,
             CancellationToken ct = default) =>
-            DatabaseWriteLane.RunAsync(conn, async token =>
-            {
-                using var cmd = conn.CreateCommand();
-                cmd.CommandText = @"
+            DatabaseWriteLane.RunAsync(conn, token => WriteFactsAsync(conn, movieId, facts, token), ct);
+
+        private static async Task WriteFactsAsync(SqliteConnection conn, long movieId, FilmFacts facts, CancellationToken token)
+        {
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = @"
 UPDATE movies
 SET runtime_minutes=@runtime, rating=@rating, cast_list=@cast, crew_list=@crew, facts_fetched_at=@fetched
 WHERE id=@id";
 
-                cmd.Parameters.AddWithValue("@id", movieId);
-                cmd.Parameters.AddWithValue("@runtime", (object?)facts.RuntimeMinutes ?? DBNull.Value);
-                cmd.Parameters.AddWithValue("@rating", (object?)facts.Rating ?? DBNull.Value);
-                cmd.Parameters.AddWithValue("@cast", NullIfEmpty(JellyfinCache.JoinCredits(facts.Cast)));
-                cmd.Parameters.AddWithValue("@crew", NullIfEmpty(JellyfinCache.JoinCredits(facts.Crew)));
-                cmd.Parameters.AddWithValue("@fetched", DateTime.UtcNow.ToString("O", CultureInfo.InvariantCulture));
+            cmd.Parameters.AddWithValue("@id", movieId);
+            cmd.Parameters.AddWithValue("@runtime", (object?)facts.RuntimeMinutes ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("@rating", (object?)facts.Rating ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("@cast", NullIfEmpty(JellyfinCache.JoinCredits(facts.Cast)));
+            cmd.Parameters.AddWithValue("@crew", NullIfEmpty(JellyfinCache.JoinCredits(facts.Crew)));
+            cmd.Parameters.AddWithValue("@fetched", DateTime.UtcNow.ToString("O", CultureInfo.InvariantCulture));
 
-                await cmd.ExecuteNonQueryAsync(token).ConfigureAwait(false);
-            }, ct);
+            await cmd.ExecuteNonQueryAsync(token).ConfigureAwait(false);
+        }
 
         private static object NullIfEmpty(string value) => value.Length == 0 ? DBNull.Value : value;
+
+        /// <summary>
+        /// Records the facts of the film somebody has just said this one is, and stops the
+        /// catalogue crediting it with the IMDb rating of the film it was wrongly matched to.
+        /// </summary>
+        /// <remarks>
+        /// The library prefers a cached IMDb rating linked to the film over the TMDB one stored
+        /// here, and the link was made for whichever film was on screen when the rating was
+        /// fetched. Nothing undid it on a correction, so when OMDb had nothing for the right film —
+        /// or there was no OMDb key at all — the rating filter went on using the wrong film's
+        /// number in preference to the right film's TMDB rating saved a moment earlier.
+        ///
+        /// So every rating linked to this film under a different IMDb id is unlinked, and a cached
+        /// rating for the corrected film's own id, if one exists and belongs to nobody, is linked
+        /// in its place — a cache hit is never written again, so nothing else would link it. The
+        /// rows themselves are kept: they are answers about IMDb titles, paid for against a daily
+        /// quota, and still true of those titles.
+        /// </remarks>
+        public static Task SaveCorrectedAsync(
+            SqliteConnection conn,
+            long movieId,
+            FilmFacts facts,
+            string? imdbId,
+            CancellationToken ct = default) =>
+            DatabaseWriteLane.RunAsync(conn, async token =>
+            {
+                var imdb = string.IsNullOrWhiteSpace(imdbId) ? null : imdbId.Trim();
+
+                using (var unlink = conn.CreateCommand())
+                {
+                    unlink.CommandText = imdb is null
+                        ? "UPDATE imdb_ratings SET movie_id=NULL WHERE movie_id=@id"
+                        : "UPDATE imdb_ratings SET movie_id=NULL WHERE movie_id=@id AND imdb_id<>@imdb";
+                    unlink.Parameters.AddWithValue("@id", movieId);
+                    if (imdb is not null) unlink.Parameters.AddWithValue("@imdb", imdb);
+                    await unlink.ExecuteNonQueryAsync(token).ConfigureAwait(false);
+                }
+
+                if (imdb is not null)
+                {
+                    using var link = conn.CreateCommand();
+                    link.CommandText = "UPDATE imdb_ratings SET movie_id=@id WHERE imdb_id=@imdb AND movie_id IS NULL";
+                    link.Parameters.AddWithValue("@id", movieId);
+                    link.Parameters.AddWithValue("@imdb", imdb);
+                    await link.ExecuteNonQueryAsync(token).ConfigureAwait(false);
+                }
+
+                // In the same turn, so a reader never sees the rating unlinked with the old
+                // film's facts still in place.
+                await WriteFactsAsync(conn, movieId, facts, token).ConfigureAwait(false);
+            }, ct);
     }
 }

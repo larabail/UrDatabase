@@ -1282,7 +1282,7 @@ namespace UrDatabase.Views
 
             // The same goes for the length, rating and people the library filters on: whatever is
             // stored belongs to the film this was wrongly matched to.
-            await SaveFactsAsync(vm, FilmFactsStore.From(details, credits), cts.Token);
+            await SaveFactsAsync(vm, FilmFactsStore.From(details, credits), details.ImdbId, cts.Token);
             vm.BackdropUrl = string.IsNullOrWhiteSpace(details.BackdropPath) ? null : tmdb.BuildImageUrl(details.BackdropPath!);
             vm.TopCast = CreditLine.Cast(credits);
             vm.KeyCrew = CreditLine.Crew(credits);
@@ -1380,17 +1380,18 @@ namespace UrDatabase.Views
         }
 
         /// <summary>
-        /// Records the chosen film's length, rating and people against the movie row, reported to
-        /// the log on failure for the same reason as the genres above.
+        /// Records the chosen film's length, rating and people against the movie row, and moves the
+        /// cached IMDb rating over to the chosen film (see FilmFactsStore.SaveCorrectedAsync).
+        /// Reported to the log on failure for the same reason as the genres above.
         /// </summary>
-        private async Task SaveFactsAsync(MovieDetailsVm vm, FilmFacts facts, CancellationToken ct)
+        private async Task SaveFactsAsync(MovieDetailsVm vm, FilmFacts facts, string? imdbId, CancellationToken ct)
         {
             if (string.IsNullOrWhiteSpace(_dbPath) || vm.LocalId <= 0) return;
 
             try
             {
                 using var conn = Database.Open(_dbPath);
-                await FilmFactsStore.SaveAsync(conn, vm.LocalId, facts, ct);
+                await FilmFactsStore.SaveCorrectedAsync(conn, vm.LocalId, facts, imdbId, ct);
             }
             catch (Exception ex)
             {

@@ -638,26 +638,36 @@ namespace UrDatabase.Views
         }
 
         /// <summary>
-        /// Puts films that have just learned what they are onto the right shelves.
+        /// Puts films that have just learned what they are onto the right shelves, and onto a
+        /// filtered page that was waiting for them.
         /// </summary>
         /// <remarks>
-        /// Only while the shelves are what is on screen. Rebuilding them under a search would
-        /// throw away the results somebody is reading, and the grouped view is rebuilt from
-        /// scratch on the way back to it anyway — so this waits rather than fighting.
+        /// Only while the shelves are what is on screen, or while the filter row has emptied the
+        /// page. Rebuilding under a search would throw away the results somebody is reading, and
+        /// the grouped view is rebuilt from scratch on the way back to it anyway — so this waits
+        /// rather than fighting. The filtered-empty page is the exception because it has no
+        /// shelves to keep: straight after a scan it is empty precisely because the length and
+        /// rating it asks about are still arriving, and it has to fill in as they do.
+        ///
+        /// Through <see cref="ReapplyFilters"/>, which rebuilds the chips first — a genre nothing
+        /// had until a moment ago has to exist as a bucket before anything can be put in it — and
+        /// then chooses the panel, so the page leaves the "nothing matches" state once something
+        /// does, and the note about films not known yet is rewritten.
         /// </remarks>
         private void RegroupForNewGenres()
         {
-            if (!_genresStale) return;
-            if (_sinceRegroup.Elapsed < RegroupInterval) return;
-            if (_view.IsSearch || !GroupPanel.IsVisible) return;
+            if (!LibraryRegroup.ShouldRedraw(
+                    stale: _genresStale,
+                    due: _sinceRegroup.Elapsed >= RegroupInterval,
+                    searching: _view.IsSearch,
+                    shelvesShown: GroupPanel.IsVisible,
+                    emptiedByFilters: NoMatchPanel.IsVisible))
+                return;
 
             _genresStale = false;
             _sinceRegroup.Restart();
 
-            // The chips first: a genre nothing had until a moment ago has to exist as a bucket
-            // before anything can be put in it, and the shelves are built from the chip list.
-            BuildGenres();
-            RebuildGroups();
+            ReapplyFilters();
         }
 
         /// <summary>
@@ -1817,7 +1827,7 @@ namespace UrDatabase.Views
             // Empty because of the filter row is a different page from empty because nothing has
             // been scanned: inviting somebody with a library of four hundred films to choose some
             // folders would be telling them their films had gone.
-            var filteredOut = empty && _refinement.IsActive && UnrefinedMovies.Count > 0;
+            var filteredOut = empty && LibraryRegroup.EmptiedByFilters(_refinement, UnrefinedMovies);
 
             SearchPanel.IsVisible = false;
             GroupPanel.IsVisible = !empty;

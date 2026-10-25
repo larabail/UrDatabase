@@ -152,6 +152,83 @@ namespace UrDatabase.Tests
             Assert.Equal(7.4, ReadBack(1).Rating);
         }
 
+        // ---------- correcting the match ----------
+
+        /// <summary>
+        /// The bug: the wrongly matched film's IMDb rating stayed linked, and the library prefers a
+        /// linked IMDb rating, so the correction's own TMDB rating was never used.
+        /// </summary>
+        [Fact]
+        public async Task A_correction_stops_using_the_wrong_films_IMDb_rating()
+        {
+            Seed(1, null, null, 42);
+            using (var conn = Database.Open(DbPath))
+            {
+                conn.Execute("INSERT INTO imdb_ratings (imdb_id, movie_id, rating, fetched_at) VALUES ('tt-wrong', 1, 3.1, '2026-01-01')");
+
+                // OMDb has nothing for the right film, or there is no OMDb key: no row for tt-right.
+                await FilmFactsStore.SaveCorrectedAsync(conn, 1,
+                    new FilmFacts(120, 8.2, new List<string>(), new List<string>()), "tt-right");
+
+                // The answer about tt-wrong is kept — it is still true of that title — just not
+                // credited to this film.
+                Assert.Equal(1, conn.QuerySingle<int>("SELECT COUNT(*) FROM imdb_ratings WHERE imdb_id='tt-wrong' AND movie_id IS NULL"));
+            }
+
+            var film = ReadBack(1);
+            Assert.Equal(8.2, film.Rating);
+            Assert.Equal(120, film.RuntimeMinutes);
+        }
+
+        [Fact]
+        public async Task A_correction_picks_up_a_rating_already_cached_for_the_right_film()
+        {
+            Seed(1, null, null, 42);
+            using (var conn = Database.Open(DbPath))
+            {
+                conn.Execute(@"
+INSERT INTO imdb_ratings (imdb_id, movie_id, rating, fetched_at) VALUES ('tt-wrong', 1, 3.1, '2026-01-01');
+INSERT INTO imdb_ratings (imdb_id, movie_id, rating, fetched_at) VALUES ('tt-right', NULL, 8.9, '2025-01-01');");
+
+                await FilmFactsStore.SaveCorrectedAsync(conn, 1,
+                    new FilmFacts(120, 8.2, new List<string>(), new List<string>()), "tt-right");
+            }
+
+            Assert.Equal(8.9, ReadBack(1).Rating);
+        }
+
+        [Fact]
+        public async Task A_correction_does_not_take_a_rating_another_film_owns()
+        {
+            Seed(1, null, null, 42);
+            using (var conn = Database.Open(DbPath))
+            {
+                conn.Execute("INSERT INTO movies (id, title, year) VALUES (2, 'Other', 2001)");
+                conn.Execute("INSERT INTO imdb_ratings (imdb_id, movie_id, rating, fetched_at) VALUES ('tt-right', 2, 8.9, '2025-01-01')");
+
+                await FilmFactsStore.SaveCorrectedAsync(conn, 1,
+                    new FilmFacts(120, 8.2, new List<string>(), new List<string>()), "tt-right");
+            }
+
+            Assert.Equal(8.2, ReadBack(1).Rating);
+            Assert.Equal(8.9, ReadBack(2).Rating);
+        }
+
+        [Fact]
+        public async Task A_correction_to_a_film_with_no_IMDb_id_unlinks_every_old_rating()
+        {
+            Seed(1, null, null, 42);
+            using (var conn = Database.Open(DbPath))
+            {
+                conn.Execute("INSERT INTO imdb_ratings (imdb_id, movie_id, rating, fetched_at) VALUES ('tt-wrong', 1, 3.1, '2026-01-01')");
+
+                await FilmFactsStore.SaveCorrectedAsync(conn, 1,
+                    new FilmFacts(null, 6.4, new List<string>(), new List<string>()), null);
+            }
+
+            Assert.Equal(6.4, ReadBack(1).Rating);
+        }
+
         /// <summary>
         /// The read path names columns only a migration adds, and on an install with no server
         /// nothing else opens the catalogue before it — so the first launch after an upgrade has

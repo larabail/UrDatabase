@@ -72,6 +72,29 @@ namespace UrDatabase.Tests
             Assert.True(new LibraryRefinement { MinimumRating = 8 }.Matches(series));
         }
 
+        /// <summary>
+        /// Nothing will ever give a programme a running time, so counting it as "not known yet"
+        /// left the note under a length filter waiting for ever on every series in the library.
+        /// </summary>
+        [Theory]
+        [InlineData(MediaKind.Series)]
+        [InlineData(MediaKind.Episode)]
+        public void Television_is_never_counted_as_waiting_for_a_length(MediaKind kind)
+        {
+            var television = new[] { Film("Twin Peaks", kind: kind), Film("The Wire", rating: 9.3, kind: kind) };
+
+            foreach (var band in LibraryRefinement.RuntimeOptions.Where(b => b != RuntimeRange.Any))
+            {
+                var filter = new LibraryRefinement { Runtime = band };
+
+                Assert.Empty(filter.Apply(television));
+                Assert.Equal(0, filter.Unknown(television));
+            }
+
+            // Still unknown for what a programme can genuinely lack and later gain.
+            Assert.Equal(1, new LibraryRefinement { MinimumRating = 7 }.Unknown(television));
+        }
+
         // ---------- rating ----------
 
         [Theory]
@@ -234,6 +257,49 @@ namespace UrDatabase.Tests
         {
             Assert.Equal("Over 2 hours", new RuntimeChip { Range = RuntimeRange.Long }.Name);
             Assert.Equal("8+", new RatingChip { Minimum = 8 }.Name);
+        }
+
+        // ---------- the page catching up ----------
+
+        /// <summary>
+        /// The bug: only a page with shelves on it was ever redrawn, so a page the filters had
+        /// emptied straight after a scan stayed empty while the facts it was waiting for arrived.
+        /// </summary>
+        [Fact]
+        public void A_page_emptied_by_the_filters_is_redrawn_as_facts_arrive()
+        {
+            Assert.True(LibraryRegroup.ShouldRedraw(stale: true, due: true, searching: false, shelvesShown: false, emptiedByFilters: true));
+        }
+
+        [Theory]
+        [InlineData(false, true, false, true, true)]   // nothing new has arrived
+        [InlineData(true, false, false, true, true)]   // too soon after the last redraw
+        [InlineData(true, true, true, true, true)]     // search results are up and are left alone
+        [InlineData(true, true, false, false, false)]  // a single genre, or the nothing-scanned invitation
+        public void Otherwise_the_page_is_left_alone(bool stale, bool due, bool searching, bool shelves, bool emptied)
+        {
+            Assert.False(LibraryRegroup.ShouldRedraw(stale, due, searching, shelves, emptied));
+        }
+
+        [Fact]
+        public void Shelves_on_screen_are_still_regrouped_as_before()
+        {
+            Assert.True(LibraryRegroup.ShouldRedraw(stale: true, due: true, searching: false, shelvesShown: true, emptiedByFilters: false));
+        }
+
+        [Fact]
+        public void Emptied_by_the_filters_means_films_exist_and_the_filters_hide_all_of_them()
+        {
+            var library = new[] { Film("Not measured yet"), Film("Short", runtime: 80) };
+            var longOnes = new LibraryRefinement { Runtime = RuntimeRange.Long };
+
+            Assert.True(LibraryRegroup.EmptiedByFilters(longOnes, library));
+            Assert.False(LibraryRegroup.EmptiedByFilters(LibraryRefinement.None, library));
+            Assert.False(LibraryRegroup.EmptiedByFilters(longOnes, Array.Empty<UiMovie>()));
+
+            // The fact the page was waiting for lands, and it is no longer empty.
+            library[0].ApplyFacts(new FilmFacts(150, null, new List<string>(), new List<string>()));
+            Assert.False(LibraryRegroup.EmptiedByFilters(longOnes, library));
         }
 
         // ---------- the people a card answers for ----------

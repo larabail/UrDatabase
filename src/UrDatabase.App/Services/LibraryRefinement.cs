@@ -81,6 +81,12 @@ namespace UrDatabase.Services
 
             if (Runtime != RuntimeRange.Any)
             {
+                // Television is a definite no rather than an unknown. A programme has episodes of
+                // a length, not a length of its own, and nothing will ever supply one — so counting
+                // it as "not known yet" left the note under a length filter waiting for ever on
+                // every series in the library.
+                if (movie.IsSeries || movie.IsEpisode) return false;
+
                 if (movie.RuntimeMinutes is int minutes && minutes > 0)
                 {
                     if (BandOf(minutes) != Runtime) return false;
