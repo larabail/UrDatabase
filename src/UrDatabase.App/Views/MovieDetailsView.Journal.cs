@@ -125,6 +125,45 @@ namespace UrDatabase.Views
         }
 
         /// <summary>
+        /// Called by <b>Wrong film?</b> once the film has been re-identified: moves its rating,
+        /// review and viewings onto the film the owner just said it is, from whatever key they
+        /// were under — a TMDB id included, which is the case nothing else is allowed to move.
+        /// </summary>
+        private void CorrectJournal(MovieDetailsVm vm)
+        {
+            var film = new FilmIdentity(vm.TmdbId, vm.Title, vm.Year);
+
+            if (_journal is null
+                || _journalFilm is not { Key: string oldKey }
+                || !film.CanBeJournalled
+                || string.Equals(film.Key, oldKey, StringComparison.Ordinal))
+            {
+                ShowJournal(vm);
+                return;
+            }
+
+            // Saved under the film as it was, then carried across with everything else.
+            FlushReview();
+
+            _journalFilm = film;
+            _journalKey = film.Key;
+
+            var journal = _journal;
+            _ = QueueJournalWrite(async () =>
+            {
+                try
+                {
+                    await journal.CorrectAsync(oldKey, film);
+                }
+                catch (Exception ex)
+                {
+                    AppLog.Write(JournalLog, $"{film.Key}: could not move the journal from {oldKey}: {ex.Message}");
+                }
+            });
+            _ = LoadJournalAsync(film, keepTypedReview: true);
+        }
+
+        /// <summary>
         /// Runs a write after every write already queued. Reads wait on the queue too — see
         /// <see cref="LoadJournalAsync"/> — so a reload can never come back with a review older
         /// than the one just saved and put it in the box over the newer one.
@@ -176,8 +215,26 @@ namespace UrDatabase.Views
             {
                 AppLog.Write(JournalLog, $"{film.Key}: could not read the journal: {ex.Message}");
                 if (ReferenceEquals(film, _journalFilm))
+                {
+                    // Read-only from here: what is on screen is not what is stored, and saving it
+                    // would overwrite the real thing. See FilmJournalEdits.
+                    _journalLoaded = false;
+                    SetJournalEditable(false);
                     SetJournalStatus("Your rating and viewings could not be read.");
+                }
             }
+        }
+
+        /// <summary>
+        /// The stars and the review box take input only once this film's journal is on screen.
+        /// The handlers check the same rule, so a click that slips past a disabled control still
+        /// writes nothing.
+        /// </summary>
+        private void SetJournalEditable(bool loaded)
+        {
+            var editable = FilmJournalEdits.CanEdit(loaded);
+            StarsRow.IsEnabled = editable;
+            ReviewBox.IsEnabled = editable;
         }
 
         /// <param name="keepTypedReview">
@@ -194,6 +251,7 @@ namespace UrDatabase.Views
             _savedReview = entry.Rating?.Review ?? "";
             if (!edited) ReviewBox.Text = _savedReview;
             _journalLoaded = !ReferenceEquals(entry, FilmJournalEntry.Empty);
+            SetJournalEditable(_journalLoaded);
             PaintStars(_stars);
 
             ViewingsList.ItemsSource = entry.Viewings;
@@ -231,19 +289,25 @@ namespace UrDatabase.Views
         {
             if (sender is not Button { Tag: int clicked }) return;
 
-            _stars = FilmJournalStore.Toggle(_stars, clicked);
+            var write = FilmJournalEdits.StarClicked(_journalLoaded, _stars, clicked, ReviewBox.Text);
+            if (write is null) return;
+
+            _stars = write.Stars;
             PaintStars(_stars);
-            await SaveRatingAsync();
+            await SaveRatingAsync(write);
         }
 
         private async void ReviewBox_LostFocus(object? sender, RoutedEventArgs e)
         {
-            if (ReviewChanged()) await SaveRatingAsync();
+            if (PendingReviewWrite() is RatingWrite write) await SaveRatingAsync(write);
         }
 
         private bool ReviewChanged() =>
             _journalFilm is not null
             && !string.Equals((ReviewBox.Text ?? "").Trim(), _savedReview, StringComparison.Ordinal);
+
+        private RatingWrite? PendingReviewWrite() =>
+            _journalFilm is null ? null : FilmJournalEdits.ReviewLeft(_journalLoaded, _stars, _savedReview, ReviewBox.Text);
 
         /// <summary>
         /// Saves a review that is still in the box. Called on leaving the page and on the film
@@ -251,24 +315,20 @@ namespace UrDatabase.Views
         /// </summary>
         private void FlushReview()
         {
-            if (!ReviewChanged()) return;
-            _ = SaveRatingAsync();
+            if (PendingReviewWrite() is RatingWrite write) _ = SaveRatingAsync(write);
         }
 
-        private async Task SaveRatingAsync()
+        private async Task SaveRatingAsync(RatingWrite write)
         {
             if (_journal is null || _journalFilm is not FilmIdentity film) return;
-
-            var review = (ReviewBox.Text ?? "").Trim();
-            var stars = _stars;
 
             try
             {
                 // Deliberately not tied to the page's token: a rating clicked a moment before
                 // pressing Back is still a rating.
                 var journal = _journal;
-                await QueueJournalWrite(() => journal.SaveRatingAsync(film, stars, review));
-                if (ReferenceEquals(film, _journalFilm)) _savedReview = review;
+                await QueueJournalWrite(() => journal.SaveRatingAsync(film, write.Stars, write.Review));
+                if (ReferenceEquals(film, _journalFilm)) _savedReview = write.Review;
                 SetJournalStatus(null);
             }
             catch (Exception ex)

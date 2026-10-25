@@ -1249,6 +1249,10 @@ namespace UrDatabase.Views
                 RenamedSomething = true;
             }
 
+            // The owner's rating and viewings were of this film all along, whatever it was wrongly
+            // called a moment ago. Moved now, before anything below can fail and return early.
+            CorrectJournal(vm);
+
             await SaveMatchAsync(vm, chosen.TmdbId, poster, renamed, cts.Token);
 
             // Everything below repaints a screen the user may already have left. Vm is the guard:

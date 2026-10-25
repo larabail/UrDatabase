@@ -262,15 +262,38 @@ ORDER BY watched_on DESC, id DESC";
         /// "Amélie" — and the rows saved a minute earlier are under the old one, which nothing
         /// would ever produce again. The page knows both names at that moment, so it says which.
         ///
-        /// Only ever from a title key, and only onto a TMDB key. A film re-identified from one
-        /// TMDB id to another is a correction between two real films, either of which may be in
-        /// the library in its own right, so its history is not dragged across.
+        /// Only ever from a title key, and only onto a TMDB key. A film that moves from one TMDB id
+        /// to another without anybody saying so is a re-match between two real films, either of
+        /// which may be in the library in its own right, so its history is not dragged across;
+        /// the owner's own correction goes through <see cref="Correct"/> instead.
         /// </remarks>
         public static void Adopt(SqliteConnection conn, string? fromKey, FilmIdentity film)
         {
             if (conn is null) throw new ArgumentNullException(nameof(conn));
             if (film?.Key is not string key || film.TmdbId is null) return;
             if (string.IsNullOrEmpty(fromKey) || !fromKey.StartsWith(FilmKey.TitlePrefix, StringComparison.Ordinal)) return;
+
+            using var tx = conn.BeginTransaction();
+            Move(conn, tx, fromKey, key, film.TmdbId);
+            Rekey(conn, tx, film);
+            tx.Commit();
+        }
+
+        /// <summary>
+        /// Moves everything recorded against one key onto a film the owner has just said it
+        /// really is — the <b>Wrong film?</b> correction, and nothing else.
+        /// </summary>
+        /// <remarks>
+        /// Unlike <see cref="Adopt"/> this also moves from a TMDB key. A film mis-matched to A
+        /// and corrected to B was B all along, so the evenings logged against A were B's: left
+        /// where they were, A's page would show the owner's history with a film they may never
+        /// have seen. Only an explicit correction is trusted to say that; an automatic re-match
+        /// never is. When B already has a rating, the more recently changed one wins.
+        /// </remarks>
+        public static void Correct(SqliteConnection conn, string? fromKey, FilmIdentity film)
+        {
+            if (conn is null) throw new ArgumentNullException(nameof(conn));
+            if (film?.Key is not string key || string.IsNullOrEmpty(fromKey)) return;
 
             using var tx = conn.BeginTransaction();
             Move(conn, tx, fromKey, key, film.TmdbId);

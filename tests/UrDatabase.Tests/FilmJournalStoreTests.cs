@@ -301,6 +301,57 @@ namespace UrDatabase.Tests
         }
 
         [Fact]
+        public void Correcting_a_mismatched_film_moves_its_history_off_the_wrong_tmdb_id()
+        {
+            var wrong = new FilmIdentity(1, "Solaris", 2002);
+            var right = new FilmIdentity(593, "Solaris", 1972);
+
+            FilmJournalStore.SaveRating(_conn, wrong, 8, "Slow, wonderful", Monday);
+            FilmJournalStore.AddViewing(_conn, wrong, new DateOnly(2025, 3, 1), new[] { "Ana" }, null, Monday);
+
+            FilmJournalStore.Correct(_conn, wrong.Key, right);
+
+            Assert.Null(FilmJournalStore.GetRating(_conn, wrong));
+            Assert.Empty(FilmJournalStore.LoadViewings(_conn, wrong));
+
+            var rating = FilmJournalStore.GetRating(_conn, right);
+            Assert.Equal(8, rating!.Stars);
+            Assert.Equal("Slow, wonderful", rating.Review);
+            Assert.Equal(593, rating.TmdbId);
+            Assert.Equal("tmdb:593", Assert.Single(FilmJournalStore.LoadViewings(_conn, right)).Key);
+        }
+
+        [Fact]
+        public void Correcting_onto_a_film_already_rated_keeps_the_newer_rating_and_both_sets_of_viewings()
+        {
+            var wrong = new FilmIdentity(1, "Solaris", 2002);
+            var right = new FilmIdentity(593, "Solaris", 1972);
+
+            FilmJournalStore.SaveRating(_conn, right, 6, "Old opinion", Monday);
+            FilmJournalStore.AddViewing(_conn, right, new DateOnly(2010, 1, 1), null, null, Monday);
+            FilmJournalStore.SaveRating(_conn, wrong, 9, "New opinion", Tuesday);
+            FilmJournalStore.AddViewing(_conn, wrong, new DateOnly(2025, 3, 1), null, null, Tuesday);
+
+            FilmJournalStore.Correct(_conn, wrong.Key, right);
+
+            Assert.Equal("New opinion", FilmJournalStore.GetRating(_conn, right)!.Review);
+            Assert.Equal(1L, Scalar("SELECT COUNT(*) FROM film_ratings"));
+            Assert.Equal(2, FilmJournalStore.LoadViewings(_conn, right).Count);
+        }
+
+        [Fact]
+        public void Correcting_an_unidentified_film_moves_its_title_keyed_history_too()
+        {
+            var before = new FilmIdentity(null, "Amelie", 2001);
+            var after = new FilmIdentity(194, "Amélie", 2001);
+            FilmJournalStore.SaveRating(_conn, before, 9, null, Monday);
+
+            FilmJournalStore.Correct(_conn, before.Key, after);
+
+            Assert.Equal("tmdb:194", FilmJournalStore.GetRating(_conn, after)!.Key);
+        }
+
+        [Fact]
         public void A_rating_outlives_the_catalogue_row_it_was_made_against()
         {
             using (var cmd = _conn.CreateCommand())

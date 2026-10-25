@@ -227,9 +227,14 @@ It runs on Windows and macOS from one codebase, built with
   [Known gaps](#known-gaps)). A film is filed under its TMDB id when it has one
   and under its title and year until then, so a rating survives a rescan, works
   for a film that is only on the server, and follows the film onto its TMDB id
-  the first time anything is saved after it is identified
-  (`Services/FilmJournalStore`, `Services/FilmJournal`, `Services/FilmKey`,
-  `Services/Companions`, `Views/MovieDetailsView.Journal`).
+  the first time anything is saved after it is identified. Correcting a film with
+  **Wrong film?** moves its rating and viewings onto the film you picked, even off
+  a wrong TMDB id, because they were of that film all along; nothing else ever
+  moves history from one TMDB id to another. The stars and review stay disabled
+  until the film's stored rating has loaded, and stay disabled if it could not be
+  read, so a blank placeholder is never saved over a real review
+  (`Services/FilmJournalStore`, `Services/FilmJournal`, `Services/FilmJournalEdits`,
+  `Services/FilmKey`, `Services/Companions`, `Views/MovieDetailsView.Journal`).
 - **Refresh without restarting.** The library, film details and programme pages
   each have a **Refresh** button. Library refresh reloads the catalogue, syncs
   Jellyfin when configured and retries missing artwork and genres without

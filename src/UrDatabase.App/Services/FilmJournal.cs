@@ -66,6 +66,14 @@ namespace UrDatabase.Services
                 return true;
             }, ct);
 
+        /// <summary>See <see cref="FilmJournalStore.Correct"/>.</summary>
+        public Task CorrectAsync(string? fromKey, FilmIdentity film, CancellationToken ct = default) =>
+            WriteAsync(conn =>
+            {
+                FilmJournalStore.Correct(conn, fromKey, film);
+                return true;
+            }, ct);
+
         private Task<T> WriteAsync<T>(Func<Microsoft.Data.Sqlite.SqliteConnection, T> write, CancellationToken ct) =>
             Task.Run(async () =>
             {
