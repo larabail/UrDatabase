@@ -304,6 +304,10 @@ namespace UrDatabase.Views
             // having its answer hidden — an install kept off the network stays off it.
             if (AppDistribution.ShouldCheckForUpdates(_config.CheckForUpdates))
                 Dispatcher.UIThread.Post(() => _ = CheckForUpdateAsync());
+
+            // Same posture again: the probes run on the thread pool behind a usable window, and a
+            // network share that never answers costs a timer, not a frozen launch.
+            Dispatcher.UIThread.Post(() => _ = CheckDrivesAsync());
         }
 
         /// <summary>
@@ -1461,7 +1465,89 @@ namespace UrDatabase.Views
 
             if (_jellyfin is not null)
                 await SyncJellyfinAsync(announceFailure: true);
+
+            // The library folders may just have moved to another drive, or off a dead one.
+            await CheckDrivesAsync();
         }
+
+        // ==============================================================
+        //  the drive check
+        // ==============================================================
+
+        /// <summary>
+        /// Checks every drive the library lives on and raises the banner when one is away, or
+        /// lowers it when they are all back. Returns what it found so the dialog can show it.
+        ///
+        /// Like the update check, nothing here is allowed to matter: a failure is logged and
+        /// leaves the window as it was.
+        /// </summary>
+        private async Task<IReadOnlyList<DriveReport>?> CheckDrivesAsync()
+        {
+            try
+            {
+                var reports = await new DriveMonitor()
+                    .CheckLibraryAsync(_config.WatchFolders, _dbPath, _cts.Token);
+
+                var headline = DriveStatusText.Headline(reports);
+                if (headline is null)
+                {
+                    DriveBanner.IsVisible = false;
+                    return reports;
+                }
+
+                DriveHeadline.Text = headline;
+                DriveDetail.Text = DriveStatusText.Detail(reports);
+                DriveBanner.IsVisible = true;
+
+                AppLog.Write(
+                    "drives.log",
+                    string.Join("; ", reports.Where(r => r.RaisesAlarm).Select(r => $"{r.Root} {r.State}")));
+
+                return reports;
+            }
+            catch (OperationCanceledException)
+            {
+                return null;
+            }
+            catch (Exception ex)
+            {
+                AppLog.Write("drives.log", $"drive check failed: {ex}");
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// The drives dialog. Always a fresh check rather than the answer from launch, because the
+        /// usual reason to open it is having just plugged something back in.
+        /// </summary>
+        private async void Drives_Click(object? sender, RoutedEventArgs e)
+        {
+            DrivesButton.IsEnabled = false;
+            DriveDetailsButton.IsEnabled = false;
+
+            try
+            {
+                var reports = await CheckDrivesAsync();
+                if (reports is null) return;
+
+                await MessageBoxWindow.ShowAsync(this, "Drives", DriveStatusText.Describe(reports));
+            }
+            finally
+            {
+                DrivesButton.IsEnabled = true;
+                DriveDetailsButton.IsEnabled = true;
+            }
+        }
+
+        private async void DriveRecheck_Click(object? sender, RoutedEventArgs e)
+        {
+            DriveRecheckButton.IsEnabled = false;
+            try { await CheckDrivesAsync(); }
+            finally { DriveRecheckButton.IsEnabled = true; }
+        }
+
+        /// <summary>Hides the alarm until the next launch, which checks again.</summary>
+        private void DriveDismiss_Click(object? sender, RoutedEventArgs e) => DriveBanner.IsVisible = false;
 
         // ==============================================================
         //  the update banner
@@ -1707,7 +1793,8 @@ namespace UrDatabase.Views
                 // A downloaded film is a row the library behind this screen does not have yet: it
                 // would still be shown as living only on the server until something reloaded it.
                 // A renamed one is a row whose name, sort position and genre shelf have all moved.
-                if (DetailsView.DownloadedSomething || DetailsView.RenamedSomething)
+                // A reported problem is a badge the card behind this screen does not carry yet.
+                if (DetailsView.DownloadedSomething || DetailsView.RenamedSomething || DetailsView.ChangedProblems)
                     await _searchLoop.RefreshAsync(SearchBox.Text);
 
                 // Only the shelf moved, so only the shelf is rebuilt; nothing needs reading again

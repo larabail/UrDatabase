@@ -42,6 +42,12 @@ namespace UrDatabase.Models
 
         public bool HasFile => !string.IsNullOrWhiteSpace(FilePath);
 
+        /// <summary>
+        /// The identity a reported problem is stored under: the same string as the card's
+        /// <see cref="UiMovie.Key"/>, so the library finds what this screen saved.
+        /// </summary>
+        public string? FilmKey => Services.FilmProblems.KeyFor(LocalId, RemoteId);
+
         public bool IsLoadingFile { get; set; }
         public bool IsConnecting { get; set; }
         public bool IsLoadingMetadata { get; set; }

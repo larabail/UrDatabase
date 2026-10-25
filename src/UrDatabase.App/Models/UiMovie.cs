@@ -437,9 +437,44 @@ namespace UrDatabase.Models
 
                 if (!string.IsNullOrWhiteSpace(_resumeNote)) parts.Add(_resumeNote!);
 
+                if (HasProblem) parts.Add(ProblemTooltip);
+
                 return string.Join(" — ", parts);
             }
         }
+
+        private FilmProblemReport? _problemReport;
+
+        /// <summary>
+        /// What the owner has reported wrong with this copy, or null when nothing has been.
+        /// Stamped by <see cref="Services.FilmProblems.Stamp"/> rather than read with the row,
+        /// because a server film has no row in the catalogue to read it from.
+        /// </summary>
+        public FilmProblemReport? ProblemReport
+        {
+            get => _problemReport;
+            set
+            {
+                var next = value is { IsEmpty: false } ? value : null;
+                if (ReferenceEquals(_problemReport, next)) return;
+
+                _problemReport = next;
+                OnPropertyChanged();
+                OnPropertyChanged(nameof(HasProblem));
+                OnPropertyChanged(nameof(ProblemTooltip));
+                OnPropertyChanged(nameof(CardTooltip));
+            }
+        }
+
+        /// <summary>True when the card should carry the problem badge.</summary>
+        public bool HasProblem => _problemReport is not null;
+
+        /// <inheritdoc cref="ServerBadge"/>
+        public string ProblemBadge => Services.FilmProblems.BadgeText;
+
+        /// <summary>What the badge means, in full: <c>"Problem: Audio, Low resolution"</c>.</summary>
+        public string ProblemTooltip =>
+            HasProblem ? $"{Services.FilmProblems.BadgeText}: {Services.FilmProblems.Summary(_problemReport)}" : "";
 
         /// <summary>
         /// Records that the server holds this film too, folding its copy into this card.

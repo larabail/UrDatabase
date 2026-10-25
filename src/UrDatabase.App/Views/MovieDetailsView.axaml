@@ -163,6 +163,51 @@
                                 Height="34"
                                 Content="Wrong film?"
                                 Click="CorrectMatch_Click"/>
+                        <!-- Something wrong with this copy: the sound, the
+                             resolution, the aspect ratio. The ticks live in a
+                             flyout rather than on the page, because nearly every
+                             film has nothing to report and six empty checkboxes
+                             under every plot would be noise. The banner above the
+                             genres says what has been reported. -->
+                        <Button x:Name="ProblemButton"
+                                Classes="ghost"
+                                Height="34"
+                                Content="Report problem…"
+                                ToolTip.Tip="Mark this copy as having a problem: audio, low resolution, wrong aspect ratio…">
+                            <Button.Flyout>
+                                <Flyout
+                                        Placement="TopEdgeAlignedLeft"
+                                        Opening="ProblemFlyout_Opening">
+                                    <StackPanel Width="300" Spacing="8">
+                                        <TextBlock Classes="label"
+                                                   Text="WHAT IS WRONG WITH THIS COPY"
+                                                   LetterSpacing="1.6"/>
+                                        <StackPanel x:Name="ProblemChoices" Spacing="2"/>
+                                        <TextBox x:Name="ProblemNote"
+                                                 Classes="field"
+                                                 Watermark="Note (optional)"
+                                                 MaxLength="500"
+                                                 TextWrapping="Wrap"/>
+                                        <TextBlock x:Name="ProblemError"
+                                                   Foreground="{StaticResource NoBrush}"
+                                                   TextWrapping="Wrap"
+                                                   IsVisible="False"/>
+                                        <StackPanel Orientation="Horizontal"
+                                                    Spacing="8"
+                                                    HorizontalAlignment="Right">
+                                            <Button x:Name="ClearProblemButton"
+                                                    Classes="ghost"
+                                                    Content="Clear"
+                                                    Click="ClearProblem_Click"/>
+                                            <Button x:Name="SaveProblemButton"
+                                                    Classes="primary"
+                                                    Content="Save"
+                                                    Click="SaveProblem_Click"/>
+                                        </StackPanel>
+                                    </StackPanel>
+                                </Flyout>
+                            </Button.Flyout>
+                        </Button>
                         <!-- Keeps a copy on this disk so the film survives being away
                              from the server. Shown only for a server film that is not
                              already here. -->
@@ -394,14 +439,50 @@
                         </ItemsControl>
                     </WrapPanel>
 
-                    <TextBlock Grid.Row="2"
-                               x:Name="GenresText"
-                               Classes="mono"
-                               FontSize="11"
-                               LetterSpacing="1.1"
-                               Foreground="{StaticResource ProseBrush}"
-                               TextWrapping="Wrap"
-                               Margin="0,0,0,12"/>
+                    <StackPanel Grid.Row="2">
+                        <!-- What the owner reported wrong with this copy. Hidden
+                             for nearly every film. Outlined in the same
+                             red-orange as the card's badge, with the word on it,
+                             so the two are recognisably one fact. -->
+                        <Border x:Name="ProblemBanner"
+                                HorizontalAlignment="Left"
+                                BorderBrush="{StaticResource NoBrush}"
+                                BorderThickness="1"
+                                CornerRadius="{StaticResource RadiusSmall}"
+                                Padding="8,4,4,4"
+                                Margin="0,0,0,12"
+                                IsVisible="False">
+                            <StackPanel Orientation="Horizontal" Spacing="10">
+                                <TextBlock Text="PROBLEM"
+                                           Foreground="{StaticResource NoBrush}"
+                                           FontFamily="{StaticResource MonoFont}"
+                                           FontSize="10.5"
+                                           FontWeight="SemiBold"
+                                           LetterSpacing="1"
+                                           VerticalAlignment="Center"/>
+                                <TextBlock x:Name="ProblemSummary"
+                                           Foreground="{StaticResource ProseBrush}"
+                                           FontSize="12.5"
+                                           MaxWidth="560"
+                                           TextWrapping="Wrap"
+                                           VerticalAlignment="Center"/>
+                                <Button x:Name="ProblemBannerClear"
+                                        Classes="ghost"
+                                        Content="Clear"
+                                        VerticalAlignment="Center"
+                                        ToolTip.Tip="This copy is fine now: remove the problem."
+                                        Click="ClearProblem_Click"/>
+                            </StackPanel>
+                        </Border>
+
+                        <TextBlock x:Name="GenresText"
+                                   Classes="mono"
+                                   FontSize="11"
+                                   LetterSpacing="1.1"
+                                   Foreground="{StaticResource ProseBrush}"
+                                   TextWrapping="Wrap"
+                                   Margin="0,0,0,12"/>
+                    </StackPanel>
 
                     <Border x:Name="PlotPane"
                             Grid.Row="3"

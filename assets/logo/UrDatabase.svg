@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  UrDatabase app icon, master artwork for every size above 32px.
+
+  A clapperboard whose slate is a catalogue card: the clapper says "film" at
+  any size, the ruled slate with its red head rule says "a record of it", and
+  it keeps the card the icon used to be. Colours are the app's own tokens
+  (Styles/Tokens.axaml): Room, Felt and Edge for the tile, Bone for the slate,
+  Brass for the hinge, and the downloads site's stamp red for the head rule.
+
+  Frames of 32px and below come from UrDatabase-small.svg instead, which is the
+  same picture with fewer, fatter parts snapped to the pixel grid.
+
+  Edit this file, then run `python tool/make_icons.py` to regenerate the .ico,
+  the .icns and the Store PNGs. Never edit those by hand.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="tile" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#26221E"/>
+      <stop offset="1" stop-color="#0B0A09"/>
+    </linearGradient>
+    <clipPath id="stick">
+      <rect x="0" y="0" width="600" height="84" rx="14"/>
+    </clipPath>
+    <!-- One stick of the clapper: bone, crossed by four ink bars at 45 degrees. -->
+    <g id="stripes" clip-path="url(#stick)">
+      <rect x="0" y="0" width="600" height="84" fill="#F1ECE3"/>
+      <path fill="#1B1816" d="M30 84 L114 0 L184 0 L100 84 Z
+                              M180 84 L264 0 L334 0 L250 84 Z
+                              M330 84 L414 0 L484 0 L400 84 Z
+                              M480 84 L564 0 L634 0 L550 84 Z"/>
+    </g>
+  </defs>
+
+  <!-- The tile: Apple's 824px grid inside 1024, which also leaves Windows its margin. -->
+  <rect x="100" y="100" width="824" height="824" rx="185" fill="url(#tile)"/>
+  <rect x="104" y="104" width="816" height="816" rx="181" fill="none"
+        stroke="#38332E" stroke-width="8"/>
+
+  <g transform="translate(0 28)">
+    <!-- The slate. -->
+    <rect x="212" y="448" width="600" height="340" rx="34" fill="#F1ECE3"/>
+    <!-- Lower stick, fixed to the slate. -->
+    <use href="#stripes" transform="translate(212 356)"/>
+    <!-- Upper stick, open, hinged at the left. -->
+    <use href="#stripes" transform="rotate(-13 212 348) translate(212 264)"/>
+    <!-- The hinge. -->
+    <circle cx="244" cy="350" r="32" fill="#C8973F"/>
+    <circle cx="244" cy="350" r="11" fill="#1B1816"/>
+
+    <!-- The catalogue card on the slate: a red head rule and two lines of ink. -->
+    <rect x="272" y="512" width="480" height="52" rx="26" fill="#A83A24"/>
+    <rect x="272" y="610" width="480" height="38" rx="19" fill="#1B1816"/>
+    <rect x="272" y="690" width="300" height="38" rx="19" fill="#1B1816"/>
+  </g>
+</svg>
