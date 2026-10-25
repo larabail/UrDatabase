@@ -331,7 +331,7 @@ WHERE id = @id;
             // same file twice and report a library as double the size it is.
             if (existing is not null && files.WasSeen(existing)) return FileOutcome.AlreadySeen;
 
-            var movieId = await EnsureMovieAsync(conn, tx, movies, FilenameParser.Parse(path));
+            var movieId = await MovieForFileAsync(conn, tx, movies, existing, FilenameParser.Parse(path));
 
             var outcome = FileOutcome.Unchanged;
             if (existing is null)
@@ -481,6 +481,76 @@ WHERE id = @id;
             {
                 // Deliberately swallowed; see above.
             }
+        }
+
+        /// <summary>
+        /// Which movie a walked file belongs to.
+        /// </summary>
+        /// <remarks>
+        /// A file already linked to a row keeps that link — the update coalesces it — so a parsed
+        /// name that no row answers to must not create one. That happens whenever the name read
+        /// from disk differs from the row's: a file linked by hand, a file renamed on disk, and
+        /// above all a library scanned before the parser learned to cut a title at its first
+        /// release tag. Inserting would leave an empty row beside the real one on every one of
+        /// them.
+        ///
+        /// The last case is also worth repairing rather than merely not making worse: the row is
+        /// called "Origen MicroHD", and that name is why TMDB never found it. When the row's own
+        /// title holds an unambiguous release tag, cleans down to exactly what the file now
+        /// parses as, and nothing has identified it yet, the row takes the clean title and keeps
+        /// the old one in <c>scan_title</c> — the same place a corrected match keeps the name it
+        /// replaced, so the rename is recorded and the old name still resolves. A title that only
+        /// ends in an ambiguous word ("The Rip", "Charlotte's Web") is never touched: it is far
+        /// likelier to be right than noisy. Nor is a title a person or a corrected match chose, or
+        /// one TMDB already identified.
+        /// </remarks>
+        private static async Task<long> MovieForFileAsync(
+            SqliteConnection conn,
+            SqliteTransaction tx,
+            MovieIndex movies,
+            ScanFileRow? existing,
+            ParsedMedia parsed)
+        {
+            if (existing?.MovieId is not long linked || movies.TryResolve(parsed, out _, out _))
+                return await EnsureMovieAsync(conn, tx, movies, parsed);
+
+            var row = await conn.QuerySingleOrDefaultAsync<LinkedMovieRow>(
+                "SELECT title AS Title, year AS Year, tmdb_id AS TmdbId, scan_title AS ScanTitle FROM movies WHERE id = @id",
+                new { id = linked }, tx);
+
+            if (row is not null && IsStaleScannedTitle(row, parsed))
+            {
+                // SQLite evaluates every SET expression against the old row, so scan_title takes
+                // the title being replaced.
+                var renamed = await conn.ExecuteAsync(
+                    @"UPDATE movies SET scan_title = title, title = @title, year = COALESCE(year, @year)
+                      WHERE id = @id AND tmdb_id IS NULL AND scan_title IS NULL",
+                    new { title = parsed.Title, year = parsed.Year, id = linked }, tx);
+
+                if (renamed > 0) movies.Add(linked, parsed.Title, row.Year ?? parsed.Year);
+            }
+
+            return linked;
+        }
+
+        private static bool IsStaleScannedTitle(LinkedMovieRow row, ParsedMedia parsed)
+        {
+            if (row.TmdbId is not null || !string.IsNullOrWhiteSpace(row.ScanTitle)) return false;
+            if (string.IsNullOrWhiteSpace(row.Title) || string.IsNullOrWhiteSpace(parsed.Title)) return false;
+            if (string.Equals(row.Title, parsed.Title, StringComparison.Ordinal)) return false;
+            if (row.Year.HasValue && parsed.Year.HasValue && row.Year != parsed.Year) return false;
+            if (!FilenameParser.CarriesReleaseTag(row.Title)) return false;
+
+            var cleaned = MovieIndex.NormalizeTitle(FilenameParser.CleanText(row.Title));
+            return cleaned.Length > 0 && cleaned == MovieIndex.NormalizeTitle(parsed.Title);
+        }
+
+        private sealed class LinkedMovieRow
+        {
+            public string? Title { get; set; }
+            public int? Year { get; set; }
+            public long? TmdbId { get; set; }
+            public string? ScanTitle { get; set; }
         }
 
         /// <summary>

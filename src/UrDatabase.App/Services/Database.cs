@@ -387,6 +387,10 @@ CREATE TABLE IF NOT EXISTS jellyfin_resume_dismissals (
     position_ticks INTEGER NOT NULL,
     dismissed_at   TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS watchlist (
+    item_key TEXT PRIMARY KEY COLLATE NOCASE,
+    added_at TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS oscar_lookups (
     title      TEXT    NOT NULL,
     year       INTEGER NOT NULL,
@@ -403,6 +407,12 @@ CREATE TABLE IF NOT EXISTS oscar_nominations (
     won      INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS ix_oscar_nominations_film ON oscar_nominations(title, year);
+CREATE TABLE IF NOT EXISTS film_problems (
+    film_key   TEXT PRIMARY KEY,
+    problems   TEXT NOT NULL,
+    note       TEXT,
+    flagged_at TEXT NOT NULL
+);
 CREATE VIRTUAL TABLE IF NOT EXISTS movies_fts USING fts5(title, genres, content='movies', content_rowid='id');
 CREATE TRIGGER IF NOT EXISTS movies_ai AFTER INSERT ON movies BEGIN
     INSERT INTO movies_fts(rowid, title, genres) VALUES (new.id, new.title, new.genres);

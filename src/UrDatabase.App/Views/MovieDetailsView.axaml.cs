@@ -161,9 +161,38 @@ namespace UrDatabase.Views
         /// </summary>
         public bool RenamedSomething { get; private set; }
 
+        /// <summary>
+        /// True once the watchlist button on this screen changed the list. Read by the caller after
+        /// <see cref="ShowAsync"/> returns, for the same reason as
+        /// <see cref="DownloadedSomething"/>: the Watchlist shelf behind it is now out of date.
+        /// </summary>
+        public bool WatchlistChanged { get; private set; }
+
+        /// <summary>
+        /// True once a problem was reported or cleared on this screen. Read by the caller after
+        /// <see cref="ShowAsync"/> returns, for the same reason as <see cref="RenamedSomething"/>:
+        /// the card behind it carries a badge that is now out of date.
+        /// </summary>
+        public bool ChangedProblems { get; private set; }
+
+        /// <summary>What has been reported about the film on screen. Null when nothing has.</summary>
+        private FilmProblemReport? _problemReport;
+
+        /// <summary>The film the report above belongs to, fixed when the screen was opened.</summary>
+        private string? _problemKey;
+
         public MovieDetailsView()
         {
             InitializeComponent();
+
+            foreach (var kind in FilmProblems.All)
+            {
+                ProblemChoices.Children.Add(new CheckBox
+                {
+                    Content = FilmProblems.Label(kind),
+                    Tag = kind
+                });
+            }
 
             // Tunnelling, so the arrows reach the open still before the focused button's
             // directional navigation takes them.
@@ -225,6 +254,8 @@ namespace UrDatabase.Views
             _cancelEnrichment = cancelEnrichment;
             DownloadedSomething = false;
             RenamedSomething = false;
+            WatchlistChanged = false;
+            ChangedProblems = false;
             RequestedNext = null;
             DataContext = vm;
 
@@ -251,7 +282,143 @@ namespace UrDatabase.Views
 
             LoadArtwork(_cts.Token);
 
+            _problemKey = vm.FilmKey;
+            ShowProblem(null);
+            _ = LoadProblemAsync(vm, _cts.Token);
+
             return _closed.Task;
+        }
+
+        /// <summary>
+        /// Reads what has been reported about the film, off the UI thread. A catalogue that cannot
+        /// be read leaves the banner hidden: the film is still worth showing.
+        /// </summary>
+        private async Task LoadProblemAsync(MovieDetailsVm vm, CancellationToken ct)
+        {
+            var key = _problemKey;
+            var dbPath = _dbPath;
+            if (string.IsNullOrWhiteSpace(key) || string.IsNullOrWhiteSpace(dbPath) || !File.Exists(dbPath)) return;
+
+            try
+            {
+                var report = await Task.Run(() =>
+                {
+                    using var conn = Database.Connect(dbPath);
+                    return FilmProblemStore.Load(conn, key);
+                }, ct);
+
+                if (ct.IsCancellationRequested || !ReferenceEquals(Vm, vm)) return;
+                ShowProblem(report);
+            }
+            catch (OperationCanceledException)
+            {
+                // The screen moved on.
+            }
+            catch (Exception ex)
+            {
+                await Task.Run(() => AppLog.Write("startup.log", $"could not read reported problems: {ex.Message}"));
+            }
+        }
+
+        private void ShowProblem(FilmProblemReport? report)
+        {
+            _problemReport = report is { IsEmpty: false } ? report : null;
+
+            ProblemBanner.IsVisible = _problemReport is not null;
+            ProblemSummary.Text = FilmProblems.Summary(_problemReport);
+            ProblemButton.Content = _problemReport is null ? "Report problem…" : "Edit problem…";
+
+            // Nowhere to write a report means nothing to offer: a screen shown without a catalogue
+            // path, or a film with no identity.
+            ProblemButton.IsEnabled = !string.IsNullOrWhiteSpace(_problemKey) && !string.IsNullOrWhiteSpace(_dbPath);
+            ProblemBannerClear.IsEnabled = ProblemButton.IsEnabled;
+        }
+
+        /// <summary>Fills the flyout from what is on record each time it opens.</summary>
+        private void ProblemFlyout_Opening(object? sender, EventArgs e)
+        {
+            var ticked = _problemReport?.Kinds ?? Array.Empty<FilmProblemKind>();
+
+            foreach (var box in ProblemChoices.Children.OfType<CheckBox>())
+                box.IsChecked = box.Tag is FilmProblemKind kind && ticked.Contains(kind);
+
+            ProblemNote.Text = _problemReport?.Note ?? "";
+            ProblemError.IsVisible = false;
+            ClearProblemButton.IsEnabled = _problemReport is not null;
+        }
+
+        private async void SaveProblem_Click(object? sender, RoutedEventArgs e)
+        {
+            if (string.IsNullOrWhiteSpace(_problemKey)) return;
+
+            var kinds = ProblemChoices.Children
+                .OfType<CheckBox>()
+                .Where(box => box.IsChecked == true && box.Tag is FilmProblemKind)
+                .Select(box => (FilmProblemKind)box.Tag!);
+
+            var report = new FilmProblemReport(_problemKey, FilmProblems.Normalise(kinds), ProblemNote.Text);
+
+            if (await WriteProblemAsync(report)) ProblemButton.Flyout?.Hide();
+        }
+
+        private async void ClearProblem_Click(object? sender, RoutedEventArgs e)
+        {
+            if (string.IsNullOrWhiteSpace(_problemKey)) return;
+
+            if (await WriteProblemAsync(new FilmProblemReport(_problemKey, Array.Empty<FilmProblemKind>(), null)))
+                ProblemButton.Flyout?.Hide();
+        }
+
+        /// <summary>
+        /// Saves a report, or clears the film when the report is empty, through the write lane
+        /// every other catalogue write takes. Returns false, and says so in the flyout, when it
+        /// could not be written.
+        /// </summary>
+        private async Task<bool> WriteProblemAsync(FilmProblemReport report)
+        {
+            var dbPath = _dbPath;
+            var vm = Vm;
+            if (string.IsNullOrWhiteSpace(dbPath) || vm is null) return false;
+
+            SaveProblemButton.IsEnabled = false;
+            ClearProblemButton.IsEnabled = false;
+            ProblemBannerClear.IsEnabled = false;
+
+            try
+            {
+                var saved = await Task.Run(async () =>
+                {
+                    using var conn = Database.Open(dbPath);
+                    await DatabaseWriteLane.RunAsync(conn, _ =>
+                    {
+                        FilmProblemStore.Save(conn, report);
+                        return Task.CompletedTask;
+                    }, _appLifetime);
+
+                    return FilmProblemStore.Load(conn, report.FilmKey);
+                });
+
+                ChangedProblems = true;
+                if (ReferenceEquals(Vm, vm)) ShowProblem(saved);
+                return true;
+            }
+            catch (OperationCanceledException)
+            {
+                return false;
+            }
+            catch (Exception ex)
+            {
+                await Task.Run(() => AppLog.Write("startup.log", $"could not save a reported problem: {ex.Message}"));
+                ProblemError.Text = "That could not be saved. Try again in a moment.";
+                ProblemError.IsVisible = true;
+                return false;
+            }
+            finally
+            {
+                SaveProblemButton.IsEnabled = true;
+                ProblemBannerClear.IsEnabled = ProblemButton.IsEnabled;
+                ClearProblemButton.IsEnabled = _problemReport is not null;
+            }
         }
 
         /// <summary>
@@ -362,6 +529,7 @@ namespace UrDatabase.Views
             LinkFileButton.IsVisible = !vm.IsRemote;
             CorrectMatchButton.IsVisible = !vm.IsRemote;
 
+            UpdateWatchlistButton();
             UpdateDownloadButton();
             UpdateUploadButton();
             UpdateRefreshButton();
@@ -1075,7 +1243,12 @@ namespace UrDatabase.Views
             try
             {
                 using var conn = Database.Open(_dbPath);
-                await ScanService.RecordSingleFileAsync(conn, path);
+                var movieId = await ScanService.RecordSingleFileAsync(conn, path);
+
+                // The film now has a row of its own. Move its Watchlist entry onto that row now,
+                // while the server id is still at hand. See Watchlist.Adoptions.
+                if (WatchlistStore.AdoptDownload(conn, Vm?.RemoteId, movieId))
+                    WatchlistChanged = true;
             }
             catch (Exception ex)
             {
@@ -1309,6 +1482,64 @@ namespace UrDatabase.Views
         /// and this control is no longer one.
         /// </summary>
         private Window? Owner() => TopLevel.GetTopLevel(this) as Window;
+
+        /// <summary>
+        /// The watchlist button says which list the film is on now, and is hidden when the film has
+        /// no identity to be stored under or there is no catalogue to store it in.
+        /// </summary>
+        private void UpdateWatchlistButton()
+        {
+            var keys = Vm is null ? Array.Empty<string>() : Watchlist.KeysFor(Vm.LocalId, Vm.RemoteId);
+
+            WatchlistButton.IsVisible = keys.Count > 0 && !string.IsNullOrWhiteSpace(_dbPath);
+            WatchlistButton.Content = Watchlist.ButtonLabel(Vm?.IsOnWatchlist == true);
+        }
+
+        /// <summary>
+        /// Puts the film on the watchlist, or takes it off. Written straight away rather than when
+        /// the screen closes, so a crash or a quit from here does not lose it.
+        /// </summary>
+        private async void Watchlist_Click(object? sender, RoutedEventArgs e)
+        {
+            var vm = Vm;
+            if (vm is null || string.IsNullOrWhiteSpace(_dbPath)) return;
+
+            var keys = Watchlist.KeysFor(vm.LocalId, vm.RemoteId);
+            if (keys.Count == 0) return;
+
+            var adding = !vm.IsOnWatchlist;
+            WatchlistButton.IsEnabled = false;
+
+            try
+            {
+                using var conn = Database.Open(_dbPath);
+                await DatabaseWriteLane.RunAsync(
+                    conn,
+                    _ =>
+                    {
+                        WatchlistStore.Set(conn, keys, adding);
+                        return Task.CompletedTask;
+                    },
+                    _appLifetime);
+
+                vm.IsOnWatchlist = adding;
+                WatchlistChanged = true;
+            }
+            catch (OperationCanceledException)
+            {
+                // The app is closing.
+            }
+            catch (Exception ex)
+            {
+                AppLog.Write("app.log", $"could not update the watchlist for {vm.Title}: {ex.Message}");
+                await MessageBoxWindow.ShowAsync(Owner(), "UrDatabase", "The Watchlist could not be updated.");
+            }
+            finally
+            {
+                WatchlistButton.IsEnabled = true;
+                if (ReferenceEquals(Vm, vm)) UpdateWatchlistButton();
+            }
+        }
 
         /// <summary>
         /// Lets the user say which film this actually is, and rebuilds the screen from their
