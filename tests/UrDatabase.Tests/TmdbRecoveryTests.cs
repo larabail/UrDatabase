@@ -83,6 +83,40 @@ public sealed class TmdbRecoveryTests : IDisposable
     }
 
     [Fact]
+    public async Task The_only_result_the_wrong_film_picker_would_list_is_matched_automatically()
+    {
+        // The picker runs the same year-scoped search and shows its results unfiltered. When
+        // that is a single film of the right year, the person has nothing to choose between.
+        using var handler = new FakeHttpMessageHandler(request =>
+        {
+            var url = request.RequestUri!.ToString();
+            if (url.Contains("/alternative_titles")) return Json("""{"titles":[{"title":"Das Leben der Anderen"}]}""");
+            if (url.Contains("/genre/movie/list")) return Json("""{"genres":[{"id":18,"name":"Drama"}]}""");
+            return url.Contains("year=2006")
+                ? Json("""{"results":[{"id":582,"title":"The Lives of Others","original_title":"Das Leben der Anderen","release_date":"2006-03-15","poster_path":"/582.jpg","genre_ids":[18]}]}""")
+                : Json("""{"results":[{"id":582,"title":"The Lives of Others","original_title":"Das Leben der Anderen","release_date":"2006-03-15"},{"id":9,"title":"Other Lives","release_date":"2014-01-01"}]}""");
+        });
+        using var tmdb = Service(handler);
+
+        var (id, poster, genres) = await tmdb.SearchFilmAsync("La vida de los otros", 2006, default);
+
+        Assert.Equal(582, id);
+        Assert.Equal("Drama", genres);
+        Assert.Equal(582, (await tmdb.SearchPosterAsync("La vida de los otros", 2006, default)).TmdbId);
+        Assert.Equal("/582.jpg", poster);
+    }
+
+    [Fact]
+    public async Task A_sole_result_is_not_accepted_for_a_film_catalogued_without_a_year()
+    {
+        using var handler = FakeHttpMessageHandler.Json(
+            """{"results":[{"id":582,"title":"The Lives of Others","release_date":"2006-03-15"}]}""");
+        using var tmdb = Service(handler);
+
+        Assert.Null((await tmdb.SearchPosterAsync("La vida de los otros", null, default)).TmdbId);
+    }
+
+    [Fact]
     public async Task A_sole_same_year_result_is_not_accepted_without_a_verified_title()
     {
         using var handler = FakeHttpMessageHandler.Routed(

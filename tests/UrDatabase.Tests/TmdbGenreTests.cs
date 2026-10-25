@@ -113,9 +113,10 @@ namespace UrDatabase.Tests
         [Fact]
         public async Task A_film_TMDB_cannot_confirm_reports_nothing_at_all()
         {
-            // The result names a different film, which TmdbMatch refuses — the rule that stops one
-            // film wearing another's poster, and which must stop it wearing its genres too.
-            using var handler = Routed(SearchHit("A Different Film Entirely", "28"));
+            // The result is a longer film that merely contains the title, which TmdbMatch refuses
+            // even as the only result of its year — the rule that stops one film wearing
+            // another's poster, and which must stop it wearing its genres too.
+            using var handler = Routed(SearchHit("The Return of Any Film", "28"));
             using var tmdb = Service(handler);
 
             var (id, poster, genres) = await tmdb.SearchFilmAsync("Any Film", 1999, CancellationToken.None);

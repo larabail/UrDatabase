@@ -249,6 +249,7 @@ namespace UrDatabase.Services
             if (string.IsNullOrWhiteSpace(_apiKey) || string.IsNullOrWhiteSpace(title)) return null;
 
             var candidates = new List<TmdbMatch.Candidate>();
+            var yearScoped = new List<(string Query, IReadOnlyList<TmdbMatch.Candidate> Results)>();
             var queries = new[] { title.Trim(), FilenameParser.CleanText(title) }
                 .Where(query => TmdbMatch.NormalizeTitle(query).Length > 0)
                 .Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
@@ -257,6 +258,7 @@ namespace UrDatabase.Services
             {
                 var results = await SearchAsync(query, year, ct);
                 candidates.AddRange(results);
+                if (year.HasValue) yearScoped.Add((query, results));
                 var match = TmdbMatch.ChooseBest(results, query, year);
                 if (match is not null) return match;
 
@@ -278,10 +280,9 @@ namespace UrDatabase.Services
             var plausible = candidates.Where(candidate => candidate.Id > 0 && candidate.Year.HasValue
                     && Math.Abs(candidate.Year.Value - year.Value) <= 1)
                 .DistinctBy(candidate => candidate.Id).Take(4).ToArray();
-            if (plausible.Length > 3) return null;
 
             var verified = new List<TmdbMatch.Candidate>();
-            foreach (var candidate in plausible)
+            foreach (var candidate in plausible.Length > 3 ? Array.Empty<TmdbMatch.Candidate>() : plausible)
             {
                 using var response = await GetWithRetryAsync(
                     $"{ApiBaseUrl}/movie/{candidate.Id}/alternative_titles?api_key={Uri.EscapeDataString(_apiKey)}", ct);
@@ -298,7 +299,16 @@ namespace UrDatabase.Services
 
             // Two candidates sharing an alias need a person, not a popularity tie-break.
             var exact = verified.Where(candidate => candidate.Year == year).ToArray();
-            return exact.Length == 1 ? exact[0] : verified.Count == 1 ? verified[0] : null;
+            if (verified.Count > 0) return exact.Length == 1 ? exact[0] : verified.Count == 1 ? verified[0] : null;
+
+            // Last, because it needs no request: the year held one film and nothing contradicts
+            // it. This is what the "Wrong film?" picker would have shown as its only choice — see
+            // TmdbMatch.ChooseSoleResult for the cases it still refuses. Two queries that each
+            // found a different lone film are a choice for a person.
+            var sole = yearScoped
+                .Select(scoped => TmdbMatch.ChooseSoleResult(scoped.Results, scoped.Query, year, candidates))
+                .OfType<TmdbMatch.Candidate>().DistinctBy(candidate => candidate.Id).ToArray();
+            return sole.Length == 1 ? sole[0] : null;
         }
 
         private sealed class TmdbAlternativeTitles

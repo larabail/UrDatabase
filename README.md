@@ -310,7 +310,14 @@ It runs on Windows and macOS from one codebase, built with
   missing. If an exact-year search misses, the lookup retries without that
   filter but still requires a matching title and a release year within one year.
   It also cleans release-name noise and verifies translated titles against
-  TMDB's alternative titles rather than blindly accepting a lone result.
+  TMDB's alternative titles. When none of that confirms a title, a search scoped
+  to the catalogued year that finds exactly one film, dated within a year of it,
+  is accepted — that is the single choice **Wrong film?** would have offered. It
+  is still refused when the film has no year, when that result merely contains
+  the title with other words in front (`El Drama` is not `El Sabor del Drama`),
+  or when another result carries the catalogued title exactly in a different
+  year. Films left unmatched by an earlier version are tried again on the next
+  launch or **Refresh**, because a no-match is never stored.
 
   TMDB requests share a ten-per-second pace across the app. An HTTP 429 pauses
   all TMDB metadata lookups for the provider's `Retry-After` period, or uses
@@ -1754,10 +1761,12 @@ the real directory exactly as it always has.
 Stated plainly, so nobody has to find out by using it:
 
 - **A film TMDB cannot confirm still needs a manual choice.** Automatic matching
-  now retries cleaned titles and unfiltered-year searches, and verifies
-  alternative titles, but refuses conflicting years and ambiguous remakes.
-  A lone result is not proof of identity. If a film is still unmatched, open it
-  and use **Wrong film?** rather than accepting another film's metadata.
+  now retries cleaned titles and unfiltered-year searches, verifies alternative
+  titles, and accepts the only film a year-scoped search finds, but refuses
+  conflicting years, ambiguous remakes, a lone result that only contains the
+  title inside a longer one, and any lone result for a film with no year. If a
+  film is still unmatched, open it and use **Wrong film?** rather than accepting
+  another film's metadata.
 - **Correcting a match does not correct the year, and there is still no way to
   rename a film by hand.** Choosing the right TMDB film now renames it — a film
   catalogued as `S W A T` becomes `S.W.A.T.` in the library, in search and on the
