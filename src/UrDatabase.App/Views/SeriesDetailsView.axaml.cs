@@ -40,6 +40,7 @@ namespace UrDatabase.Views
         private TaskCompletionSource? _closed;
 
         private SeriesLoader? _loader;
+        private LocalSeriesLoader? _localLoader;
         private JellyfinClient? _jellyfin;
         private Func<string?, CancellationToken, Task<double?>>? _loadRating;
         private Action? _cancelEnrichment;
@@ -92,6 +93,10 @@ namespace UrDatabase.Views
         /// The season to open on, when the caller knows which one is wanted.
         /// </param>
         /// <param name="loadRating">Retries the IMDb lookup during a manual refresh.</param>
+        /// <param name="localLoader">
+        /// Where a programme on this disk reads its episodes from. Consulted only when
+        /// <see cref="SeriesDetailsVm.IsLocal"/>; a server programme ignores it.
+        /// </param>
         public Task ShowAsync(
             SeriesDetailsVm vm,
             SeriesLoader? loader = null,
@@ -99,12 +104,14 @@ namespace UrDatabase.Views
             CancellationToken appLifetime = default,
             int? openAtSeason = null,
             Func<string?, CancellationToken, Task<double?>>? loadRating = null,
-            Action? cancelEnrichment = null)
+            Action? cancelEnrichment = null,
+            LocalSeriesLoader? localLoader = null)
         {
             if (_closed is not null) Close();
 
             Vm = vm;
             _loader = loader;
+            _localLoader = localLoader;
             _jellyfin = jellyfin;
             _loadRating = loadRating;
             _cancelEnrichment = cancelEnrichment;
@@ -185,11 +192,20 @@ namespace UrDatabase.Views
             TitleText.Text = vm.Title;
             FactsList.ItemsSource = DetailFacts.For(vm);
 
+            // The server is credited only for what it supplied. A programme on this disk was named
+            // by the scan from its own folders, and saying otherwise would send somebody looking
+            // for a server setting that has nothing to do with it.
+            AttributionText.Text = vm.IsLocal
+                ? "Found on this computer: names and episode numbers come from the files and the folders they are in."
+                : "Metadata and artwork supplied by your Jellyfin server. IMDb rating retrieved from the OMDb API; neither IMDb nor OMDb endorses this application.";
+
             GenresText.Text = vm.Genres ?? "";
             GenresText.IsVisible = !string.IsNullOrWhiteSpace(vm.Genres);
 
             OverviewText.Text = string.IsNullOrWhiteSpace(vm.Overview)
-                ? "The server has no summary for this programme."
+                ? vm.IsLocal
+                    ? "No summary yet: this programme was found on this computer and has not been looked up."
+                    : "The server has no summary for this programme."
                 : vm.Overview;
 
             var cast = vm.TopCast
@@ -199,18 +215,27 @@ namespace UrDatabase.Views
                 .ToList();
 
             CastList.ItemsSource = cast;
-            NoCastText.Text = MissingMetadata.CreditsNotice(isRemote: true, tmdbConfigured: false);
+            NoCastText.Text = vm.IsLocal
+                ? "Not known yet for a programme found on this computer."
+                : MissingMetadata.CreditsNotice(isRemote: true, tmdbConfigured: false);
             NoCastText.IsVisible = cast.Count == 0;
         }
 
         /// <summary>
         /// Fills the list from the cache, then from the server. Both halves land here rather than
         /// in <see cref="SeriesLoader"/> because only this screen knows whether it is still the
-        /// screen the answer was asked for.
+        /// screen the answer was asked for. A programme on this disk has only the first half: the
+        /// catalogue is the record, and there is nothing further to ask.
         /// </summary>
         private async Task LoadEpisodesAsync(
             SeriesDetailsVm vm, SeriesLoader? loader, SeriesRefreshSession session, CancellationToken ct)
         {
+            if (vm.IsLocal)
+            {
+                await ShowLocalEpisodesAsync(vm, session, ct);
+                return;
+            }
+
             if (loader is null)
             {
                 if (IsCurrent(session)) ShowEpisodes(SeriesContents.Empty, cached: false);
@@ -235,6 +260,7 @@ namespace UrDatabase.Views
             var client = _jellyfin;
             var loadRating = _loadRating;
             if (session is null || vm is null || !IsCurrent(session) || session.IsBusy) return Task.CompletedTask;
+            if (vm.IsLocal) return RefreshLocalAsync(vm, session);
             if (loader is null || client is null)
             {
                 SetRefreshNote("No Jellyfin server is configured, so this programme cannot be refreshed.");
@@ -304,6 +330,44 @@ namespace UrDatabase.Views
         private bool IsCurrent(SeriesRefreshSession session) =>
             ReferenceEquals(_session, session) && session.IsCurrent && IsShowing;
 
+        /// <summary>
+        /// Reads a local programme's episodes off the catalogue and lists them. Off the UI thread,
+        /// because it is a query, and checked against the session afterwards like every other
+        /// answer this screen waits for.
+        /// </summary>
+        private async Task ShowLocalEpisodesAsync(SeriesDetailsVm vm, SeriesRefreshSession session, CancellationToken ct)
+        {
+            var loader = _localLoader;
+            if (loader is null)
+            {
+                if (IsCurrent(session)) ShowGroups(Array.Empty<SeasonGroup>(), "");
+                return;
+            }
+
+            var episodes = await Task.Run(() => loader.Load(vm.LocalId), ct);
+            if (!IsCurrent(session)) return;
+
+            var groups = SeriesGrouping.GroupLocal(episodes);
+            var missing = episodes.Count(e => !e.IsAvailable);
+            var described = SeriesGrouping.Describe(groups);
+
+            ShowGroups(groups, missing == 0
+                ? $"{described} · on this computer. Play opens an episode in your video player."
+                : $"{described} · {missing.ToString(System.Globalization.CultureInfo.InvariantCulture)} not found by the last scan.");
+        }
+
+        /// <summary>
+        /// Refreshing a local programme re-reads what the catalogue says, which changes whenever a
+        /// scan has run since the screen opened. It never scans: that is the library's job, and a
+        /// scan started from here would walk every watch folder to answer a question about one show.
+        /// </summary>
+        private Task RefreshLocalAsync(SeriesDetailsVm vm, SeriesRefreshSession session) =>
+            RunPageWorkAsync(session, async ct =>
+            {
+                await ShowLocalEpisodesAsync(vm, session, ct);
+                if (IsCurrent(session)) SetRefreshNote("Episodes re-read from the catalogue.");
+            }, manual: true);
+
         private async void Refresh_Click(object? sender, RoutedEventArgs e) => await RefreshAsync();
 
         /// <summary>
@@ -314,7 +378,27 @@ namespace UrDatabase.Views
         private void ShowEpisodes(SeriesContents contents, bool cached)
         {
             var groups = SeriesGrouping.Group(contents.Seasons, contents.Episodes);
+            var empty = groups.Sum(g => g.Episodes.Count) == 0;
 
+            NoEpisodesText.Text = _jellyfin is null
+                ? "No Jellyfin server is configured, so this programme has no episodes to list."
+                : "The server listed no episodes for this programme.";
+
+            var described = SeriesGrouping.Describe(groups);
+
+            ShowGroups(groups, empty
+                ? ""
+                : cached
+                    ? $"{described} · from the last sync; checking the server…"
+                    : $"{described} · Play opens an episode in VLC or IINA.");
+        }
+
+        /// <summary>
+        /// Puts a list of seasons on screen, wherever it came from, keeping the season the user was
+        /// reading selected when it still exists.
+        /// </summary>
+        private void ShowGroups(IReadOnlyList<SeasonGroup> groups, string note)
+        {
             Seasons.Clear();
             foreach (var group in groups) Seasons.Add(group);
 
@@ -329,21 +413,10 @@ namespace UrDatabase.Views
             var empty = groups.Sum(g => g.Episodes.Count) == 0;
 
             NoEpisodesText.IsVisible = empty;
-            NoEpisodesText.Text = _jellyfin is null
-                ? "No Jellyfin server is configured, so this programme has no episodes to list."
-                : "The server listed no episodes for this programme.";
+            if (empty && Vm?.IsLocal == true)
+                NoEpisodesText.Text = "The catalogue holds no episode of this programme that a scan has found.";
 
-            if (empty)
-            {
-                SetEpisodeNote("");
-                return;
-            }
-
-            var described = SeriesGrouping.Describe(groups);
-
-            SetEpisodeNote(cached
-                ? $"{described} · from the last sync; checking the server…"
-                : $"{described} · Play opens an episode in VLC or IINA.");
+            SetEpisodeNote(empty ? "" : note);
         }
 
         private void SelectSeason(SeasonGroup? season)
@@ -386,6 +459,13 @@ namespace UrDatabase.Views
         {
             if (!e.GetCurrentPoint(sender as Control).Properties.IsLeftButtonPressed) return;
             if ((sender as Control)?.DataContext is not EpisodeRow episode) return;
+
+            if (Vm?.IsLocal == true)
+            {
+                await PlayLocalEpisodeAsync(episode);
+                return;
+            }
+
             if (string.IsNullOrWhiteSpace(episode.ItemId)) return;
 
             if (_jellyfin is null)
@@ -434,6 +514,34 @@ namespace UrDatabase.Views
             {
                 // Deliberately not the URL, which contains an access token.
                 AppLog.Write("jellyfin.log", $"playback failed: {JellyfinClient.Redact(ex.Message)}");
+                await MessageBoxWindow.ShowAsync(Owner(), "UrDatabase", $"Could not start playback:{Environment.NewLine}{ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Plays an episode on this disk, through the same door a local film's Play goes through:
+        /// the path is checked against the video types the scanner records and against the disk,
+        /// then handed to the operating system's player. Nothing streams, so nothing is reported.
+        /// </summary>
+        private async Task PlayLocalEpisodeAsync(EpisodeRow episode)
+        {
+            var refusal = episode.IsAvailable
+                ? PlayTargetResolver.DescribeLinkRefusal(episode.FilePath)
+                : "The last scan could not find this episode. Is its drive connected?";
+
+            if (refusal is not null)
+            {
+                await MessageBoxWindow.ShowAsync(Owner(), "UrDatabase", refusal);
+                return;
+            }
+
+            try
+            {
+                FileLauncher.Open(episode.FilePath!);
+            }
+            catch (Exception ex)
+            {
+                AppLog.Write("app.log", $"could not open an episode: {ex.Message}");
                 await MessageBoxWindow.ShowAsync(Owner(), "UrDatabase", $"Could not start playback:{Environment.NewLine}{ex.Message}");
             }
         }

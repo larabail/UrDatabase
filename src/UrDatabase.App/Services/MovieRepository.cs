@@ -71,6 +71,40 @@ WHERE movies_fts MATCH @q
 ORDER BY rank";
 
         /// <summary>
+        /// A local programme as a card: what it is called, how many seasons and episodes this disk
+        /// holds of it, and the same two file facts a film carries, taken over all of its episodes.
+        ///
+        /// Counted from episodes that have a file, which is every episode a scan made — but a file
+        /// re-linked by hand to a film leaves its episode behind, and that episode is not here.
+        /// A programme with no such episode at all is not a card: there is nothing in it to play.
+        /// </summary>
+        private const string SeriesColumns = @"
+SELECT s.id AS Id, s.title AS Title, s.year AS Year, s.genres AS Genres, s.poster_path AS PosterPath,
+       1 AS Kind,
+       (SELECT COUNT(DISTINCT IFNULL(e.season_number, -1)) FROM episodes e
+        WHERE e.series_id = s.id AND EXISTS (SELECT 1 FROM files f WHERE f.episode_id = e.id)) AS SeasonCount,
+       (SELECT COUNT(*) FROM episodes e
+        WHERE e.series_id = s.id AND EXISTS (SELECT 1 FROM files f WHERE f.episode_id = e.id)) AS EpisodeCount,
+       EXISTS (SELECT 1 FROM episodes e JOIN files f ON f.episode_id = e.id
+               WHERE e.series_id = s.id AND f.missing_since IS NULL)     AS HasFileHere,
+       EXISTS (SELECT 1 FROM episodes e JOIN files f ON f.episode_id = e.id
+               WHERE e.series_id = s.id AND f.missing_since IS NOT NULL) AS HasFileMissing";
+
+        private const string SeriesHasEpisodes = @"
+EXISTS (SELECT 1 FROM episodes e JOIN files f ON f.episode_id = e.id WHERE e.series_id = s.id)";
+
+        private const string SeriesListSql = SeriesColumns + @"
+FROM series s
+WHERE " + SeriesHasEpisodes + @"
+ORDER BY COALESCE(s.year,0) DESC, s.title";
+
+        private const string SeriesSearchSql = SeriesColumns + @"
+FROM series_fts sf
+JOIN series s ON s.id = sf.rowid
+WHERE series_fts MATCH @q AND " + SeriesHasEpisodes + @"
+ORDER BY rank";
+
+        /// <summary>
         /// Whether this repository has brought the catalogue up to the current schema yet. See
         /// <see cref="Query"/>.
         /// </summary>
@@ -136,9 +170,19 @@ ORDER BY rank";
 
             ct.ThrowIfCancellationRequested();
 
-            return match is null
+            // Films first, then programmes. The order within the list is the caller's to decide —
+            // JellyfinLibrary.Merge sorts the whole library once — so appending is enough.
+            var films = match is null
                 ? conn.Query<UiMovie>(ListSql).ToList()
                 : conn.Query<UiMovie>(SearchSql, new { q = match }).ToList();
+
+            ct.ThrowIfCancellationRequested();
+
+            films.AddRange(match is null
+                ? conn.Query<UiMovie>(SeriesListSql)
+                : conn.Query<UiMovie>(SeriesSearchSql, new { q = match }));
+
+            return films;
         }
     }
 }

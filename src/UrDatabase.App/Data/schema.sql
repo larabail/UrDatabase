@@ -57,12 +57,47 @@ CREATE TABLE IF NOT EXISTS files (
     -- not find it. Marked, never deleted: an unmounted drive and a deleted file
     -- look identical from here, and only one of them should cost you a
     -- catalogue. NULL means present as far as the last scan could tell.
-    missing_since     TEXT
+    missing_since     TEXT,
+    -- The episode this file is, when the scan read it as one. A file is a film or an episode and
+    -- never both: when this is set, movie_id is NULL. Its index is created by Database.Migrate,
+    -- because an older library gains this column there, after this script has run.
+    episode_id        INTEGER REFERENCES episodes(id) ON DELETE SET NULL,
+    -- 1 when a person linked this file to a film by hand. A scan re-files an episode-shaped
+    -- file it once catalogued as a film, and must not undo a person's say-so the same way.
+    linked_by_hand    INTEGER NOT NULL DEFAULT 0
 );
 
 -- Required for the scanner's ON CONFLICT(file_path) upsert.
 CREATE UNIQUE INDEX IF NOT EXISTS ux_files_path ON files(file_path);
 CREATE INDEX IF NOT EXISTS ix_files_movie ON files(movie_id);
+
+-- A programme on this disk, made of the episodes a scan found for it. Named by the scan, from
+-- the folder or the filename, exactly as a film is: the identity a re-scan resolves against.
+-- genres and poster_path stay NULL until something identifies the programme.
+CREATE TABLE IF NOT EXISTS series (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    title       TEXT    NOT NULL,
+    year        INTEGER,
+    genres      TEXT,
+    poster_path TEXT,
+    created_at  TEXT
+);
+
+-- One episode of a local programme. Files hang off it through files.episode_id, so two prints
+-- of one episode are one row here, as two prints of a film are one row in movies. A season
+-- may be NULL for a numbering that has none; the unique index folds that NULL to -1, because
+-- SQLite treats every NULL as distinct and two copies of an unnumbered episode would otherwise
+-- become two rows.
+CREATE TABLE IF NOT EXISTS episodes (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    series_id      INTEGER NOT NULL REFERENCES series(id) ON DELETE CASCADE,
+    season_number  INTEGER,
+    episode_number INTEGER NOT NULL,
+    title          TEXT
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS ux_episodes_number
+    ON episodes(series_id, IFNULL(season_number, -1), episode_number);
 
 -- One row per scan: what it covered, when, and how it ended.
 --
@@ -400,4 +435,25 @@ END;
 CREATE TRIGGER IF NOT EXISTS movies_au AFTER UPDATE ON movies BEGIN
     INSERT INTO movies_fts(movies_fts, rowid, title, genres) VALUES ('delete', old.id, old.title, old.genres);
     INSERT INTO movies_fts(rowid, title, genres) VALUES (new.id, new.title, new.genres);
+END;
+
+-- The same index over local programmes, so a search finds a series by name as it finds a film.
+CREATE VIRTUAL TABLE IF NOT EXISTS series_fts USING fts5(
+    title,
+    genres,
+    content='series',
+    content_rowid='id'
+);
+
+CREATE TRIGGER IF NOT EXISTS series_ai AFTER INSERT ON series BEGIN
+    INSERT INTO series_fts(rowid, title, genres) VALUES (new.id, new.title, new.genres);
+END;
+
+CREATE TRIGGER IF NOT EXISTS series_ad AFTER DELETE ON series BEGIN
+    INSERT INTO series_fts(series_fts, rowid, title, genres) VALUES ('delete', old.id, old.title, old.genres);
+END;
+
+CREATE TRIGGER IF NOT EXISTS series_au AFTER UPDATE ON series BEGIN
+    INSERT INTO series_fts(series_fts, rowid, title, genres) VALUES ('delete', old.id, old.title, old.genres);
+    INSERT INTO series_fts(rowid, title, genres) VALUES (new.id, new.title, new.genres);
 END;

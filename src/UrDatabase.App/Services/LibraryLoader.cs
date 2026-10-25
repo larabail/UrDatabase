@@ -138,13 +138,18 @@ namespace UrDatabase.Services
 
             // Carried rather than only rendered, because artwork keeps arriving after this read
             // has been put on screen and the line has to be able to say so.
+            // Films and programmes counted apart, as the server's are: the poster count is a
+            // measure of the film pass, which a programme never enters.
+            var shownFilms = shown.Where(x => x.IsFilm).ToList();
+
             var tally = new LibraryTally(
-                LocalCount: shown.Count,
-                LocalWithPosters: shown.Count(x => !string.IsNullOrWhiteSpace(x.PosterPath)),
+                LocalCount: shownFilms.Count,
+                LocalWithPosters: shownFilms.Count(x => !string.IsNullOrWhiteSpace(x.PosterPath)),
                 RemoteCount: matched.Count(x => x.IsFilm),
                 HasLocalDatabase: _repository.Exists,
                 DatabasePath: _repository.DatabasePath,
-                RemoteSeriesCount: matched.Count(x => x.IsSeries));
+                RemoteSeriesCount: matched.Count(x => x.IsSeries),
+                LocalSeriesCount: shown.Count(x => x.IsSeries));
 
             return new LibraryView(query, shown, matched, all, failure ?? tally.Describe(), failure is null ? tally : null);
         }

@@ -51,7 +51,8 @@ It runs on Windows and macOS from one codebase, built with
   Series share the genre shelves with films, because Jellyfin gives a programme
   real genres and it belongs in Drama rather than in a wing of its own — but
   every series card carries a **Series** badge and its season count where a film
-  shows its year, so the two are mixed but never silently. Nothing is both, so
+  shows its year, so the two are mixed but never silently. A programme found on
+  this computer is a series card exactly like a server's. Nothing is both, so
   unlike the row above these counts do add up. It is hidden entirely on a library
   of films only, and on one of television only: a permanent "Television 0" beside
   "Films 412" is a control whose only possible use is to empty the window
@@ -166,6 +167,23 @@ It runs on Windows and macOS from one codebase, built with
   fetched they are cached, so a programme you have already opened still lists its
   episodes with the server switched off (`Services/SeriesLoader`,
   `Services/SeriesGrouping`, `Views/SeriesDetailsView`).
+- **Television on this computer, too.** A scan reads an episode where it sees
+  one — `Show.S01E02.mkv`, `Show 1x02.mkv`, or `Show/Season 01/02 - Title.mkv`,
+  with a `Specials` folder read as season zero — and files it under its
+  programme instead of cataloguing it as a film. Each programme is one **Series**
+  card on the shelves, with how many seasons this disk holds of it; opening it
+  lists those seasons and their episodes, and clicking an episode opens the file
+  in your video player, as Play does for a film. An episode a scan can no longer
+  find stays listed, dimmed, and says so. Two spellings of a programme's name are
+  one programme by the same rules that make them one film, and a folder named
+  `Fargo (2014)` supplies the year. A library scanned before this existed is put
+  right by its next scan: every episode it had catalogued as a film is re-filed
+  under its programme, and the film row it leaves empty is removed — your ratings
+  and watch log are kept separately and are not touched. A file you linked to a
+  film by hand stays that film. Anything the parser cannot read with confidence —
+  anime's absolute numbering, a daily show's dates — is still catalogued as a
+  film rather than guessed at (`Services/EpisodeParser`, `Services/ScanService`,
+  `Services/EpisodeCatalogue`, `Services/LocalSeriesLoader`).
 - **What the copy actually is, beside the year and the runtime.** A row of small
   badges says how big the picture is — `4K`, `2K`, `1080p`, `720p`, `SD` — along
   with its dynamic range, video codec, audio track, size on disk, and the
@@ -915,8 +933,13 @@ id: Jellyfin reports a TMDB *television* id for one, which is a different
 catalogue with its own numbering, and matching a film to it by number would be
 wrong in a way nobody would spot.
 
-There is no download for an episode, and no local television. See
-[Known gaps](#known-gaps).
+There is no download for an episode. See [Known gaps](#known-gaps).
+
+A programme that is both on the server and on this computer is two cards, one
+of each: a scanned programme has no identity yet that could be matched against
+the server's, and matching on its name alone is the mistake the paragraph above
+refuses to make. Television found on this disk is described under
+[Features](#features).
 
 #### A film that is in both places
 
@@ -1401,7 +1424,8 @@ no test in this repository opens a connection (`Services/JellyfinUpload`,
 
 Point `DatabasePath` anywhere and the app creates what it needs on first
 launch. `src/UrDatabase.App/Data/schema.sql` is the full schema — the `movies`
-and `files` tables, the `scans` table each scan records itself in, the
+and `files` tables, the `series` and `episodes` a scan files local television
+under, the `scans` table each scan records itself in, the
 `jellyfin_movies` cache and its television counterparts `jellyfin_series`,
 `jellyfin_seasons` and `jellyfin_episodes`, the `jellyfin_resume` positions
 behind the Continue watching row and the `jellyfin_resume_dismissals` that are
@@ -1409,8 +1433,8 @@ taken back out of it, the `watchlist` behind the Watchlist shelf, the
 `film_problems` you have reported about a copy, the `film_ratings` and
 `film_viewings` that hold your own ratings and watch log, the `known_drives`
 every disk the drive check has seen is remembered in, the
-`movies_fts` FTS5 index and the
-triggers that keep it current — and every statement is `IF NOT EXISTS`, so it
+`movies_fts` and `series_fts` FTS5 indexes and the
+triggers that keep them current — and every statement is `IF NOT EXISTS`, so it
 runs against a library you already have without touching your data.
 
 Television is cached in three tables of its own rather than as a `kind` column on
@@ -1419,6 +1443,13 @@ so a shared table would carry a column that is always null for one of them and a
 discriminator every query would have to remember to filter on. The seasons and
 episodes tables are the only ones in the app written outside a sync: they are
 filled when a programme is opened, one series at a time.
+
+Local television follows the same reasoning. A file is a film or an episode:
+`files.movie_id` or `files.episode_id`, never both. An episode is one row in
+`episodes` however many copies of it there are, as a film is one row in
+`movies`, and `series` holds the programme. `files.linked_by_hand` records a
+link a person made with **Link File…**, which is what stops a scan re-filing
+that file as the episode its name looks like.
 
 `IF NOT EXISTS` covers a whole new table and does nothing at all for a new
 column on a table that already exists, so `Database.Migrate` runs straight after
@@ -1830,13 +1861,17 @@ Stated plainly, so nobody has to find out by using it:
   is what fixes that by hand. Nor does such a card offer the stream as a
   fallback: it plays the file on this disk, and says the server has it rather
   than doing anything with that.
-- **Television is a Jellyfin feature only.** A server's series, seasons and
-  episodes are browsable and playable, but nothing on this disk is. The filename
-  parser has no concept of television, so `Show.S01E02.mkv` in a watch folder is
-  still catalogued as an oddly titled film, and a local mixed library will look
-  wrong rather than broken. Teaching the parser to recognise an episode is not
-  enough on its own — a scanned episode needs a series to belong to, and the
-  catalogue has no table for one — so it was left out rather than half done.
+- **Television on this computer is named by its files, and only by them.** A
+  scan now files `Show.S01E02.mkv` under its programme instead of cataloguing it
+  as a film, but nothing looks the programme up yet: it has no poster, no plot,
+  no genres — so it sits in **Uncategorised** — and its episodes are called what
+  their filenames call them. There is no **Wrong film?** for a series either.
+  The parser declines what it cannot read with confidence: absolute numbering
+  (`Show - 137.mkv`, ordinary for anime), date-named daily shows and three-digit
+  `102` numbering all stay films. A file holding two episodes (`S01E02E03`) is
+  filed as the first of them. A programme that is both here and on the server is
+  two cards. A local programme cannot go on the Watchlist yet, and an episode
+  played from this disk is not logged anywhere — a local film is not either.
 - **An episode cannot be downloaded.** **Download** keeps a copy of a server
   *film* so it plays with the server switched off; there is no equivalent for an
   episode, or for a season. Episodes stream or they do not play.

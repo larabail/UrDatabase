@@ -22,7 +22,8 @@ namespace UrDatabase.Models
         int RemoteCount,
         bool HasLocalDatabase,
         string DatabasePath,
-        int RemoteSeriesCount)
+        int RemoteSeriesCount,
+        int LocalSeriesCount = 0)
     {
         /// <summary>The same read, with a fresh count of how much of it has artwork.</summary>
         public LibraryTally WithPosters(int withPosters) => this with { LocalWithPosters = withPosters };
@@ -33,6 +34,7 @@ namespace UrDatabase.Models
             remoteCount: RemoteCount,
             hasLocalDatabase: HasLocalDatabase,
             databasePath: DatabasePath,
-            remoteSeriesCount: RemoteSeriesCount);
+            remoteSeriesCount: RemoteSeriesCount,
+            localSeriesCount: LocalSeriesCount);
     }
 }

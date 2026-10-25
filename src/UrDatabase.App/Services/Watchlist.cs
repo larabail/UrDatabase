@@ -41,7 +41,9 @@ namespace UrDatabase.Services
         /// <summary>Whether a card is something that can be put on the watchlist at all.</summary>
         /// <remarks>
         /// A card with no stable identity is refused rather than stored under a key that names
-        /// nothing: a local row with no id, or a server card with no item id.
+        /// nothing: a local row with no id, or a server card with no item id. So is a programme on
+        /// this disk, for now: the shelf and the store behind it resolve a local key to a film row,
+        /// and a series id would name whichever film happened to share its number.
         /// </remarks>
         public static bool CanHold(UiMovie? card)
         {
@@ -49,7 +51,7 @@ namespace UrDatabase.Services
 
             return card.Source == MovieSource.Jellyfin
                 ? !string.IsNullOrWhiteSpace(card.RemoteId)
-                : card.Id > 0;
+                : card.IsFilm && card.Id > 0;
         }
 
         /// <summary>

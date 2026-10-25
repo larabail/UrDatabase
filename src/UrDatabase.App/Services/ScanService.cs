@@ -104,11 +104,14 @@ namespace UrDatabase.Services
 
             var movies = await LoadMovieIndexAsync(conn);
             var knownMovies = movies.Count;
+            var episodes = await EpisodeCatalogue.LoadAsync(conn);
+            var knownSeries = episodes.SeriesCount;
             var files = await ScanFileIndex.LoadAsync(conn);
 
             var counts = new ScanCounts();
             var unreadable = new List<string>();
             var status = ScanStatus.Completed;
+            var catalogue = new Catalogue(movies, episodes);
 
             try
             {
@@ -117,7 +120,7 @@ namespace UrDatabase.Services
                     if (status == ScanStatus.Cancelled) break;
                     progress?.Report($"Scanning: {folder}");
 
-                    if (!await ScanFolderAsync(conn, folder, scanId, movies, files, counts, unreadable, progress, ct))
+                    if (!await ScanFolderAsync(conn, folder, scanId, catalogue, files, counts, unreadable, progress, ct))
                         status = ScanStatus.Cancelled;
                 }
 
@@ -149,11 +152,13 @@ namespace UrDatabase.Services
             {
                 await CloseQuietlyAsync(
                     conn,
-                    ScanResult.From(scanId, ScanStatus.Failed, counts, movies.Count - knownMovies, walked, skipped));
+                    ScanResult.From(scanId, ScanStatus.Failed, counts, movies.Count - knownMovies, walked, skipped,
+                        episodes.SeriesCount - knownSeries));
                 throw;
             }
 
-            var result = ScanResult.From(scanId, status, counts, movies.Count - knownMovies, walked, skipped);
+            var result = ScanResult.From(scanId, status, counts, movies.Count - knownMovies, walked, skipped,
+                episodes.SeriesCount - knownSeries);
             await ScanSessions.FinishAsync(conn, result, DateTimeOffset.UtcNow);
 
             progress?.Report(result.Summary);
@@ -171,7 +176,7 @@ namespace UrDatabase.Services
             SqliteConnection conn,
             string folder,
             long scanId,
-            MovieIndex movies,
+            Catalogue catalogue,
             ScanFileIndex files,
             ScanCounts counts,
             ICollection<string> unreadable,
@@ -213,7 +218,7 @@ namespace UrDatabase.Services
 
                     try
                     {
-                        Tally(counts, await RecordFileAsync(conn, tx, movies, files, scanId, path));
+                        Tally(counts, await RecordFileAsync(conn, tx, catalogue, files, counts, scanId, path));
                     }
                     catch (Exception ex)
                     {
@@ -304,6 +309,48 @@ WHERE id = @id;
 ";
 
         /// <summary>
+        /// Writes one file and the film or episode it is, and says what became of it.
+        /// </summary>
+        private static async Task<FileOutcome> RecordFileAsync(
+            SqliteConnection conn,
+            SqliteTransaction tx,
+            Catalogue catalogue,
+            ScanFileIndex files,
+            ScanCounts counts,
+            long scanId,
+            string path)
+        {
+            var existing = files.ByPath(path);
+
+            // Two watch folders where one contains the other. Doing the work twice would count the
+            // same file twice and report a library as double the size it is.
+            if (existing is not null && files.WasSeen(existing)) return FileOutcome.AlreadySeen;
+
+            // An episode first, because the film parser has no idea what one is: handed
+            // "Show.S01E02.mkv" it produces a film called something like "Show", and every episode
+            // of the programme lands on that one oddly named film. EpisodeParser is conservative —
+            // it declines anything it cannot read with confidence — so a decline falls through to
+            // exactly what happened to every file before it existed.
+            //
+            // A file a person linked to a film by hand stays that film. Their say-so is better
+            // evidence than a filename, which is the rule the film path already keeps.
+            if (existing is not { LinkedByHand: true, MovieId: not null }
+                && EpisodeParser.TryParse(path, out var parsed))
+            {
+                var episodeId = await EpisodeForFileAsync(conn, tx, catalogue.Episodes, parsed);
+                return await RecordEpisodeFileAsync(conn, tx, catalogue.Movies, files, counts, scanId, path, existing, episodeId);
+            }
+
+            // Filed as an episode by an earlier scan, and no longer read as one — which only a
+            // change to the parser can cause. The episode keeps it, as a film keeps a file whose
+            // name stopped matching it: inventing a film for it would be the old mistake again.
+            if (existing?.EpisodeId is long kept)
+                return await RecordEpisodeFileAsync(conn, tx, catalogue.Movies, files, counts, scanId, path, existing, kept);
+
+            return await RecordFilmFileAsync(conn, tx, catalogue.Movies, files, scanId, path, existing);
+        }
+
+        /// <summary>
         /// Writes one file and the movie it belongs to, and says which of those it was.
         ///
         /// Every path this scan walks past is stamped with <c>last_seen_at</c> and the scan's id,
@@ -311,25 +358,20 @@ WHERE id = @id;
         /// column: a row nobody stamped is a row nothing found, and a file that is exactly as it
         /// was is still very much there.
         /// </summary>
-        private static async Task<FileOutcome> RecordFileAsync(
+        private static async Task<FileOutcome> RecordFilmFileAsync(
             SqliteConnection conn,
             SqliteTransaction tx,
             MovieIndex movies,
             ScanFileIndex files,
             long scanId,
-            string path)
+            string path,
+            ScanFileRow? existing)
         {
             var info = new FileInfo(path);
             var size = info.Exists ? info.Length : 0L;
             var created = info.Exists ? info.CreationTimeUtc.ToString("o") : null;
             var modified = info.Exists ? info.LastWriteTimeUtc.ToString("o") : null;
             var seenAt = ScanSessions.Timestamp(DateTimeOffset.UtcNow);
-
-            var existing = files.ByPath(path);
-
-            // Two watch folders where one contains the other. Doing the work twice would count the
-            // same file twice and report a library as double the size it is.
-            if (existing is not null && files.WasSeen(existing)) return FileOutcome.AlreadySeen;
 
             var movieId = await MovieForFileAsync(conn, tx, movies, existing, FilenameParser.Parse(path));
 
@@ -383,6 +425,228 @@ WHERE id = @id;
             files.MarkSeen(existing);
 
             return outcome;
+        }
+
+        /// <summary>The two in-memory indexes a scan files against, carried as one.</summary>
+        private sealed record Catalogue(MovieIndex Movies, EpisodeCatalogue Episodes);
+
+        /// <summary>
+        /// Writes a file read as an episode. Like <see cref="InsertFileSql"/>, an upsert, and for
+        /// the same reason.
+        /// </summary>
+        /// <remarks>
+        /// <c>movie_id</c> is cleared rather than coalesced, because a file is a film or an episode
+        /// and this one has just been read as an episode. The only film link that may survive that
+        /// is one a person made, and the caller does not come here for one of those.
+        /// </remarks>
+        private const string InsertEpisodeFileSql = @"
+INSERT INTO files (movie_id, episode_id, file_path, size_bytes, created_at, updated_at, last_seen_at, last_seen_scan_id)
+VALUES (NULL, @episode_id, @file_path, @size_bytes, @created_at, @updated_at, @last_seen_at, @scan_id)
+ON CONFLICT(file_path) DO UPDATE SET
+    movie_id          = NULL,
+    episode_id        = excluded.episode_id,
+    size_bytes        = excluded.size_bytes,
+    updated_at        = excluded.updated_at,
+    last_seen_at      = excluded.last_seen_at,
+    last_seen_scan_id = excluded.last_seen_scan_id,
+    missing_since     = NULL
+RETURNING id;
+";
+
+        /// <summary>
+        /// Updates the row for a file read as an episode, whether it was already one, was a film
+        /// until now, or has moved. Assigned rather than coalesced: nobody links an episode by
+        /// hand, so the path is the only evidence there is, and a file moved from one programme's
+        /// folder into another's belongs to the second.
+        /// </summary>
+        private const string UpdateEpisodeFileSql = @"
+UPDATE files SET
+    movie_id          = NULL,
+    episode_id        = @episode_id,
+    file_path         = @file_path,
+    size_bytes        = @size_bytes,
+    created_at        = COALESCE(@created_at, created_at),
+    updated_at        = @updated_at,
+    last_seen_at      = @last_seen_at,
+    last_seen_scan_id = @scan_id,
+    missing_since     = NULL
+WHERE id = @id;
+";
+
+        /// <summary>
+        /// A film row that has just lost its last file to an episode. Only ever a row that existed
+        /// because an earlier scan misread that episode as a film, so nothing is lost with it: a
+        /// rating or a viewing somebody logged is keyed on the film's title or TMDB id in its own
+        /// table, not on this row, and <c>imdb_ratings</c> lets go of it on its own.
+        /// </summary>
+        private const string DeleteEmptiedMovieSql = @"
+DELETE FROM movies
+WHERE id = @id AND NOT EXISTS (SELECT 1 FROM files WHERE files.movie_id = @id);
+";
+
+        /// <summary>
+        /// Writes a file that is an episode, re-filing it when an earlier scan made it a film.
+        /// </summary>
+        /// <remarks>
+        /// The re-filing is how a library scanned before television existed gets its programmes
+        /// back, and it is done here rather than in <see cref="Database.Migrate"/> because only a
+        /// scan reads paths. A schema migration that parsed every path in <c>files</c> would be a
+        /// scan that ran without being asked, on a drive that may not be plugged in.
+        ///
+        /// The emptied film row goes with it. Kept, it would be a film with no file — which the
+        /// library retires as gone — sitting in the unmatched count for ever.
+        /// </remarks>
+        private static async Task<FileOutcome> RecordEpisodeFileAsync(
+            SqliteConnection conn,
+            SqliteTransaction tx,
+            MovieIndex movies,
+            ScanFileIndex files,
+            ScanCounts counts,
+            long scanId,
+            string path,
+            ScanFileRow? existing,
+            long episodeId)
+        {
+            var info = new FileInfo(path);
+            var size = info.Exists ? info.Length : 0L;
+            var created = info.Exists ? info.CreationTimeUtc.ToString("o") : null;
+            var modified = info.Exists ? info.LastWriteTimeUtc.ToString("o") : null;
+            var seenAt = ScanSessions.Timestamp(DateTimeOffset.UtcNow);
+
+            var outcome = FileOutcome.Unchanged;
+            if (existing is null)
+            {
+                existing = files.FindMoved(path, size);
+                if (existing is not null) outcome = FileOutcome.Moved;
+            }
+            else if (existing.DiffersFromEpisode(size, modified, episodeId))
+            {
+                outcome = FileOutcome.Updated;
+            }
+
+            var parameters = new
+            {
+                id = existing?.Id ?? 0L,
+                episode_id = episodeId,
+                file_path = path,
+                size_bytes = size,
+                created_at = created,
+                updated_at = modified,
+                last_seen_at = seenAt,
+                scan_id = scanId,
+            };
+
+            if (existing is null)
+            {
+                var id = await conn.ExecuteScalarAsync<long>(InsertEpisodeFileSql, parameters, tx);
+
+                files.Add(new ScanFileRow
+                {
+                    Id = id,
+                    EpisodeId = episodeId,
+                    FilePath = path,
+                    SizeBytes = size,
+                    UpdatedAt = modified,
+                });
+
+                return FileOutcome.Inserted;
+            }
+
+            var formerFilm = existing.MovieId;
+
+            await conn.ExecuteAsync(UpdateEpisodeFileSql, parameters, tx);
+
+            if (formerFilm is long film)
+            {
+                counts.Refiled++;
+
+                var deleted = await conn.ExecuteAsync(DeleteEmptiedMovieSql, new { id = film }, tx);
+                if (deleted > 0) movies.Remove(film);
+            }
+
+            if (outcome == FileOutcome.Moved) files.Repath(existing, path);
+
+            existing.MovieId = null;
+            existing.EpisodeId = episodeId;
+            existing.SizeBytes = size;
+            existing.UpdatedAt = modified;
+            existing.MissingSince = null;
+            files.MarkSeen(existing);
+
+            return outcome;
+        }
+
+        /// <summary>
+        /// The episode a parsed path is, creating the programme and the episode when the catalogue
+        /// has neither yet. Both are resolved in memory first, so a season of twenty-four files is
+        /// one programme insert and twenty-four episode inserts, not a query per file each.
+        /// </summary>
+        private static async Task<long> EpisodeForFileAsync(
+            SqliteConnection conn,
+            SqliteTransaction tx,
+            EpisodeCatalogue catalogue,
+            ParsedEpisode parsed)
+        {
+            var seriesId = await EnsureSeriesAsync(conn, tx, catalogue, parsed);
+            var title = string.IsNullOrWhiteSpace(parsed.EpisodeTitle) ? null : parsed.EpisodeTitle.Trim();
+
+            if (catalogue.TryResolveEpisode(seriesId, parsed.SeasonNumber, parsed.EpisodeNumber, out var existing))
+            {
+                // A second copy of an episode sometimes names it where the first did not. Filled in
+                // once, never overwritten: the first title a scan found is as good as the second.
+                if (title is not null && !catalogue.HasTitle(existing))
+                {
+                    await conn.ExecuteAsync(
+                        "UPDATE episodes SET title = @title WHERE id = @id AND (title IS NULL OR title = '')",
+                        new { title, id = existing }, tx);
+                    catalogue.MarkTitled(existing);
+                }
+
+                return existing;
+            }
+
+            var id = await conn.ExecuteScalarAsync<long>(@"
+INSERT INTO episodes (series_id, season_number, episode_number, title)
+VALUES (@series_id, @season, @episode, @title)
+ON CONFLICT DO UPDATE SET title = COALESCE(episodes.title, excluded.title)
+RETURNING id",
+                new { series_id = seriesId, season = parsed.SeasonNumber, episode = parsed.EpisodeNumber, title }, tx);
+
+            catalogue.AddEpisode(id, seriesId, parsed.SeasonNumber, parsed.EpisodeNumber, title is not null);
+            return id;
+        }
+
+        private static async Task<long> EnsureSeriesAsync(
+            SqliteConnection conn,
+            SqliteTransaction tx,
+            EpisodeCatalogue catalogue,
+            ParsedEpisode parsed)
+        {
+            if (catalogue.TryResolveSeries(parsed, out var existing, out var yearIsNew))
+            {
+                if (yearIsNew && parsed.SeriesYear is int year)
+                {
+                    await conn.ExecuteAsync(
+                        "UPDATE series SET year = @year WHERE id = @id AND year IS NULL",
+                        new { year, id = existing }, tx);
+                    catalogue.SetSeriesYear(existing, parsed.SeriesTitle, year);
+                }
+
+                return existing;
+            }
+
+            // RETURNING for the same reason as the movies insert: the FTS trigger writes after it.
+            var id = await conn.ExecuteScalarAsync<long>(
+                "INSERT INTO series (title, year, created_at) VALUES (@title, @year, @created_at) RETURNING id",
+                new
+                {
+                    title = parsed.SeriesTitle,
+                    year = parsed.SeriesYear,
+                    created_at = ScanSessions.Timestamp(DateTimeOffset.UtcNow)
+                }, tx);
+
+            catalogue.AddSeries(id, parsed.SeriesTitle, parsed.SeriesYear);
+            return id;
         }
 
         /// <summary>

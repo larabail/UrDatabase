@@ -166,6 +166,12 @@ namespace UrDatabase.Services
                 if (!seen.Add(movie.Key)) continue;
 
                 combined.Add(movie);
+
+                // Only films are offered to the server's films. A programme on this disk numbers
+                // its ids from one exactly as the films do, so indexing it here would let a
+                // server film fold onto a series that happens to share a film's id or name.
+                if (!movie.IsFilm) continue;
+
                 if (byId.TryAdd(movie.Id, movie)) here.Add(movie.Id, movie.Title, movie.Year);
 
                 // First wins, as everywhere else here. Two local rows claiming one TMDB film is a
@@ -221,9 +227,9 @@ namespace UrDatabase.Services
             IReadOnlyDictionary<long, UiMovie> byId,
             IReadOnlyDictionary<int, UiMovie> byTmdbId)
         {
-            // Television never folds onto a film, whatever either is called. Nothing in the local
-            // catalogue is a series — a scan records films — so a fold could only ever be wrong,
-            // and the names collide often enough for that to matter: Fargo, Hannibal, Westworld
+            // Television never folds onto a film, whatever either is called. A programme on this
+            // disk is never indexed as a film, so a fold could only ever be wrong, and the names
+            // collide often enough for that to matter: Fargo, Hannibal, Westworld
             // and Shōgun are each a film and a programme, and normalising the titles makes them
             // one. The card the fold kept would be the film, and the show would vanish from the
             // library rather than merely being shown beside it.
