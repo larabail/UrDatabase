@@ -81,6 +81,9 @@ namespace UrDatabase.Services
 
                 foreach (var folder in drive.WatchFolders)
                     sb.AppendLine().Append("    Library folder: ").Append(folder);
+
+                if (drive.WatchFolders.Count == 0)
+                    sb.AppendLine().Append("    No library folder here; not reported at launch.");
             }
 
             return sb.ToString();
@@ -98,6 +101,6 @@ namespace UrDatabase.Services
             count == 1 ? "1 film" : $"{count.ToString(CultureInfo.InvariantCulture)} films";
 
         private static IReadOnlyList<DriveReport> Down(IReadOnlyList<DriveReport>? reports) =>
-            reports?.Where(r => r.IsDown).ToList() ?? (IReadOnlyList<DriveReport>)Array.Empty<DriveReport>();
+            reports?.Where(r => r.RaisesAlarm).ToList() ?? (IReadOnlyList<DriveReport>)Array.Empty<DriveReport>();
     }
 }

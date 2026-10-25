@@ -39,6 +39,15 @@ namespace UrDatabase.Models
         long? FreeBytes = null)
     {
         public bool IsDown => State != DriveState.Connected;
+
+        /// <summary>
+        /// Down, and holding a configured library folder. Only these raise the banner. A drive
+        /// known only from catalogued files — one whose library folder was removed after it died,
+        /// or one holding a copy linked by hand — is never walked by a scan again, so nothing
+        /// would ever mark its files missing and the alarm could never be cleared. Such a drive
+        /// still appears in the drives dialog.
+        /// </summary>
+        public bool RaisesAlarm => IsDown && WatchFolders.Count > 0;
     }
 
     /// <summary>

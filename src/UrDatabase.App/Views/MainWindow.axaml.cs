@@ -1450,7 +1450,7 @@ namespace UrDatabase.Views
 
                 AppLog.Write(
                     "drives.log",
-                    string.Join("; ", reports.Where(r => r.IsDown).Select(r => $"{r.Root} {r.State}")));
+                    string.Join("; ", reports.Where(r => r.RaisesAlarm).Select(r => $"{r.Root} {r.State}")));
 
                 return reports;
             }

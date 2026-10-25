@@ -287,11 +287,55 @@ namespace UrDatabase.Tests
         }
 
         [Fact]
+        public async Task A_drive_with_files_but_no_library_folder_does_not_raise_the_alarm()
+        {
+            // A disk that died and whose library folder was then removed in Settings: its files
+            // are never walked again, so nothing ever marks them missing. The same goes for a
+            // copy linked by hand from outside every library folder. Neither may hold the banner
+            // up on every launch with no way to clear it.
+            var db = Path.Combine(_root, "movies.db");
+            using (var conn = Database.Open(db))
+            {
+                conn.Execute("INSERT INTO movies (id, title) VALUES (1, 'Ran')");
+                conn.Execute(@"INSERT INTO files (movie_id, file_path) VALUES (1, 'R:\Old\Ran.mkv')");
+            }
+
+            var probe = new FakeProbe { [@"S:\"] = new DriveProbeResult(true) };
+
+            var reports = await new DriveMonitor(probe).CheckLibraryAsync(new[] { @"S:\Films" }, db);
+
+            var retired = reports.Single(r => r.Root == @"R:\");
+            Assert.Equal(DriveState.Disconnected, retired.State);
+            Assert.False(retired.RaisesAlarm);
+
+            Assert.Null(DriveStatusText.Headline(reports));
+            Assert.Equal("", DriveStatusText.Detail(reports));
+
+            // Still visible to somebody who goes looking.
+            var dialog = DriveStatusText.Describe(reports);
+            Assert.Contains(@"R:\ — NOT CONNECTED", dialog);
+            Assert.Contains("No library folder", dialog);
+        }
+
+        [Fact]
+        public void Only_drives_holding_a_library_folder_are_counted_in_the_banner()
+        {
+            var reports = new[]
+            {
+                Report(@"E:\", DriveState.Disconnected, 3),
+                new DriveReport(@"R:\", DriveState.Disconnected, Array.Empty<string>(), 9)
+            };
+
+            Assert.Equal(@"E:\ is not connected", DriveStatusText.Headline(reports));
+            Assert.Equal("3 films on it cannot be played until it is back.", DriveStatusText.Detail(reports));
+        }
+
+        [Fact]
         public void The_dialog_explains_an_empty_answer() =>
             Assert.Contains("no drives to check", DriveStatusText.Describe(Array.Empty<DriveReport>()));
 
         private static DriveReport Report(string root, DriveState state, int films) =>
-            new(root, state, Array.Empty<string>(), films);
+            new(root, state, new[] { root + "Films" }, films);
 
         private sealed class FakeProbe : IDriveProbe
         {
