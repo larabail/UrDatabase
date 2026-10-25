@@ -151,6 +151,13 @@ namespace UrDatabase.Views
         public bool RenamedSomething { get; private set; }
 
         /// <summary>
+        /// True once the watchlist button on this screen changed the list. Read by the caller after
+        /// <see cref="ShowAsync"/> returns, for the same reason as
+        /// <see cref="DownloadedSomething"/>: the Watchlist shelf behind it is now out of date.
+        /// </summary>
+        public bool WatchlistChanged { get; private set; }
+
+        /// <summary>
         /// True once a problem was reported or cleared on this screen. Read by the caller after
         /// <see cref="ShowAsync"/> returns, for the same reason as <see cref="RenamedSomething"/>:
         /// the card behind it carries a badge that is now out of date.
@@ -210,6 +217,7 @@ namespace UrDatabase.Views
             _cancelEnrichment = cancelEnrichment;
             DownloadedSomething = false;
             RenamedSomething = false;
+            WatchlistChanged = false;
             ChangedProblems = false;
             RequestedNext = null;
             DataContext = vm;
@@ -477,6 +485,7 @@ namespace UrDatabase.Views
             LinkFileButton.IsVisible = !vm.IsRemote;
             CorrectMatchButton.IsVisible = !vm.IsRemote;
 
+            UpdateWatchlistButton();
             UpdateDownloadButton();
             UpdateUploadButton();
             UpdateRefreshButton();
@@ -1075,7 +1084,12 @@ namespace UrDatabase.Views
             try
             {
                 using var conn = Database.Open(_dbPath);
-                await ScanService.RecordSingleFileAsync(conn, path);
+                var movieId = await ScanService.RecordSingleFileAsync(conn, path);
+
+                // The film now has a row of its own. Move its Watchlist entry onto that row now,
+                // while the server id is still at hand. See Watchlist.Adoptions.
+                if (WatchlistStore.AdoptDownload(conn, Vm?.RemoteId, movieId))
+                    WatchlistChanged = true;
             }
             catch (Exception ex)
             {
@@ -1309,6 +1323,64 @@ namespace UrDatabase.Views
         /// and this control is no longer one.
         /// </summary>
         private Window? Owner() => TopLevel.GetTopLevel(this) as Window;
+
+        /// <summary>
+        /// The watchlist button says which list the film is on now, and is hidden when the film has
+        /// no identity to be stored under or there is no catalogue to store it in.
+        /// </summary>
+        private void UpdateWatchlistButton()
+        {
+            var keys = Vm is null ? Array.Empty<string>() : Watchlist.KeysFor(Vm.LocalId, Vm.RemoteId);
+
+            WatchlistButton.IsVisible = keys.Count > 0 && !string.IsNullOrWhiteSpace(_dbPath);
+            WatchlistButton.Content = Watchlist.ButtonLabel(Vm?.IsOnWatchlist == true);
+        }
+
+        /// <summary>
+        /// Puts the film on the watchlist, or takes it off. Written straight away rather than when
+        /// the screen closes, so a crash or a quit from here does not lose it.
+        /// </summary>
+        private async void Watchlist_Click(object? sender, RoutedEventArgs e)
+        {
+            var vm = Vm;
+            if (vm is null || string.IsNullOrWhiteSpace(_dbPath)) return;
+
+            var keys = Watchlist.KeysFor(vm.LocalId, vm.RemoteId);
+            if (keys.Count == 0) return;
+
+            var adding = !vm.IsOnWatchlist;
+            WatchlistButton.IsEnabled = false;
+
+            try
+            {
+                using var conn = Database.Open(_dbPath);
+                await DatabaseWriteLane.RunAsync(
+                    conn,
+                    _ =>
+                    {
+                        WatchlistStore.Set(conn, keys, adding);
+                        return Task.CompletedTask;
+                    },
+                    _appLifetime);
+
+                vm.IsOnWatchlist = adding;
+                WatchlistChanged = true;
+            }
+            catch (OperationCanceledException)
+            {
+                // The app is closing.
+            }
+            catch (Exception ex)
+            {
+                AppLog.Write("app.log", $"could not update the watchlist for {vm.Title}: {ex.Message}");
+                await MessageBoxWindow.ShowAsync(Owner(), "UrDatabase", "The Watchlist could not be updated.");
+            }
+            finally
+            {
+                WatchlistButton.IsEnabled = true;
+                if (ReferenceEquals(Vm, vm)) UpdateWatchlistButton();
+            }
+        }
 
         /// <summary>
         /// Lets the user say which film this actually is, and rebuilds the screen from their

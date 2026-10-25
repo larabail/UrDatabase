@@ -39,13 +39,15 @@
                         PointerPressed="MovieCard_Click"
                         ToolTip.Tip="{Binding CardTooltip}">
 
-                <!-- What a card can be told to do without opening it, and only
-                     offered on a card in the Continue watching row: the menu
-                     refuses to open on anything else rather than showing an
-                     empty box. A right-click because the row is the first
-                     thing on the page and a visible button there would be one
-                     click away from being pressed by accident — this takes two
-                     deliberate ones and spends no space at all.
+                <!-- What a card can be told to do without opening it. Every
+                     film and series offers to go on or come off the Watchlist;
+                     a card in the Continue watching row can also be taken out
+                     of it. The menu refuses to open on a card with nothing to
+                     offer rather than showing an empty box. A right-click
+                     because the row is the first thing on the page and a
+                     visible button there would be one click away from being
+                     pressed by accident — this takes two deliberate ones and
+                     spends no space at all.
 
                      Opening the programme is here rather than on the card
                      itself because clicking an episode plays it. It is the way
@@ -53,13 +55,17 @@
                      episode, which is the only card that has a programme.
 
                      Nothing here is sent to the server. See
-                     MainWindow.DismissFromRow. -->
+                     MainWindow.DismissFromRow and WatchlistStore. -->
                 <StackPanel.ContextMenu>
                     <ContextMenu Opening="CardMenu_Opening">
                         <MenuItem Name="OpenProgrammeItem"
                                   Header="Open programme…"
                                   Click="OpenProgramme_Click"/>
-                        <MenuItem Header="Remove from Continue watching"
+                        <MenuItem Name="WatchlistItem"
+                                  Header="Add to Watchlist"
+                                  Click="ToggleWatchlist_Click"/>
+                        <MenuItem Name="DismissFromRowItem"
+                                  Header="Remove from Continue watching"
                                   Click="DismissFromRow_Click"/>
                     </ContextMenu>
                 </StackPanel.ContextMenu>

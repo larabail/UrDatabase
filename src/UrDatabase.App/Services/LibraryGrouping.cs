@@ -193,7 +193,7 @@ namespace UrDatabase.Services
 
         /// <summary>
         /// Every shelf the library page shows, in the order it shows them: Continue watching
-        /// first, then one per genre.
+        /// first, then the Watchlist, then one per genre.
         /// </summary>
         /// <remarks>
         /// Built here rather than in the window so the ordering is a rule rather than the order
@@ -209,11 +209,16 @@ namespace UrDatabase.Services
         /// it reads as a shelf that failed to load, and on an install with no server — or one
         /// whose owner finishes what they start — that would be the permanent state of the top of
         /// the page. A genre with nothing in it is dropped for the same reason.
+        ///
+        /// The Watchlist comes second, on the same terms: a shelf and never a chip, and left out
+        /// when it is empty. Below Continue watching, because something half-watched is a more
+        /// pressing answer to "what now" than something somebody meant to start one day.
         /// </remarks>
         public static IReadOnlyList<GenreGroup> BuildShelves(
             IEnumerable<UiMovie>? movies,
             IEnumerable<string>? genres,
-            IReadOnlyList<UiMovie>? continueWatching = null)
+            IReadOnlyList<UiMovie>? continueWatching = null,
+            IReadOnlyList<UiMovie>? watchlist = null)
         {
             var shelves = new List<GenreGroup>();
 
@@ -224,6 +229,16 @@ namespace UrDatabase.Services
                     Name = ResumeRow.Heading,
                     Count = continueWatching.Count,
                     Items = new ObservableCollection<UiMovie>(continueWatching)
+                });
+            }
+
+            if (watchlist is { Count: > 0 })
+            {
+                shelves.Add(new GenreGroup
+                {
+                    Name = Watchlist.Heading,
+                    Count = watchlist.Count,
+                    Items = new ObservableCollection<UiMovie>(watchlist)
                 });
             }
 

@@ -71,6 +71,12 @@ namespace UrDatabase.Models
         /// </summary>
         public string? RemoteId { get; set; }
 
+        /// <summary>
+        /// Whether the owner has put this film on their watchlist. Filled in by whoever opens the
+        /// screen, from the list it already holds, and flipped by the button on the screen.
+        /// </summary>
+        public bool IsOnWatchlist { get; set; }
+
         /// <summary>Where a downloaded copy is written. From configuration, not from the film.</summary>
         public string? DownloadFolder { get; set; }
 

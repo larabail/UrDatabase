@@ -142,6 +142,14 @@
                                 IsVisible="False"
                                 Content="Start again"
                                 Click="StartAgain_Click"/>
+                        <!-- On or off the Watchlist shelf on the library page.
+                             Says which, so the button is also the answer to "did I
+                             already add this". See Watchlist.ButtonLabel. -->
+                        <Button x:Name="WatchlistButton"
+                                Classes="ghost"
+                                Height="34"
+                                Content="+ Watchlist"
+                                Click="Watchlist_Click"/>
                         <Button x:Name="LinkFileButton"
                                 Classes="ghost"
                                 Height="34"
