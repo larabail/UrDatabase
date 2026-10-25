@@ -211,6 +211,26 @@ namespace UrDatabase.Services
                 index.CommandText = "CREATE INDEX IF NOT EXISTS ix_files_episode ON files(episode_id)";
                 index.ExecuteNonQuery();
             }
+
+            // What TMDB says a programme on this disk is, and what it says each episode is. Null
+            // on every existing row, which is exactly what the background pass reads as "not
+            // looked up yet": a library that gained its programmes before these columns has them
+            // identified on its next launch with a key, and one without a key is unchanged.
+            AddColumnIfMissing(conn, "series", "tmdb_id", "INTEGER");
+            AddColumnIfMissing(conn, "series", "overview", "TEXT");
+            AddColumnIfMissing(conn, "series", "backdrop_path", "TEXT");
+            AddColumnIfMissing(conn, "series", "rating", "REAL");
+            AddColumnIfMissing(conn, "series", "imdb_id", "TEXT");
+            AddColumnIfMissing(conn, "series", "cast_list", "TEXT");
+            AddColumnIfMissing(conn, "series", "crew_list", "TEXT");
+            AddColumnIfMissing(conn, "series", "tmdb_fetched_at", "TEXT");
+
+            AddColumnIfMissing(conn, "episodes", "tmdb_title", "TEXT");
+            AddColumnIfMissing(conn, "episodes", "overview", "TEXT");
+            AddColumnIfMissing(conn, "episodes", "runtime_minutes", "INTEGER");
+            AddColumnIfMissing(conn, "episodes", "air_date", "TEXT");
+            AddColumnIfMissing(conn, "episodes", "still_path", "TEXT");
+            AddColumnIfMissing(conn, "episodes", "tmdb_fetched_at", "TEXT");
         }
 
         /// <summary>
@@ -322,19 +342,33 @@ CREATE TABLE IF NOT EXISTS files (
 CREATE UNIQUE INDEX IF NOT EXISTS ux_files_path ON files(file_path);
 CREATE INDEX IF NOT EXISTS ix_files_movie ON files(movie_id);
 CREATE TABLE IF NOT EXISTS series (
-    id          INTEGER PRIMARY KEY AUTOINCREMENT,
-    title       TEXT    NOT NULL,
-    year        INTEGER,
-    genres      TEXT,
-    poster_path TEXT,
-    created_at  TEXT
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    title           TEXT    NOT NULL,
+    year            INTEGER,
+    genres          TEXT,
+    poster_path     TEXT,
+    created_at      TEXT,
+    tmdb_id         INTEGER,
+    overview        TEXT,
+    backdrop_path   TEXT,
+    rating          REAL,
+    imdb_id         TEXT,
+    cast_list       TEXT,
+    crew_list       TEXT,
+    tmdb_fetched_at TEXT
 );
 CREATE TABLE IF NOT EXISTS episodes (
-    id             INTEGER PRIMARY KEY AUTOINCREMENT,
-    series_id      INTEGER NOT NULL REFERENCES series(id) ON DELETE CASCADE,
-    season_number  INTEGER,
-    episode_number INTEGER NOT NULL,
-    title          TEXT
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    series_id       INTEGER NOT NULL REFERENCES series(id) ON DELETE CASCADE,
+    season_number   INTEGER,
+    episode_number  INTEGER NOT NULL,
+    title           TEXT,
+    tmdb_title      TEXT,
+    overview        TEXT,
+    runtime_minutes INTEGER,
+    air_date        TEXT,
+    still_path      TEXT,
+    tmdb_fetched_at TEXT
 );
 CREATE UNIQUE INDEX IF NOT EXISTS ux_episodes_number ON episodes(series_id, IFNULL(season_number, -1), episode_number);
 CREATE TABLE IF NOT EXISTS scans (

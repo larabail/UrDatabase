@@ -30,6 +30,23 @@ namespace UrDatabase.Models
         /// <summary>True when the episodes are files on this disk rather than items on a server.</summary>
         public bool IsLocal => LocalId > 0;
 
+        /// <summary>
+        /// The TMDB programme a local series has been identified as. Null for a server programme,
+        /// and for a local one TMDB has not been able to confirm — which is the series layer 1
+        /// shipped, named only by its files.
+        /// </summary>
+        public int? TmdbId { get; set; }
+
+        /// <summary>True for a programme on this disk that TMDB has described.</summary>
+        public bool IsIdentified => IsLocal && TmdbId is int id && id > 0;
+
+        /// <summary>
+        /// Whether a TMDB key is configured, which decides what the screen says about a local
+        /// programme with nothing known about it yet: one that will be looked up, or one that
+        /// cannot be.
+        /// </summary>
+        public bool TmdbConfigured { get; set; }
+
         public string Title { get; set; } = "";
 
         /// <summary>The year it began. Jellyfin reports one year, not a range.</summary>

@@ -62,6 +62,24 @@ namespace UrDatabase.Tests
             Assert.Equal(1, result.SeriesAdded);
         }
 
+        /// <summary>
+        /// The layout that used to lose the year: a dated folder holding files that name the
+        /// programme without one. The year is what lets TMDB tell Fargo the programme apart from
+        /// anything else called Fargo, so it has to reach the catalogue.
+        /// </summary>
+        [Fact]
+        public async Task A_dated_folder_dates_the_programme_its_files_name()
+        {
+            Write("TV", "Fargo (2014)", "Fargo.S01E01.mkv");
+            Write("TV", "Fargo (2014)", "Fargo.S01E02.mkv");
+
+            await ScanAsync();
+
+            using var conn = Database.Open(_dbPath);
+            Assert.Equal(1, conn.ExecuteScalar<long>("SELECT COUNT(*) FROM series"));
+            Assert.Equal(2014, conn.ExecuteScalar<long>("SELECT year FROM series WHERE title = 'Fargo'"));
+        }
+
         [Fact]
         public async Task A_film_beside_a_programme_stays_a_film()
         {

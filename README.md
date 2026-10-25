@@ -189,6 +189,31 @@ It runs on Windows and macOS from one codebase, built with
   a number — is still catalogued as a film rather than guessed at
   (`Services/EpisodeParser`, `Services/ScanService`,
   `Services/EpisodeCatalogue`, `Services/LocalSeriesLoader`).
+- **Programmes on this computer are looked up, once each.** With a TMDB key, the
+  same background pass that finds films' posters identifies each local programme
+  against TMDB's *television* catalogue — never the film one, which would answer
+  *Fargo* with the 1996 film — and fills in its poster, genres, plot, cast,
+  backdrop and IMDb id, so it leaves **Uncategorised** and its page reads like a
+  server programme's, IMDb rating included. It is one search and one description
+  per programme, not per episode, sharing the films' rate limit. The match is
+  judged by exactly the rules a film's is: without a year, two programmes of one
+  name (*The Office*, *Doctor Who*) are refused rather than guessed at, and a
+  refused programme stays as the scan named it. A folder like `Fargo (2014)`
+  dates the `Fargo.S01E01.mkv` files inside it, which is what tells those apart.
+  TMDB's compound television genres land on the films' shelves — *Sci-Fi &
+  Fantasy* on **Science Fiction** and **Fantasy**, *Action & Adventure* on
+  **Action** and **Adventure**. Episode names, plots and lengths are fetched a
+  season at a time when a programme is opened, kept in the catalogue, and read
+  from there first the next time; **Refresh** on the programme asks again. TMDB
+  is asked by episode number, and a number is not an identity — Firefly on DVD
+  opens with *Serenity*, TMDB's aired order with *The Train Job* — so a file
+  that names its episode keeps that name, and TMDB's description is used only
+  when the two names agree or the file names nothing. Specials (season 0, which
+  TMDB numbers as it pleases) are never asked about. The
+  programme keeps the name the scan gave it, because that name is what the next
+  scan files its episodes under. With no key, nothing is asked and the programme
+  reads exactly as the scan left it (`Services/LocalSeriesLookup`,
+  `Services/TelevisionGenres`, `Services/LocalSeriesPage`).
 - **What the copy actually is, beside the year and the runtime.** A row of small
   badges says how big the picture is — `4K`, `2K`, `1080p`, `720p`, `SD` — along
   with its dynamic range, video codec, audio track, size on disk, and the
@@ -941,10 +966,10 @@ wrong in a way nobody would spot.
 There is no download for an episode. See [Known gaps](#known-gaps).
 
 A programme that is both on the server and on this computer is two cards, one
-of each: a scanned programme has no identity yet that could be matched against
-the server's, and matching on its name alone is the mistake the paragraph above
-refuses to make. Television found on this disk is described under
-[Features](#features).
+of each. A local programme TMDB has identified does carry a TMDB television id,
+but nothing yet matches it against the server's, and matching on the name alone
+is the mistake the paragraph above refuses to make. Television found on this
+disk is described under [Features](#features).
 
 #### A film that is in both places
 
@@ -1456,6 +1481,20 @@ Local television follows the same reasoning. A file is a film or an episode:
 link a person made with **Link File…**, which is what stops a scan re-filing
 that file as the episode its name looks like.
 
+What TMDB says about a local programme lives on the same rows. `series.tmdb_id`
+is the identification, and `tmdb_fetched_at` is when its description —
+`overview`, `backdrop_path`, `rating`, `imdb_id`, `cast_list`, `crew_list`, and
+`genres` and `poster_path` when they were empty — was last written; null means
+it is still to be asked for. `series.title` is never rewritten, because it is the
+identity a re-scan files episodes against. Each episode keeps TMDB's
+`tmdb_title`, `overview`, `runtime_minutes`, `air_date` and `still_path` beside
+the `title` its filename gave it — written only when TMDB's name for that number
+agrees with the file's own title, or the file has none, and never for season 0 —
+and `tmdb_fetched_at` is set on every episode
+of a season that was asked about, so a season TMDB numbers differently is not
+asked about on every open. Changing a programme's `tmdb_id` clears its episodes'
+TMDB columns in the same transaction, since they describe the old programme.
+
 `IF NOT EXISTS` covers a whole new table and does nothing at all for a new
 column on a table that already exists, so `Database.Migrate` runs straight after
 the script and adds those with `ALTER TABLE`. A column added to the schema file
@@ -1866,11 +1905,18 @@ Stated plainly, so nobody has to find out by using it:
   is what fixes that by hand. Nor does such a card offer the stream as a
   fallback: it plays the file on this disk, and says the server has it rather
   than doing anything with that.
-- **Television on this computer is named by its files, and only by them.** A
-  scan now files `Show.S01E02.mkv` under its programme instead of cataloguing it
-  as a film, but nothing looks the programme up yet: it has no poster, no plot,
-  no genres — so it sits in **Uncategorised** — and its episodes are called what
-  their filenames call them. There is no **Wrong film?** for a series either.
+- **A programme on this computer TMDB will not confirm stays named by its
+  files.** Local programmes are identified against TMDB's television catalogue
+  by the film rules, and one it refuses — two programmes of one name and no year
+  to tell them apart, a name spelt too differently — keeps no poster, no plot and
+  no genres, so it sits in **Uncategorised** with its episodes called what their
+  filenames call them. There is no **Wrong series?** to choose its match by hand
+  yet, and no way to correct a match the app got wrong. Where TMDB numbers a
+  programme differently from the files (absolute or DVD order), an episode whose
+  file names it keeps that name and gets no TMDB plot or length; an episode whose
+  file names nothing takes TMDB's description of its number, which may then be
+  the wrong episode's. Specials are never described from TMDB. Without a TMDB key
+  nothing is looked up at all.
   The parser declines what it cannot read with confidence: absolute numbering
   (`Show - 137.mkv`, ordinary for anime), date-named daily shows and three-digit
   `102` numbering all stay films, and so does a `1x02` pair written after a year
@@ -1883,11 +1929,10 @@ Stated plainly, so nobody has to find out by using it:
 - **An episode cannot be downloaded.** **Download** keeps a copy of a server
   *film* so it plays with the server switched off; there is no equivalent for an
   episode, or for a season. Episodes stream or they do not play.
-- **A programme is described only by the server.** There is no TMDB enrichment
-  for television and no **Wrong film?** for a series, so a programme the server
-  has not identified stays undescribed. TMDB's television catalogue is a separate
-  one from its films, and using the film endpoints for it would be worse than
-  using nothing.
+- **A server programme is described only by the server.** TMDB describes
+  programmes found on this computer, but a programme on a Jellyfin server is
+  never sent to it, and there is no **Wrong series?** for either kind, so a
+  programme the server has not identified stays undescribed.
 - **Track metadata is only as good as the tags inside the file.** Offline files
   are now measured, but ffprobe does not recognise spoken language by listening:
   an untagged track is **UND**. Embedded subtitle tracks are read; external

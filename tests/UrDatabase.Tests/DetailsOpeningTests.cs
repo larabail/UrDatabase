@@ -71,7 +71,8 @@ namespace UrDatabase.Tests
         {
             var source = File.ReadAllText(Path.Combine(RepositoryRoot(), "src", "UrDatabase.App",
                 "Views", "MainWindow.axaml.cs"));
-            Assert.Equal(2, source.Split("cancelEnrichment: loading.Cancel").Length - 1);
+            // A film, a server programme, and a local programme TMDB has given an IMDb id.
+            Assert.Equal(3, source.Split("cancelEnrichment: loading.Cancel").Length - 1);
             Assert.Contains("relatedLookup: (movie, ct) => LoadRelatedAsync(movie, null, ct)", source);
             Assert.Contains("stillsLookup: LoadStillsAsync", source);
             Assert.Contains("loadRating: RetryMissingSeriesRatingAsync", source);

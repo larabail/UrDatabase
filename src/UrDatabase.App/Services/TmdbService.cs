@@ -151,6 +151,29 @@ namespace UrDatabase.Services
         public string BuildImagesUrl(int tmdbId) =>
             $"{ApiBaseUrl}/movie/{tmdbId}/images?api_key={Uri.EscapeDataString(_apiKey)}";
 
+        /// <summary>
+        /// TMDB's television search. Its year parameter is <c>first_air_date_year</c>, which is
+        /// the year a programme on this disk is catalogued under — the one in <c>Fargo (2014)</c>.
+        /// </summary>
+        public string BuildTvSearchUrl(string title, int? year)
+        {
+            var url = $"{ApiBaseUrl}/search/tv?api_key={Uri.EscapeDataString(_apiKey)}&query={Uri.EscapeDataString(title ?? "")}";
+            if (year.HasValue && year.Value > 1800) url += $"&first_air_date_year={year.Value}";
+            return url;
+        }
+
+        /// <summary>
+        /// A programme's record with its cast and its IMDb id in the same response. The genres
+        /// come back spelled out in it, which is why identifying a programme needs no request for
+        /// <c>/genre/tv/list</c>: the search finds it and this describes it, two requests a series.
+        /// </summary>
+        public string BuildTvDetailsUrl(int tmdbId) =>
+            $"{ApiBaseUrl}/tv/{tmdbId}?api_key={Uri.EscapeDataString(_apiKey)}&language=en-US&append_to_response=credits,external_ids";
+
+        /// <summary>One season's episodes: their names, plots, lengths, air dates and stills.</summary>
+        public string BuildTvSeasonUrl(int tmdbId, int seasonNumber) =>
+            $"{ApiBaseUrl}/tv/{tmdbId}/season/{seasonNumber}?api_key={Uri.EscapeDataString(_apiKey)}&language=en-US";
+
         public bool HasApiKey => !string.IsNullOrWhiteSpace(_apiKey);
 
         /// <summary>Where cached artwork lives, already expanded.</summary>
@@ -317,6 +340,189 @@ namespace UrDatabase.Services
         private sealed class TmdbAlternativeTitle
         {
             public string? Title { get; set; }
+        }
+
+        // ---------- television ----------
+
+        /// <summary>
+        /// Every TMDB television result for a title, in TMDB's own order, as the same
+        /// <see cref="TmdbMatch.Candidate"/> a film search returns: the programme's name as the
+        /// title, and the day it first aired as the release date.
+        /// </summary>
+        /// <remarks>
+        /// Unfiltered, like <see cref="SearchAsync"/>, and for the same reason: this is also what a
+        /// person choosing a programme by hand would be shown, and the rules that stop the app
+        /// choosing on its own must not hide the result they are looking for.
+        /// </remarks>
+        public async Task<IReadOnlyList<TmdbMatch.Candidate>> SearchTvAsync(string title, int? year, CancellationToken ct)
+        {
+            if (string.IsNullOrWhiteSpace(_apiKey) || string.IsNullOrWhiteSpace(title))
+                return Array.Empty<TmdbMatch.Candidate>();
+
+            using var resp = await GetWithRetryAsync(BuildTvSearchUrl(title, year), ct);
+            RequireSuccess(resp, "television search");
+
+            await using var stream = await resp.Content.ReadAsStreamAsync(ct);
+            var doc = await JsonSerializer.DeserializeAsync<TmdbTvSearchResult>(stream, _json, ct);
+
+            return doc?.Results?
+                .Where(result => result is not null)
+                .Select(result => result.ToCandidate())
+                .ToList() ?? new List<TmdbMatch.Candidate>();
+        }
+
+        /// <summary>
+        /// The programme a local series is, or null when no result can be confirmed.
+        /// </summary>
+        /// <remarks>
+        /// Judged by exactly the rules a film is — <see cref="TmdbMatch.ChooseBest"/>, then
+        /// <see cref="TmdbMatch.ChooseSoleResult"/> — with the same broadening when TMDB never
+        /// returns the asked-for year. Television gains nothing by being trusted more: "The Office"
+        /// is two programmes four years apart, "Doctor Who" two programmes forty years apart, and
+        /// without a year both are refused rather than guessed at. A refusal leaves the series as
+        /// the scan named it, which is a smaller wrong than another programme's poster.
+        ///
+        /// What it does not do that the film search does is consult alternative titles. TMDB's
+        /// television alternative titles are a different shape and a different request, and a
+        /// programme that needs one is the case a person picking by hand is for.
+        /// </remarks>
+        public async Task<TmdbMatch.Candidate?> FindSeriesAsync(string title, int? year, CancellationToken ct)
+        {
+            if (string.IsNullOrWhiteSpace(_apiKey) || string.IsNullOrWhiteSpace(title)) return null;
+
+            var candidates = new List<TmdbMatch.Candidate>();
+            var yearScoped = new List<TmdbMatch.Candidate>();
+            var queries = new[] { title.Trim(), FilenameParser.CleanText(title) }
+                .Where(query => TmdbMatch.NormalizeTitle(query).Length > 0)
+                .Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+
+            foreach (var query in queries)
+            {
+                var results = await SearchTvAsync(query, year, ct);
+                candidates.AddRange(results);
+                if (year.HasValue) yearScoped.AddRange(results);
+                var match = TmdbMatch.ChooseBest(results, query, year);
+                if (match is not null) return match;
+
+                if (year.HasValue)
+                {
+                    results = await SearchTvAsync(query, null, ct);
+                    candidates.AddRange(results);
+                    match = TmdbMatch.ChooseBest(results, query, year);
+                    if (match is not null) return match;
+                }
+            }
+
+            return TmdbMatch.ChooseSoleResult(yearScoped, queries, year, candidates);
+        }
+
+        /// <summary>
+        /// A programme's full record, with its cast and IMDb id. Null when TMDB says there is no
+        /// such programme; a failed request throws, so a caller never records an outage as an
+        /// answer.
+        /// </summary>
+        public async Task<TmdbSeriesDetails?> GetSeriesDetailsAsync(int tmdbId, CancellationToken ct)
+        {
+            if (!HasApiKey || tmdbId <= 0) return null;
+
+            using var resp = await GetWithRetryAsync(BuildTvDetailsUrl(tmdbId), ct);
+            if (resp.StatusCode == HttpStatusCode.NotFound) return null;
+            RequireSuccess(resp, "programme details");
+
+            await using var stream = await resp.Content.ReadAsStreamAsync(ct);
+            var details = await JsonSerializer.DeserializeAsync<TmdbSeriesDetails>(stream, _json, ct);
+            if (details is not null) details.Id = tmdbId;
+            return details;
+        }
+
+        /// <summary>
+        /// One season's episodes. An empty list when TMDB has no such season — a season this disk
+        /// numbers that TMDB does not is an answer, not a failure — and a throw when the request
+        /// itself failed.
+        /// </summary>
+        public async Task<IReadOnlyList<TmdbEpisode>> GetSeasonAsync(int tmdbId, int seasonNumber, CancellationToken ct)
+        {
+            if (!HasApiKey || tmdbId <= 0 || seasonNumber < 0) return Array.Empty<TmdbEpisode>();
+
+            using var resp = await GetWithRetryAsync(BuildTvSeasonUrl(tmdbId, seasonNumber), ct);
+            if (resp.StatusCode == HttpStatusCode.NotFound) return Array.Empty<TmdbEpisode>();
+            RequireSuccess(resp, "season");
+
+            await using var stream = await resp.Content.ReadAsStreamAsync(ct);
+            var season = await JsonSerializer.DeserializeAsync<TmdbSeason>(stream, _json, ct);
+            return season?.Episodes?.Where(episode => episode is not null).ToList() ?? new List<TmdbEpisode>();
+        }
+
+        /// <summary>One result of <c>/search/tv</c>. Television names its fields apart from film.</summary>
+        private sealed class TmdbTvResult
+        {
+            [JsonPropertyName("id")] public int Id { get; set; }
+            [JsonPropertyName("name")] public string? Name { get; set; }
+            [JsonPropertyName("original_name")] public string? OriginalName { get; set; }
+            [JsonPropertyName("first_air_date")] public string? FirstAirDate { get; set; }
+            [JsonPropertyName("poster_path")] public string? PosterPath { get; set; }
+            [JsonPropertyName("overview")] public string? Overview { get; set; }
+            [JsonPropertyName("genre_ids")] public List<int>? GenreIds { get; set; }
+
+            public TmdbMatch.Candidate ToCandidate() => new()
+            {
+                Id = Id,
+                Title = Name,
+                OriginalTitle = OriginalName,
+                ReleaseDate = FirstAirDate,
+                PosterPath = PosterPath,
+                Overview = Overview,
+                GenreIds = GenreIds
+            };
+        }
+
+        private sealed class TmdbTvSearchResult
+        {
+            [JsonPropertyName("results")] public List<TmdbTvResult>? Results { get; set; }
+        }
+
+        /// <summary>The body of <c>/tv/{id}</c> with credits and external ids appended.</summary>
+        public sealed class TmdbSeriesDetails
+        {
+            [JsonPropertyName("id")] public int Id { get; set; }
+            [JsonPropertyName("name")] public string? Name { get; set; }
+            [JsonPropertyName("original_name")] public string? OriginalName { get; set; }
+            [JsonPropertyName("overview")] public string? Overview { get; set; }
+            [JsonPropertyName("poster_path")] public string? PosterPath { get; set; }
+            [JsonPropertyName("backdrop_path")] public string? BackdropPath { get; set; }
+            [JsonPropertyName("first_air_date")] public string? FirstAirDate { get; set; }
+            [JsonPropertyName("vote_average")] public double? VoteAverage { get; set; }
+            [JsonPropertyName("genres")] public List<TmdbGenre>? Genres { get; set; }
+            [JsonPropertyName("created_by")] public List<TmdbCreator>? CreatedBy { get; set; }
+            [JsonPropertyName("credits")] public TmdbCredits? Credits { get; set; }
+            [JsonPropertyName("external_ids")] public TmdbExternalIds? ExternalIds { get; set; }
+        }
+
+        public sealed class TmdbCreator
+        {
+            [JsonPropertyName("name")] public string? Name { get; set; }
+        }
+
+        public sealed class TmdbExternalIds
+        {
+            [JsonPropertyName("imdb_id")] public string? ImdbId { get; set; }
+        }
+
+        private sealed class TmdbSeason
+        {
+            [JsonPropertyName("episodes")] public List<TmdbEpisode>? Episodes { get; set; }
+        }
+
+        /// <summary>One episode of a season, as <c>/tv/{id}/season/{n}</c> describes it.</summary>
+        public sealed class TmdbEpisode
+        {
+            [JsonPropertyName("season_number")] public int SeasonNumber { get; set; }
+            [JsonPropertyName("episode_number")] public int EpisodeNumber { get; set; }
+            [JsonPropertyName("name")] public string? Name { get; set; }
+            [JsonPropertyName("overview")] public string? Overview { get; set; }
+            [JsonPropertyName("runtime")] public int? Runtime { get; set; }
+            [JsonPropertyName("air_date")] public string? AirDate { get; set; }
+            [JsonPropertyName("still_path")] public string? StillPath { get; set; }
         }
 
         /// <summary>

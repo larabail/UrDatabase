@@ -305,7 +305,9 @@ namespace UrDatabase.Services
         /// </summary>
         /// <remarks>
         /// The order is the rule. What the filename says in front of the marker is best, because
-        /// it sits beside the episode it describes. Failing that, the nearest directory above the
+        /// it sits beside the episode it describes — though when it carries no year, a directory
+        /// above that names the same programme can supply one (see
+        /// <see cref="YearFromNamingDirectory"/>). Failing that, the nearest directory above the
         /// season — <c>The Sopranos/Season 01/</c> — which is how most libraries are actually laid
         /// out. Failing both, there is no programme, and an episode with no programme is refused:
         /// <c>series.title</c> is NOT NULL, and a shelf of episodes filed under a name this class
@@ -342,6 +344,10 @@ namespace UrDatabase.Services
                     break;
                 }
             }
+            else if (series.Year is null)
+            {
+                series = series with { Year = YearFromNamingDirectory(series.Title, directoriesAboveSeason) };
+            }
 
             if (series.Title.Length == 0) return false;
 
@@ -354,6 +360,37 @@ namespace UrDatabase.Services
                 inferred);
 
             return true;
+        }
+
+        /// <summary>
+        /// The year of the directory that names the same programme as the filename, when the
+        /// filename named it without one: <c>Fargo (2014)/Fargo.S01E01.mkv</c>.
+        /// </summary>
+        /// <remarks>
+        /// The filename stays the better source for the name — it sits beside the episode — but a
+        /// year is the one thing that tells two programmes of one name apart, and identifying
+        /// "Fargo" without one is refused rather than guessed. So the year is borrowed from the
+        /// nearest directory above that is the same programme by the rules that make two titles
+        /// one film. Only that directory: <c>Television (2020)/Fargo.S01E01.mkv</c> must not make
+        /// Fargo a programme from 2020.
+        /// </remarks>
+        private static int? YearFromNamingDirectory(string title, List<string> directories)
+        {
+            var wanted = MovieIndex.NormalizeTitle(title);
+            if (wanted.Length == 0) return null;
+
+            for (var i = directories.Count - 1; i >= 0; i--)
+            {
+                if (IsSeasonDirectory(directories[i])) continue;
+
+                var candidate = FilenameParser.Parse(directories[i]);
+                if (candidate.Year is not int year) continue;
+
+                if (string.Equals(MovieIndex.NormalizeTitle(candidate.Title), wanted, StringComparison.Ordinal))
+                    return year;
+            }
+
+            return null;
         }
 
         /// <summary>
