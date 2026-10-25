@@ -1677,6 +1677,10 @@ namespace UrDatabase.Views
             // exactly what the person is correcting; leaving them would put the film on the wrong
             // shelf permanently, since nothing asks TMDB about a film that already has a poster.
             await SaveGenresAsync(vm, CreditLine.Genres(details), cts.Token);
+
+            // The same goes for the length, rating and people the library filters on: whatever is
+            // stored belongs to the film this was wrongly matched to.
+            await SaveFactsAsync(vm, FilmFactsStore.From(details, credits), details.ImdbId, cts.Token);
             vm.BackdropUrl = string.IsNullOrWhiteSpace(details.BackdropPath) ? null : tmdb.BuildImageUrl(details.BackdropPath!);
             vm.TopCast = CreditLine.Cast(credits);
             vm.KeyCrew = CreditLine.Crew(credits);
@@ -1773,6 +1777,26 @@ namespace UrDatabase.Views
             catch (Exception ex)
             {
                 AppLog.Write("posters.log", $"could not save genres for movie {vm.LocalId}: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Records the chosen film's length, rating and people against the movie row, and moves the
+        /// cached IMDb rating over to the chosen film (see FilmFactsStore.SaveCorrectedAsync).
+        /// Reported to the log on failure for the same reason as the genres above.
+        /// </summary>
+        private async Task SaveFactsAsync(MovieDetailsVm vm, FilmFacts facts, string? imdbId, CancellationToken ct)
+        {
+            if (string.IsNullOrWhiteSpace(_dbPath) || vm.LocalId <= 0) return;
+
+            try
+            {
+                using var conn = Database.Open(_dbPath);
+                await FilmFactsStore.SaveCorrectedAsync(conn, vm.LocalId, facts, imdbId, ct);
+            }
+            catch (Exception ex)
+            {
+                AppLog.Write("posters.log", $"could not save length, rating and cast for movie {vm.LocalId}: {ex.Message}");
             }
         }
     }

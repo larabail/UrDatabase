@@ -47,6 +47,26 @@ namespace UrDatabase.Views
 
         private LibrarySource _source = LibrarySource.Everywhere;
         private LibraryKind _kind = LibraryKind.Everything;
+
+        /// <summary>
+        /// What the filter row narrows by: length, rating, and an actor or director. Applied on top
+        /// of the source and kind rows, and underneath the genre row, so the genre counts describe
+        /// what the filters leave.
+        /// </summary>
+        private LibraryRefinement _refinement = LibraryRefinement.None;
+
+        /// <summary>The length controls in the filter row.</summary>
+        public ObservableCollection<RuntimeChip> RuntimeChips { get; } = new();
+
+        /// <summary>The rating controls in the filter row.</summary>
+        public ObservableCollection<RatingChip> RatingChips { get; } = new();
+
+        /// <summary>
+        /// Holds back the actor filter until typing pauses. Narrowing a few thousand cards and
+        /// rebuilding every shelf is not free, and doing it for "c", "ch", "chr" on the way to a
+        /// name rearranges the page under somebody who has not finished asking.
+        /// </summary>
+        private DispatcherTimer? _personDebounce;
         public string? SelectedGenre { get; set; } = LibraryGrouping.AllGenres;
         public ObservableCollection<GenreGroup> VisibleGroups { get; } = new();
         public ObservableCollection<UiMovie> FlatResults { get; } = new();
@@ -126,11 +146,14 @@ namespace UrDatabase.Views
         /// <summary>
         /// The library as the window is currently showing it: everything, or only what is on this
         /// machine, or only what is on the server — and, crossed with that, only the films or only
-        /// the television. Genre counts, the shelves and the search results are all built from
-        /// this rather than from <c>_allMovies</c>, so a filtered view is filtered consistently
-        /// rather than in the one place somebody remembered.
+        /// the television, narrowed by whatever the filter row asks for. Genre counts, the shelves
+        /// and the search results are all built from this rather than from <c>_allMovies</c>, so a
+        /// filtered view is filtered consistently rather than in the one place somebody remembered.
         /// </summary>
-        private IReadOnlyList<UiMovie> VisibleMovies =>
+        private IReadOnlyList<UiMovie> VisibleMovies => _refinement.Apply(UnrefinedMovies);
+
+        /// <summary>The same, before the filter row: what the filters are narrowing.</summary>
+        private IReadOnlyList<UiMovie> UnrefinedMovies =>
             LibraryFilter.Apply(LibraryFilter.Apply(_allMovies, _source), _kind);
 
         /// <summary>The server's whole library as cards, unfiltered. Empty when Jellyfin is off.</summary>
@@ -264,6 +287,15 @@ namespace UrDatabase.Views
             _progressTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(250) };
             _progressTimer.Tick += (_, __) => ApplyProgress();
 
+            _personDebounce = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(300) };
+            _personDebounce.Tick += (_, __) =>
+            {
+                _personDebounce.Stop();
+                ApplyPersonFilter();
+            };
+
+            BuildRefinements();
+
             _searchLoop = new SearchCoordinator<LibraryView>(
                 run: (query, ct) => _library.LoadAsync(query, _remoteMovies, ct),
                 apply: ApplyLibrary,
@@ -272,7 +304,7 @@ namespace UrDatabase.Views
 
             // Runs after the poster drain in OnClosing, and has to: cancelling this first would
             // cut short the very fetches the drain is there to let finish.
-            Closed += (_, __) => { DetailsView.Close(); SeriesView.Close(); _cts.Cancel(); _progressTimer?.Stop(); _searchLoop.Dispose(); _posterLoader?.Dispose(); _ratings.Dispose(); _awards.Dispose(); _jellyfin?.Dispose(); };
+            Closed += (_, __) => { DetailsView.Close(); SeriesView.Close(); _cts.Cancel(); _progressTimer?.Stop(); _personDebounce?.Stop(); _searchLoop.Dispose(); _posterLoader?.Dispose(); _ratings.Dispose(); _awards.Dispose(); _jellyfin?.Dispose(); };
 
             DataContext = this;
 
@@ -560,7 +592,9 @@ namespace UrDatabase.Views
 
             // A search that found nothing has to say so. Silence reads as a broken search box.
             NoResultsText.IsVisible = FlatResults.Count == 0;
-            NoResultsText.Text = $"Nothing in the library matches \u201c{_view.Query}\u201d.";
+            NoResultsText.Text = _refinement.IsActive
+                ? $"Nothing in the library matches \u201c{_view.Query}\u201d with these filters."
+                : $"Nothing in the library matches \u201c{_view.Query}\u201d.";
 
             // The genre row deliberately keeps describing the whole library rather than the
             // current results, so it does not rearrange itself under the cursor between one
@@ -655,26 +689,36 @@ namespace UrDatabase.Views
         }
 
         /// <summary>
-        /// Puts films that have just learned what they are onto the right shelves.
+        /// Puts films that have just learned what they are onto the right shelves, and onto a
+        /// filtered page that was waiting for them.
         /// </summary>
         /// <remarks>
-        /// Only while the shelves are what is on screen. Rebuilding them under a search would
-        /// throw away the results somebody is reading, and the grouped view is rebuilt from
-        /// scratch on the way back to it anyway — so this waits rather than fighting.
+        /// Only while the shelves are what is on screen, or while the filter row has emptied the
+        /// page. Rebuilding under a search would throw away the results somebody is reading, and
+        /// the grouped view is rebuilt from scratch on the way back to it anyway — so this waits
+        /// rather than fighting. The filtered-empty page is the exception because it has no
+        /// shelves to keep: straight after a scan it is empty precisely because the length and
+        /// rating it asks about are still arriving, and it has to fill in as they do.
+        ///
+        /// Through <see cref="ReapplyFilters"/>, which rebuilds the chips first — a genre nothing
+        /// had until a moment ago has to exist as a bucket before anything can be put in it — and
+        /// then chooses the panel, so the page leaves the "nothing matches" state once something
+        /// does, and the note about films not known yet is rewritten.
         /// </remarks>
         private void RegroupForNewGenres()
         {
-            if (!_genresStale) return;
-            if (_sinceRegroup.Elapsed < RegroupInterval) return;
-            if (_view.IsSearch || !GroupPanel.IsVisible) return;
+            if (!LibraryRegroup.ShouldRedraw(
+                    stale: _genresStale,
+                    due: _sinceRegroup.Elapsed >= RegroupInterval,
+                    searching: _view.IsSearch,
+                    shelvesShown: GroupPanel.IsVisible,
+                    emptiedByFilters: NoMatchPanel.IsVisible))
+                return;
 
             _genresStale = false;
             _sinceRegroup.Restart();
 
-            // The chips first: a genre nothing had until a moment ago has to exist as a bucket
-            // before anything can be put in it, and the shelves are built from the chip list.
-            BuildGenres();
-            RebuildGroups();
+            ReapplyFilters();
         }
 
         /// <summary>
@@ -777,7 +821,7 @@ namespace UrDatabase.Views
         /// Puts back the last thing taken out of the Continue watching row.
         /// </summary>
         /// <remarks>
-        /// Never while a film or a programme is open, and never while the search box has focus:
+        /// Never while a film or a programme is open, and never while a text field has focus:
         /// undo in a text field means undo the typing, and quietly restoring a card behind a
         /// screen the user is reading would be an action with no visible effect.
         /// </remarks>
@@ -793,7 +837,8 @@ namespace UrDatabase.Views
                 _window._lastDismissal is not null &&
                 !_window.DetailsView.IsShowing &&
                 !_window.SeriesView.IsShowing &&
-                !_window.SearchBox.IsFocused;
+                !_window.SearchBox.IsFocused &&
+                !_window.PersonBox.IsFocused;
 
             public void Execute(object? parameter)
             {
@@ -831,6 +876,7 @@ namespace UrDatabase.Views
         private void BuildSources()
         {
             BuildKinds();
+            BuildRefinements();
 
             // Narrowed by kind, and deliberately: with television selected, the source row has to
             // count the television. It said "412 Offline" beside an empty page otherwise, because
@@ -958,6 +1004,85 @@ namespace UrDatabase.Views
             ReapplyFilters();
         }
 
+        // ---------- the filter row ----------
+
+        /// <summary>
+        /// Rebuilds the length and rating controls from the current filter, and says how many
+        /// films the filters are hiding only because nothing has told the app enough about them.
+        /// </summary>
+        /// <remarks>
+        /// That note is not decoration. Straight after a scan most local films have no length or
+        /// cast yet — the poster pass fills those in behind the artwork — and a filter that quietly
+        /// left them out would look like it had lost half the library.
+        /// </remarks>
+        private void BuildRefinements()
+        {
+            RuntimeChips.Clear();
+            foreach (var range in LibraryRefinement.RuntimeOptions)
+                RuntimeChips.Add(new RuntimeChip { Range = range, IsSelected = range == _refinement.Runtime });
+
+            RatingChips.Clear();
+            foreach (var minimum in LibraryRefinement.RatingOptions)
+                RatingChips.Add(new RatingChip { Minimum = minimum, IsSelected = minimum == _refinement.MinimumRating });
+
+            if (ClearFiltersButton is not null) ClearFiltersButton.IsVisible = _refinement.IsActive;
+
+            if (RefinementNoteText is not null)
+                RefinementNoteText.Text = LibraryRefinement.UnknownNote(_refinement.Unknown(UnrefinedMovies));
+        }
+
+        private void RuntimeChip_Click(object? sender, RoutedEventArgs e)
+        {
+            if (sender is not ToggleButton tb || tb.DataContext is not RuntimeChip chip) return;
+
+            _refinement = _refinement with { Runtime = chip.Range };
+
+            ReapplyFilters();
+        }
+
+        private void RatingChip_Click(object? sender, RoutedEventArgs e)
+        {
+            if (sender is not ToggleButton tb || tb.DataContext is not RatingChip chip) return;
+
+            _refinement = _refinement with { MinimumRating = chip.Minimum };
+
+            ReapplyFilters();
+        }
+
+        private void PersonBox_TextChanged(object? sender, TextChangedEventArgs e)
+        {
+            if (_personDebounce is null) return;
+
+            _personDebounce.Stop();
+            _personDebounce.Start();
+        }
+
+        /// <summary>Applies whatever is in the actor field now, if it changes what is asked.</summary>
+        private void ApplyPersonFilter()
+        {
+            var person = (PersonBox?.Text ?? "").Trim();
+            if (string.Equals(person, _refinement.Person, StringComparison.Ordinal)) return;
+
+            _refinement = _refinement with { Person = person };
+
+            ReapplyFilters();
+        }
+
+        /// <summary>
+        /// Puts the filter row back to nothing. The genre, source and kind rows are left as they
+        /// were: they are separate questions, and this button only answers for its own row.
+        /// </summary>
+        private void ClearFilters_Click(object? sender, RoutedEventArgs e)
+        {
+            _personDebounce?.Stop();
+            _refinement = LibraryRefinement.None;
+
+            // Cleared after the filter, so the text-changed it raises finds nothing left to apply.
+            if (PersonBox is not null) PersonBox.Text = "";
+
+            ReapplyFilters();
+        }
+
         /// <summary>
         /// The vertical flow for a single genre. One method rather than the same six lines in each
         /// of the three places that used to select a genre.
@@ -1024,7 +1149,8 @@ namespace UrDatabase.Views
                 // for that artwork to belong to — it keeps whatever poster it already had.
                 if (m.IsRemote) continue;
                 if (!includeKnown && !string.IsNullOrWhiteSpace(m.PosterPath)
-                    && !string.IsNullOrWhiteSpace(m.Genres)) continue;
+                    && !string.IsNullOrWhiteSpace(m.Genres)
+                    && (m.FactsKnown || loader.HasAskedForFacts(m.Id))) continue;
 
                 // Queued rather than discarded. The task used to be dropped on the floor here,
                 // which is what let a closing window walk away from work it had started: nothing
@@ -1079,6 +1205,20 @@ namespace UrDatabase.Views
                 m.Genres = found.Genres;
                 _genresStale = true;
                 _progressTimer?.Start();
+            }
+
+            // Length, rating and people arrive behind everything else. They change nothing on the
+            // card, so the page only has to be redrawn when the filter row is asking about them —
+            // and then on the same slow beat as the genres, for the same reason.
+            if (found.Facts is not null)
+            {
+                m.ApplyFacts(found.Facts);
+
+                if (_refinement.IsActive)
+                {
+                    _genresStale = true;
+                    _progressTimer?.Start();
+                }
             }
 
             if (gained) NotePosterArrived();
@@ -1819,6 +1959,7 @@ namespace UrDatabase.Views
             GroupPanel.IsVisible = false;
             SingleGenrePanel.IsVisible = false;
             EmptyPanel.IsVisible = false;
+            NoMatchPanel.IsVisible = false;
         }
 
         /// <summary>
@@ -1830,10 +1971,16 @@ namespace UrDatabase.Views
         {
             var empty = VisibleMovies.Count == 0;
 
+            // Empty because of the filter row is a different page from empty because nothing has
+            // been scanned: inviting somebody with a library of four hundred films to choose some
+            // folders would be telling them their films had gone.
+            var filteredOut = empty && LibraryRegroup.EmptiedByFilters(_refinement, UnrefinedMovies);
+
             SearchPanel.IsVisible = false;
             GroupPanel.IsVisible = !empty;
             SingleGenrePanel.IsVisible = false;
-            EmptyPanel.IsVisible = empty;
+            EmptyPanel.IsVisible = empty && !filteredOut;
+            NoMatchPanel.IsVisible = filteredOut;
         }
 
         private void ShowSingleGenre()
@@ -1842,6 +1989,7 @@ namespace UrDatabase.Views
             GroupPanel.IsVisible = false;
             SingleGenrePanel.IsVisible = true;
             EmptyPanel.IsVisible = false;
+            NoMatchPanel.IsVisible = false;
         }
 
         private async void MovieCard_Click(object? sender, PointerPressedEventArgs e)

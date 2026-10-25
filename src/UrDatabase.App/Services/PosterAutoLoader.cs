@@ -80,16 +80,38 @@ namespace UrDatabase.Services
         /// </summary>
         private readonly ConcurrentQueue<Request> _pending = new();
 
+        /// <summary>
+        /// Films whose length, rating and people are still to be asked for, behind
+        /// <see cref="_pending"/>.
+        /// </summary>
+        /// <remarks>
+        /// A queue of its own, and always the second one a worker looks in. The request that
+        /// fetches these is extra to the one that finds a film's poster and genres, and on a
+        /// library of thousands it would otherwise double the time before the shelves sort
+        /// themselves out — which is the wait people actually notice. So artwork and genres go
+        /// first for every film, and the filters fill in behind them.
+        /// </remarks>
+        private readonly ConcurrentQueue<Request> _facts = new();
+
+        /// <summary>Films a facts request has been queued for since the last Refresh, and those still waiting.</summary>
+        private readonly HashSet<long> _factsAsked = new();
+        private readonly HashSet<long> _factsWaiting = new();
+
         private int _outstanding;
         private int _workers;
 
         /// <summary>One film to look up, and who to tell about it.</summary>
+        /// <param name="FactsFor">
+        /// Set on a request for a film's length, rating and people, to the TMDB film to ask about.
+        /// Null on the ordinary lookup.
+        /// </param>
         private readonly record struct Request(
             long MovieId,
             string Title,
             int? Year,
             Action<Enrichment> OnFetched,
-            CancellationToken Token);
+            CancellationToken Token,
+            int? FactsFor = null);
 
         /// <summary>
         /// One TMDB client for the whole library, rather than one per poster.
@@ -173,7 +195,48 @@ namespace UrDatabase.Services
                     _outcomes.Count(entry => entry.Value == LookupOutcome.Matched),
                     _outcomes.Count(entry => entry.Value == LookupOutcome.Unmatched),
                     _outcomes.Count(entry => entry.Value == LookupOutcome.Failed));
+
+                _factsAsked.IntersectWith(_factsWaiting);
             }
+        }
+
+        /// <summary>
+        /// Whether this loader has already queued, or ruled out, a request for a film's length,
+        /// rating and people since the last Refresh. Lets the window stop offering a film that is
+        /// complete in every other respect each time the shelves are rebuilt.
+        /// </summary>
+        public bool HasAskedForFacts(long movieId)
+        {
+            lock (_attemptLock)
+                return _factsAsked.Contains(movieId);
+        }
+
+        /// <summary>
+        /// Queues the request for a film's length, rating and people, once per film until Refresh.
+        /// Called by a worker that has just learned which TMDB film this is, or found it already
+        /// knew and that these were all that was missing.
+        /// </summary>
+        private void QueueFacts(long movieId, int tmdbId, Action<Enrichment> onFetched, CancellationToken ct)
+        {
+            if (_disposed) return;
+
+            lock (_attemptLock)
+            {
+                if (!_factsAsked.Add(movieId)) return;
+                _factsWaiting.Add(movieId);
+            }
+
+            Interlocked.Increment(ref _outstanding);
+            _facts.Enqueue(new Request(movieId, "", null, onFetched, ct, FactsFor: tmdbId));
+
+            StartWorkerIfNeeded();
+        }
+
+        /// <summary>Records that a film cannot be asked about, so the window stops offering it.</summary>
+        private void RuleOutFacts(long movieId)
+        {
+            lock (_attemptLock)
+                _factsAsked.Add(movieId);
         }
 
         private void RegisterProgress(long movieId)
@@ -280,11 +343,16 @@ namespace UrDatabase.Services
             {
                 while (true)
                 {
-                    while (_pending.TryDequeue(out var request))
+                    // Artwork and genres first, every time a worker comes back for more: see
+                    // _facts for why the extra request waits behind them.
+                    while (_pending.TryDequeue(out var request) || _facts.TryDequeue(out request))
                     {
                         try
                         {
-                            await FetchAsync(request).ConfigureAwait(false);
+                            if (request.FactsFor is int tmdbId)
+                                await FetchFactsAsync(request, tmdbId).ConfigureAwait(false);
+                            else
+                                await FetchAsync(request).ConfigureAwait(false);
                         }
                         finally
                         {
@@ -294,7 +362,7 @@ namespace UrDatabase.Services
 
                     Interlocked.Decrement(ref _workers);
 
-                    if (_pending.IsEmpty) return;
+                    if (_pending.IsEmpty && _facts.IsEmpty) return;
 
                     // Something arrived as this was standing down. Take the post back if nobody
                     // else already has, and otherwise leave it to them.
@@ -355,7 +423,7 @@ namespace UrDatabase.Services
         /// </remarks>
         private async Task FetchAsync(Request request)
         {
-            var (movieId, title, year, onFetched, ct) = request;
+            var (movieId, title, year, onFetched, ct, _) = request;
 
             if (string.IsNullOrWhiteSpace(_cfg.TmdbApiKey)) return;
 
@@ -394,11 +462,23 @@ namespace UrDatabase.Services
                 // A guard that returned silently here would drop those, so the artwork reached
                 // the database and never the card: posters that only appeared after a restart,
                 // which is most of the bug this set out to fix, reintroduced by the fix for it.
-                var hasArtwork = HasArtwork(known.PosterPath);
-                if (hasArtwork || !string.IsNullOrWhiteSpace(known.Genres))
-                    onFetched(new Enrichment(hasArtwork ? known.PosterPath : null, known.Genres));
-                if (hasArtwork && !string.IsNullOrWhiteSpace(known.Genres))
+                var hasArtwork = HasArtwork(known.Found.PosterPath);
+                if (hasArtwork || !string.IsNullOrWhiteSpace(known.Found.Genres))
+                    onFetched(new Enrichment(hasArtwork ? known.Found.PosterPath : null, known.Found.Genres));
+                if (hasArtwork && !string.IsNullOrWhiteSpace(known.Found.Genres))
                 {
+                    // Complete apart from, at most, its length, rating and people. Those are asked
+                    // for behind everything else, and only when there is an identification to ask
+                    // with. A film with artwork and genres but no TMDB id — chosen by hand, or
+                    // enriched by a build older than the id column — is left alone rather than
+                    // re-identified from its title, which could pick a different film from the one
+                    // its poster shows. Correcting the match on its details screen supplies an id.
+                    if (!known.FactsKnown)
+                    {
+                        if (known.TmdbId is int id) QueueFacts(movieId, id, onFetched, ct);
+                        else RuleOutFacts(movieId);
+                    }
+
                     CompleteProgress(movieId, LookupOutcome.Matched);
                     return;
                 }
@@ -414,16 +494,23 @@ namespace UrDatabase.Services
                 // cost nothing extra here. Before this, nothing in the app ever wrote the genres
                 // column for a scanned film, and every one of them sat in a single Uncategorised
                 // bucket for the life of the library.
-                int? tmdbId = MovieMatch.ReadTmdbId(conn, movieId);
+                int? tmdbId = known.TmdbId;
                 string? posterPath;
                 string? genres;
+                FilmFacts? facts = null;
                 if (tmdbId is int knownId)
                 {
-                    var details = await _tmdb.GetDetailsByIdAsync(knownId, token);
+                    // With the credits appended when the filters still need them: the same one
+                    // request answers both questions, so a film already identified never costs a
+                    // second one.
+                    var details = known.FactsKnown
+                        ? await _tmdb.GetDetailsByIdAsync(knownId, token)
+                        : await _tmdb.GetFilmFactsAsync(knownId, token);
                     if (details is null)
                         throw new HttpRequestException("TMDB did not return this film. Press Refresh to retry.");
                     posterPath = details.PosterPath;
                     genres = CreditLine.Genres(details);
+                    if (!known.FactsKnown) facts = FilmFactsStore.From(details);
                 }
                 else
                 {
@@ -437,11 +524,13 @@ namespace UrDatabase.Services
                 // good: the column would never be written on this launch or any other.
                 if (tmdbId is null)
                 {
+                    // Nothing to ask TMDB about its length or cast with, either.
+                    RuleOutFacts(movieId);
                     CompleteProgress(movieId, LookupOutcome.Unmatched);
                     return;
                 }
 
-                string? pathToStore = hasArtwork ? known.PosterPath : null;
+                string? pathToStore = hasArtwork ? known.Found.PosterPath : null;
 
                 if (!hasArtwork && !string.IsNullOrWhiteSpace(posterPath))
                 {
@@ -464,14 +553,21 @@ namespace UrDatabase.Services
                 // which is what a film with no artwork wants — it must not blank a poster somebody
                 // chose by hand.
                 await MovieMatch.SaveAsync(conn, movieId, tmdbId.Value, pathToStore, genres: genres, ct: token);
+                if (facts is not null) await FilmFactsStore.SaveAsync(conn, movieId, facts, token);
                 CompleteProgress(movieId, LookupOutcome.Matched);
 
                 onFetched(new Enrichment(pathToStore,
-                    string.IsNullOrWhiteSpace(known.Genres) ? genres : known.Genres)
+                    string.IsNullOrWhiteSpace(known.Found.Genres) ? genres : known.Found.Genres)
                 {
-                    ArtworkRepaired = !hasArtwork && known.HasPoster
-                        && string.Equals(known.PosterPath, pathToStore, StringComparison.Ordinal)
+                    ArtworkRepaired = !hasArtwork && known.Found.HasPoster
+                        && string.Equals(known.Found.PosterPath, pathToStore, StringComparison.Ordinal),
+                    Facts = facts
                 });
+
+                // Found by a search, so the length, rating and people are still to be asked for —
+                // behind every other film's artwork and genres rather than ahead of them.
+                if (facts is null && !known.FactsKnown) QueueFacts(movieId, tmdbId.Value, onFetched, ct);
+                else RuleOutFacts(movieId);
             }
             catch (OperationCanceledException) when (token.IsCancellationRequested)
             {
@@ -521,25 +617,104 @@ namespace UrDatabase.Services
                 || File.Exists(PlatformPaths.Expand(path)));
 
         /// <summary>
-        /// The artwork and genres the catalogue already holds for a film.
+        /// The artwork, genres and identification the catalogue already holds for a film, and
+        /// whether its length, rating and people have been asked for.
         /// </summary>
         /// <remarks>
         /// Both columns, not just the poster. A film looked up in an earlier pass has its genres
         /// written down too, and a card rebuilt by a later library read has to be told about them
         /// or it stays in the Uncategorised bucket while the database says otherwise.
         /// </remarks>
-        private static async Task<Enrichment> ReadKnownAsync(SqliteConnection conn, long movieId, CancellationToken ct)
+        private static async Task<Known> ReadKnownAsync(SqliteConnection conn, long movieId, CancellationToken ct)
         {
             using var cmd = conn.CreateCommand();
-            cmd.CommandText = "SELECT poster_path, genres FROM movies WHERE id=@id";
+            cmd.CommandText = "SELECT poster_path, genres, tmdb_id, facts_fetched_at IS NOT NULL FROM movies WHERE id=@id";
             cmd.Parameters.AddWithValue("@id", movieId);
 
             using var reader = await cmd.ExecuteReaderAsync(ct);
-            if (!await reader.ReadAsync(ct)) return Enrichment.None;
+            if (!await reader.ReadAsync(ct)) return new Known(Enrichment.None, null, false);
 
-            return new Enrichment(
-                reader.IsDBNull(0) ? null : reader.GetString(0),
-                reader.IsDBNull(1) ? null : reader.GetString(1));
+            int? tmdbId = null;
+            if (!reader.IsDBNull(2))
+            {
+                var id = reader.GetInt64(2);
+                if (id > 0 && id <= int.MaxValue) tmdbId = (int)id;
+            }
+
+            return new Known(
+                new Enrichment(
+                    reader.IsDBNull(0) ? null : reader.GetString(0),
+                    reader.IsDBNull(1) ? null : reader.GetString(1)),
+                tmdbId,
+                !reader.IsDBNull(3) && reader.GetInt64(3) != 0);
+        }
+
+        private readonly record struct Known(Enrichment Found, int? TmdbId, bool FactsKnown);
+
+        /// <summary>
+        /// Asks TMDB for a film's length, rating and people, writes them down, and reports them.
+        /// </summary>
+        /// <remarks>
+        /// Quieter than <see cref="FetchAsync"/> about failing. These fill in a filter rather than
+        /// a card, and the artwork and genres the person is looking at have already arrived; a
+        /// failure is logged and left for the next launch or Refresh, whose timestamp is still
+        /// unset, rather than put in the status line over something more useful.
+        ///
+        /// What is reported alongside the facts is what the catalogue now holds for the film, not
+        /// a blank: whoever is listening may keep only the last answer it was given.
+        /// </remarks>
+        private async Task FetchFactsAsync(Request request, int tmdbId)
+        {
+            var (movieId, _, _, onFetched, ct, _) = request;
+
+            var acquired = false;
+
+            using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct, _stopping.Token);
+            var token = linked.Token;
+
+            Interlocked.Increment(ref _active);
+
+            try
+            {
+                if (string.IsNullOrWhiteSpace(_cfg.TmdbApiKey)) return;
+
+                await _gate.WaitAsync(token);
+                acquired = true;
+
+                var details = await _tmdb.GetFilmFactsAsync(tmdbId, token);
+                if (details is null)
+                {
+                    AppLog.Write("posters.log", $"movieId={movieId} TMDB returned no details for {tmdbId}; length, rating and cast left unknown.");
+                    return;
+                }
+
+                var facts = FilmFactsStore.From(details);
+
+                using var conn = Database.Open(_dbPath);
+                await FilmFactsStore.SaveAsync(conn, movieId, facts, token);
+
+                var known = await ReadKnownAsync(conn, movieId, token);
+                var poster = HasArtwork(known.Found.PosterPath) ? known.Found.PosterPath : null;
+
+                onFetched(new Enrichment(poster, known.Found.Genres) { Facts = facts });
+            }
+            catch (OperationCanceledException) when (token.IsCancellationRequested)
+            {
+                // Not an answer. Asked again after the next Refresh or launch.
+                lock (_attemptLock) _factsAsked.Remove(movieId);
+            }
+            catch (Exception ex)
+            {
+                AppLog.Write("posters.log", $"movieId={movieId} facts for {tmdbId}: {ex}");
+            }
+            finally
+            {
+                if (acquired) _gate.Release();
+
+                lock (_attemptLock) _factsWaiting.Remove(movieId);
+
+                if (Interlocked.Decrement(ref _active) == 0 && _disposed) ReleaseClient();
+            }
         }
 
         /// <summary>

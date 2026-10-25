@@ -105,6 +105,14 @@ namespace UrDatabase.Services
             $"{ApiBaseUrl}/movie/{tmdbId}?api_key={Uri.EscapeDataString(_apiKey)}&language=en-US";
 
         /// <summary>
+        /// The film's record with its credits folded into the same response, which is what the
+        /// library's filters need — length, rating, cast and director — for one request rather
+        /// than two.
+        /// </summary>
+        public string BuildFactsUrl(int tmdbId) =>
+            BuildDetailsUrl(tmdbId) + "&append_to_response=credits";
+
+        /// <summary>
         /// Every genre TMDB files a film under, with the names that go with the ids a search
         /// returns. One request for the whole library rather than one per film.
         /// </summary>
@@ -708,6 +716,12 @@ namespace UrDatabase.Services
             [JsonPropertyName("runtime")] public int? Runtime { get; set; }
             [JsonPropertyName("vote_average")] public double? VoteAverage { get; set; }
             [JsonPropertyName("genres")] public List<TmdbGenre> Genres { get; set; } = new();
+
+            /// <summary>
+            /// Present only when the request asked for it with <c>append_to_response=credits</c>;
+            /// null on an ordinary details response.
+            /// </summary>
+            [JsonPropertyName("credits")] public TmdbCredits? Credits { get; set; }
         }
 
         public sealed class TmdbGenre
@@ -738,8 +752,18 @@ namespace UrDatabase.Services
         /// would throw their answer away and re-derive the wrong one.
         /// </summary>
         public async Task<TmdbDetails?> GetDetailsByIdAsync(int tmdbId, CancellationToken ct)
+            => await GetDetailsAsync(tmdbId, BuildDetailsUrl(tmdbId), ct);
+
+        /// <summary>
+        /// The same record with the credits in it, for one request. What the poster pass asks for
+        /// when it needs a film's length, rating and people as well as its artwork and genres.
+        /// </summary>
+        public async Task<TmdbDetails?> GetFilmFactsAsync(int tmdbId, CancellationToken ct)
+            => await GetDetailsAsync(tmdbId, BuildFactsUrl(tmdbId), ct);
+
+        private async Task<TmdbDetails?> GetDetailsAsync(int tmdbId, string url, CancellationToken ct)
         {
-            using var resp = await GetWithRetryAsync(BuildDetailsUrl(tmdbId), ct);
+            using var resp = await GetWithRetryAsync(url, ct);
             if (!resp.IsSuccessStatusCode) return null;
 
             await using var s = await resp.Content.ReadAsStreamAsync(ct);

@@ -261,7 +261,8 @@ namespace UrDatabase.Tests
 
             Assert.True(await loader.DrainAsync(TimeSpan.FromSeconds(30)));
 
-            Assert.Equal(ids.Length, handler.CallCount);
+            // One search per film, then one request per film for its length, rating and people.
+            Assert.Equal(ids.Length * 2, handler.CallCount);
             Assert.Equal(0, handler.DisposeCount);
             Assert.All(ids, id => Assert.False(string.IsNullOrWhiteSpace(StoredPoster(id))));
         }

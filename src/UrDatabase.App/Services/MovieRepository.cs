@@ -42,19 +42,39 @@ namespace UrDatabase.Services
        EXISTS (SELECT 1 FROM files WHERE files.movie_id = m.id AND files.missing_since IS NULL)     AS HasFileHere,
        EXISTS (SELECT 1 FROM files WHERE files.movie_id = m.id AND files.missing_since IS NOT NULL) AS HasFileMissing";
 
+        /// <summary>
+        /// What the library's filters ask about a film. The rating is the IMDb one when the
+        /// catalogue has fetched it — that is the number the details screen leads with — and
+        /// TMDB's average otherwise, so a film opened once does not filter on a different number
+        /// from the one it was seen wearing.
+        /// </summary>
+        private const string FactColumns = @"
+       m.runtime_minutes AS RuntimeMinutes,
+       COALESCE((SELECT r.rating FROM imdb_ratings r
+                 WHERE r.movie_id = m.id AND r.rating IS NOT NULL AND r.rating > 0
+                 ORDER BY r.fetched_at DESC LIMIT 1), m.rating) AS Rating,
+       m.cast_list AS CastList, m.crew_list AS CrewList,
+       (m.facts_fetched_at IS NOT NULL) AS FactsKnown,";
+
         private const string ListSql = @"
 SELECT m.id AS Id, m.title AS Title, m.year AS Year, m.genres AS Genres, m.poster_path AS PosterPath, m.tmdb_id AS TmdbId,
-" + FileFacts + @"
+" + FactColumns + FileFacts + @"
 FROM movies m
 ORDER BY COALESCE(m.year,0) DESC, m.title";
 
         private const string SearchSql = @"
 SELECT m.id AS Id, m.title AS Title, m.year AS Year, m.genres AS Genres, m.poster_path AS PosterPath, m.tmdb_id AS TmdbId,
-" + FileFacts + @"
+" + FactColumns + FileFacts + @"
 FROM movies_fts f
 JOIN movies m ON m.id = f.rowid
 WHERE movies_fts MATCH @q
 ORDER BY rank";
+
+        /// <summary>
+        /// Whether this repository has brought the catalogue up to the current schema yet. See
+        /// <see cref="Query"/>.
+        /// </summary>
+        private int _schemaChecked;
 
         public MovieRepository(string? databasePath)
         {
@@ -97,10 +117,22 @@ ORDER BY rank";
             // never scanned anything, and creating a catalogue is a scan's job, not a read's.
             if (!Exists) return Array.Empty<UiMovie>();
 
-            // Not Database.Open: the read path has no business migrating the schema. Database.Connect
-            // is still the only way a catalogue connection is built, so this query gets the same busy
-            // timeout and the same WAL snapshot as every write it might be racing.
-            using var conn = Database.Connect(DatabasePath);
+            // Database.Connect is the only way a catalogue connection is built, so this query gets
+            // the same busy timeout and the same WAL snapshot as every write it might be racing.
+            //
+            // The first read through this repository migrates, every later one does not. This
+            // query names columns that only Database.Migrate adds to an existing library, and on
+            // an install with no Jellyfin server nothing else opens the catalogue before it: the
+            // first launch after an upgrade would fail on "no such column", show an empty library,
+            // and so never queue the poster fetches whose Database.Open would have repaired it.
+            // Once per repository is enough — it is rebuilt with the configuration — and keeps the
+            // schema check off the path every keystroke takes.
+            using var conn = Volatile.Read(ref _schemaChecked) == 0
+                ? Database.Open(DatabasePath)
+                : Database.Connect(DatabasePath);
+
+            // Only once it has worked: a migration that lost to a lock is tried again next read.
+            Volatile.Write(ref _schemaChecked, 1);
 
             ct.ThrowIfCancellationRequested();
 

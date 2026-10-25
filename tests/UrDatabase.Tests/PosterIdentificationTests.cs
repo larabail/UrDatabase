@@ -56,8 +56,19 @@ public sealed class PosterIdentificationTests : IDisposable
         const int count = 6001;
         Seed(count);
         var attemptsAfter648 = 0;
+        var factsRequests = 0;
         using var handler = new ConcurrentHandler(request =>
         {
+            // The length, rating and cast each identified film is asked for afterwards. Refused
+            // here, so this stays a test of identification: a refusal is logged and reports
+            // nothing, which keeps one callback per film.
+            if (request.RequestUri!.AbsolutePath.Contains("/movie/", StringComparison.Ordinal)
+                && !request.RequestUri.AbsolutePath.Contains("/search/", StringComparison.Ordinal)
+                && !request.RequestUri.AbsolutePath.Contains("/genre/", StringComparison.Ordinal))
+            {
+                Interlocked.Increment(ref factsRequests);
+                return new HttpResponseMessage(HttpStatusCode.NotFound) { Content = new StringContent("{}") };
+            }
             if (request.RequestUri!.AbsolutePath.EndsWith("/genre/movie/list", StringComparison.Ordinal))
                 return new HttpResponseMessage(HttpStatusCode.OK)
                 {
@@ -86,7 +97,8 @@ public sealed class PosterIdentificationTests : IDisposable
         Assert.True(await loader.DrainAsync(TimeSpan.FromSeconds(90)));
         Assert.Equal(0, loader.Pending);
         Assert.Equal(count, callbacks);
-        Assert.Equal(count + failures + 1, handler.CallCount);
+        Assert.Equal(count + failures + 1, handler.CallCount - factsRequests);
+        Assert.Equal(count, factsRequests);
         Assert.Equal(count, loader.Progress.Processed);
         Assert.Equal(count, loader.Progress.Matched);
         Assert.Equal(0, loader.Progress.Pending);
@@ -164,7 +176,10 @@ public sealed class PosterIdentificationTests : IDisposable
         await loader.EnsurePosterAsync(1, "Film 1", 1999, found => reported = found.Genres, default);
 
         Assert.Equal("Drama", reported);
-        Assert.Equal(2, handler.CallCount);
+
+        // The search and the genre list, and nothing for the rebuilt card. The film's length and
+        // cast are asked for once, separately and in the background, so they are left out here.
+        Assert.Equal(2, handler.Requests.Count(url => !url.Contains("/movie/42?", StringComparison.Ordinal)));
     }
 
     [Fact]

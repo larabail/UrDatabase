@@ -26,7 +26,18 @@ CREATE TABLE IF NOT EXISTS movies (
     -- The title the scanner derived from the filename, kept when a corrected TMDB match renames
     -- the film. The scanner resolves what it parses out of a filename, so without this a re-scan
     -- would fail to find the renamed row and insert a second one beside it.
-    scan_title  TEXT
+    scan_title  TEXT,
+    -- What the library's filters ask about a film: how long it is, how well it is rated out of
+    -- ten, and who is in it and who directed it. Filled in from TMDB's record for tmdb_id by the
+    -- poster pass, and replaced when somebody corrects the match. Cast and crew are one line per
+    -- person in the same shape jellyfin_movies stores them, because they are read back whole.
+    runtime_minutes  INTEGER,
+    rating           REAL,
+    cast_list        TEXT,
+    crew_list        TEXT,
+    -- When those four were last asked for. Null means never, which is what tells the poster pass a
+    -- film still needs the request; a film TMDB knows no runtime for is not asked again forever.
+    facts_fetched_at TEXT
 );
 
 CREATE TABLE IF NOT EXISTS files (

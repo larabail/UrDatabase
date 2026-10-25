@@ -125,7 +125,9 @@ namespace UrDatabase.Services
             // Read beside the films rather than joined into the query, because a server film has
             // no catalogue row to join against. Never allowed to cost the library: a report that
             // cannot be read leaves the cards unbadged, and the films are still shown.
-            FilmProblems.Stamp(all, LoadProblems());
+            // Only once the catalogue itself was read: a file SQLite cannot open at all has nothing
+            // to stamp onto, and reading it a second time would only report the same failure twice.
+            if (failure is null) FilmProblems.Stamp(all, LoadProblems());
 
             // The catalogue as it now stands, rather than as the query returned it. A film that
             // has just been taken out of the library must not still be counted in the line under
