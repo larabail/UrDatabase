@@ -1615,8 +1615,9 @@ namespace UrDatabase.Views
         // ==============================================================
 
         /// <summary>
-        /// Checks every drive the library lives on and raises the banner when one is away, or
-        /// lowers it when they are all back. Returns what it found so the dialog can show it.
+        /// Checks every drive — plugged in, remembered, or holding the library — and raises the
+        /// banner when one that matters is away, or lowers it when they are all back. Returns what
+        /// it found so the dialog can show it.
         ///
         /// Like the update check, nothing here is allowed to matter: a failure is logged and
         /// leaves the window as it was.
@@ -1626,7 +1627,7 @@ namespace UrDatabase.Views
             try
             {
                 var reports = await new DriveMonitor()
-                    .CheckLibraryAsync(_config.WatchFolders, _dbPath, _cts.Token);
+                    .CheckDrivesAsync(_config.WatchFolders, _dbPath, _cts.Token);
 
                 var headline = DriveStatusText.Headline(reports);
                 if (headline is null)
@@ -1641,7 +1642,7 @@ namespace UrDatabase.Views
 
                 AppLog.Write(
                     "drives.log",
-                    string.Join("; ", reports.Where(r => r.RaisesAlarm).Select(r => $"{r.Root} {r.State}")));
+                    string.Join("; ", reports.Where(r => r.RaisesAlarm).Select(r => $"{DriveStatusText.Name(r)} {r.State}")));
 
                 return reports;
             }
@@ -1670,12 +1671,38 @@ namespace UrDatabase.Views
                 var reports = await CheckDrivesAsync();
                 if (reports is null) return;
 
-                await MessageBoxWindow.ShowAsync(this, "Drives", DriveStatusText.Describe(reports));
+                await DrivesWindow.ShowAsync(this, reports, CheckDrivesAsync, ForgetDriveAsync);
             }
             finally
             {
                 DrivesButton.IsEnabled = true;
                 DriveDetailsButton.IsEnabled = true;
+            }
+        }
+
+        /// <summary>
+        /// Stops missing a disk the owner has retired. False when the catalogue would not take
+        /// the change, which the dialog says; the banner is brought up to date by the recheck the
+        /// dialog runs next.
+        /// </summary>
+        private async Task<bool> ForgetDriveAsync(DriveReport drive)
+        {
+            if (drive.Id is null) return false;
+
+            try
+            {
+                await DriveMonitor.ForgetAsync(_dbPath, drive.Id, _cts.Token);
+                AppLog.Write("drives.log", $"forgot {DriveStatusText.Name(drive)} ({drive.Id})");
+                return true;
+            }
+            catch (OperationCanceledException)
+            {
+                return false;
+            }
+            catch (Exception ex)
+            {
+                AppLog.Write("drives.log", $"could not forget {drive.Id}: {ex.Message}");
+                return false;
             }
         }
 

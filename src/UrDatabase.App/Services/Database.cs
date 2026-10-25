@@ -406,6 +406,14 @@ CREATE TABLE IF NOT EXISTS watchlist (
     item_key TEXT PRIMARY KEY COLLATE NOCASE,
     added_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS known_drives (
+    drive_id      TEXT PRIMARY KEY,
+    label         TEXT,
+    last_root     TEXT NOT NULL,
+    total_bytes   INTEGER,
+    first_seen_at TEXT NOT NULL,
+    last_seen_at  TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS oscar_lookups (
     title      TEXT    NOT NULL,
     year       INTEGER NOT NULL,

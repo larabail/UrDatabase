@@ -372,21 +372,36 @@ It runs on Windows and macOS from one codebase, built with
   or linking one by hand — brings the same film back on the next scan rather
   than a fresh copy of it (`Services/MissingFilms`).
 - **Know when a drive has gone.** On launch, behind a window that is already
-  usable, the app checks every drive a configured library folder lives on and
-  raises a red banner over the library when one is not connected, or is a
-  network share that did not answer within eight seconds. The banner names the
-  drive and how many catalogued films on it cannot be played until it is back;
-  **Check again** re-runs the check after you plug it in, and **Dismiss** hides
-  it until the next launch. Remove a dead drive's library folder in Settings
-  and the banner stops naming it. The **Drives** button in the top bar shows
-  every drive with its state, the films on it, its free space and the library
-  folders it holds — including drives that hold catalogued files but no library
-  folder, such as a retired disk or a copy linked by hand, which are listed there
-  but never raise the banner. The check only reports: nothing in the catalogue
-  changes because a drive is away. Drives are told apart by volume rather than
-  by path root, so an external disk under `/Volumes` on macOS is checked as
-  itself instead of as the boot disk it hangs off (`Services/DriveVolumes`,
-  `Services/DriveMonitor`, `Services/DriveStatusText`).
+  usable, the app lists every drive the operating system has mounted, checks
+  each one, and remembers every disk it sees in the catalogue. A disk that dies
+  is not reported missing by the operating system — it simply stops being
+  listed — so remembering is what lets the app notice: when a remembered disk
+  is not there, or a drive a configured library folder lives on is not
+  connected, or is a network share that did not answer within eight seconds, a
+  red banner goes up over the library. The banner names the drive and its
+  volume label and says how many catalogued films on it cannot be played until
+  it is back; **Check again** re-runs the check after you plug it in, and
+  **Dismiss** hides it until the next launch. The **Drives** button in the top
+  bar lists every drive — connected, missing, or known only from catalogued
+  files, such as a retired disk or a copy linked by hand, which are listed but
+  never raise the banner — with its state, the films on it, its free space and the library
+  folders it holds, and a missing remembered disk you have retired has a
+  **Forget** button there so it stops raising the banner (plug it in again and
+  it is remembered again). Remove a dead drive's library folder in Settings and
+  the banner stops naming that too. Disks are recognised by their volume serial
+  number on Windows, and by name and capacity on macOS, never by drive letter,
+  so a disk Windows gives another letter is found at the new one rather than
+  reported missing, and a different disk given an old letter does not hide that
+  the old one is gone. Only disks are remembered: a cloud drive such as Google
+  Drive, a network drive, an optical drive, a USB stick holding nothing in the
+  library, and on macOS a mounted disk image are listed when they are there but
+  never missed, and an empty card reader is not listed at all. The check only
+  reports: nothing in the library changes because a drive is away. Drives are
+  told apart by volume rather than by path root, so an external disk under
+  `/Volumes` on macOS is checked as itself instead of as the boot disk it hangs
+  off (`Services/DriveVolumes`, `Services/DriveEnumerator`,
+  `Services/DriveInventory`, `Services/DriveMonitor`,
+  `Services/KnownDriveStore`, `Services/DriveStatusText`).
 - **Play.** The details window opens the file the catalogue links to this film —
   the link the scan wrote, not a guess at the filename — and hands it to whatever
   the operating system uses. A film with no link, or whose only linked copy has
@@ -1379,7 +1394,8 @@ and `files` tables, the `scans` table each scan records itself in, the
 behind the Continue watching row and the `jellyfin_resume_dismissals` that are
 taken back out of it, the `watchlist` behind the Watchlist shelf, the
 `film_problems` you have reported about a copy, the `film_ratings` and
-`film_viewings` that hold your own ratings and watch log, the
+`film_viewings` that hold your own ratings and watch log, the `known_drives`
+every disk the drive check has seen is remembered in, the
 `movies_fts` FTS5 index and the
 triggers that keep it current — and every statement is `IF NOT EXISTS`, so it
 runs against a library you already have without touching your data.
@@ -1905,6 +1921,17 @@ Stated plainly, so nobody has to find out by using it:
   server-only film does not follow it once it is downloaded and becomes a local
   card, and there is no filter yet for "films with a problem" — the badge is the
   only way to find them.
+- **A disk is remembered by what the operating system can tell about it, and on
+  macOS that is not much.** Windows gives every volume a serial number, and that
+  is what a disk is known by there. .NET on macOS offers no serial and no way to
+  tell a USB stick from a disk, so a Mac remembers every volume under
+  `/Volumes` that is not a disk image by its name and capacity: renaming a disk
+  makes it look like a new one with the old one missing, and a USB stick plugged
+  in once is missed after it is unplugged. **Forget** in the Drives dialog clears
+  either. On Windows, a USB hard disk whose enclosure calls itself removable is
+  treated like a stick — listed, but only remembered once the library has films
+  on it — and two disks cloned sector for sector share a serial and are
+  remembered as one.
 - **One Jellyfin server.** There is no way to add a second. The setup screen
   configures the first one and tests it, but a household with two servers has to
   pick one.

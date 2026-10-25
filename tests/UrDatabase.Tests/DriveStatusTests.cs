@@ -192,7 +192,7 @@ namespace UrDatabase.Tests
 
             var probe = new FakeProbe { [@"Q:\"] = DriveProbeResult.Unavailable, [@"S:\"] = new DriveProbeResult(true) };
 
-            var reports = await new DriveMonitor(probe).CheckLibraryAsync(new[] { @"S:\Series" }, db);
+            var reports = await Monitor(probe).CheckDrivesAsync(new[] { @"S:\Series" }, db);
 
             Assert.Equal(new[] { @"Q:\", @"S:\" }, reports.Select(r => r.Root));
             Assert.Equal(DriveState.Disconnected, reports[0].State);
@@ -206,7 +206,7 @@ namespace UrDatabase.Tests
             var db = Path.Combine(_root, "never", "movies.db");
             var probe = new FakeProbe { [@"S:\"] = DriveProbeResult.Unavailable };
 
-            var reports = await new DriveMonitor(probe).CheckLibraryAsync(new[] { @"S:\Films" }, db);
+            var reports = await Monitor(probe).CheckDrivesAsync(new[] { @"S:\Films" }, db);
 
             Assert.Equal(DriveState.Disconnected, reports.Single().State);
             Assert.False(File.Exists(db));
@@ -256,7 +256,7 @@ namespace UrDatabase.Tests
         {
             var reports = new[] { Report(@"E:\", DriveState.Disconnected, 3), Report(@"F:\", DriveState.NotResponding, 0) };
 
-            Assert.Equal("2 drives in your library are not available", DriveStatusText.Headline(reports));
+            Assert.Equal("2 drives are not available", DriveStatusText.Headline(reports));
             Assert.Equal(@"E:\, F:\. 3 films on them cannot be played until they are back.", DriveStatusText.Detail(reports));
         }
 
@@ -303,7 +303,7 @@ namespace UrDatabase.Tests
 
             var probe = new FakeProbe { [@"S:\"] = new DriveProbeResult(true) };
 
-            var reports = await new DriveMonitor(probe).CheckLibraryAsync(new[] { @"S:\Films" }, db);
+            var reports = await Monitor(probe).CheckDrivesAsync(new[] { @"S:\Films" }, db);
 
             var retired = reports.Single(r => r.Root == @"R:\");
             Assert.Equal(DriveState.Disconnected, retired.State);
@@ -335,8 +335,21 @@ namespace UrDatabase.Tests
         public void The_dialog_explains_an_empty_answer() =>
             Assert.Contains("no drives to check", DriveStatusText.Describe(Array.Empty<DriveReport>()));
 
+        /// <summary>A monitor that sees no drives plugged in but the ones a test names.</summary>
+        private static DriveMonitor Monitor(IDriveProbe probe, params MountedVolume[] mounted) =>
+            new(probe, drives: new FakeDrives(mounted));
+
         private static DriveReport Report(string root, DriveState state, int films) =>
             new(root, state, new[] { root + "Films" }, films);
+
+        private sealed class FakeDrives : IDriveEnumerator
+        {
+            private readonly IReadOnlyList<MountedVolume> _mounted;
+
+            public FakeDrives(IReadOnlyList<MountedVolume> mounted) => _mounted = mounted;
+
+            public IReadOnlyList<MountedVolume> Enumerate() => _mounted;
+        }
 
         private sealed class FakeProbe : IDriveProbe
         {

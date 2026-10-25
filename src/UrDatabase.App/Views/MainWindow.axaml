@@ -392,9 +392,9 @@
                 </Border>
 
                 <!--
-                    The drive alarm. Raised when a drive the library lives on did
-                    not answer the check made at launch, and hidden on every launch
-                    where they all did. A banner rather than a dialog for the same
+                    The drive alarm. Raised when a drive the library lives on, or a
+                    disk the app remembers from an earlier launch, did not answer the
+                    check made at launch, and hidden on every launch where they all did. A banner rather than a dialog for the same
                     reason as the update banner above: somebody who opened the app
                     to watch a film on the disk that is still plugged in should not
                     have to dismiss anything first. The headline is in the warning
@@ -503,7 +503,7 @@
                         <Button Classes="ghost"
                                 x:Name="DrivesButton"
                                 Content="Drives"
-                                ToolTip.Tip="Check whether every drive your library lives on is connected."
+                                ToolTip.Tip="See every drive, and whether any disk you had plugged in before is missing."
                                 Click="Drives_Click"/>
                         <Button Classes="ghost"
                                 x:Name="SettingsButton"

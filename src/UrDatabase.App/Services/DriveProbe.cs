@@ -1,5 +1,7 @@
 using System;
 using System.IO;
+using System.Runtime.InteropServices;
+using System.Text;
 using UrDatabase.Models;
 
 namespace UrDatabase.Services
@@ -39,7 +41,21 @@ namespace UrDatabase.Services
                 if (!info.IsReady) return DriveProbeResult.Unavailable;
 
                 var label = string.IsNullOrWhiteSpace(info.VolumeLabel) ? null : info.VolumeLabel;
-                return new DriveProbeResult(true, label, info.TotalSize, info.AvailableFreeSpace);
+
+                // On Unix .NET answers the label question with the mount point, which is not a
+                // name anybody gave the disk. The last segment of /Volumes/Films is.
+                if (label is not null && label.StartsWith('/'))
+                {
+                    var name = label.TrimEnd('/');
+                    var cut = name.LastIndexOf('/');
+                    label = cut >= 0 && cut < name.Length - 1 ? name[(cut + 1)..] : null;
+                }
+
+                string? format = null;
+                try { format = info.DriveFormat; } catch { }
+
+                return new DriveProbeResult(
+                    true, label, info.TotalSize, info.AvailableFreeSpace, SerialOf(root), format);
             }
             catch
             {
@@ -48,5 +64,37 @@ namespace UrDatabase.Services
                 return new DriveProbeResult(true);
             }
         }
+
+        /// <summary>
+        /// The volume serial number Windows writes when a disk is formatted, as Explorer prints it.
+        /// Null anywhere else, and on any failure: identity then falls back to the label and size.
+        /// </summary>
+        private static string? SerialOf(string root)
+        {
+            if (!OperatingSystem.IsWindows()) return null;
+
+            try
+            {
+                var path = root.EndsWith('\\') ? root : root + "\\";
+                if (!GetVolumeInformationW(path, null, 0, out var serial, out _, out _, null, 0)) return null;
+                return serial == 0 ? null : $"{serial >> 16:X4}-{serial & 0xFFFF:X4}";
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool GetVolumeInformationW(
+            string rootPathName,
+            StringBuilder? volumeNameBuffer,
+            int volumeNameSize,
+            out uint volumeSerialNumber,
+            out uint maximumComponentLength,
+            out uint fileSystemFlags,
+            StringBuilder? fileSystemNameBuffer,
+            int fileSystemNameSize);
     }
 }
