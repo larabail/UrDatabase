@@ -413,6 +413,27 @@ CREATE TABLE IF NOT EXISTS film_problems (
     note       TEXT,
     flagged_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS film_ratings (
+    film_key   TEXT PRIMARY KEY,
+    tmdb_id    INTEGER,
+    title      TEXT NOT NULL,
+    year       INTEGER,
+    rating     INTEGER CHECK (rating IS NULL OR rating BETWEEN 1 AND 10),
+    review     TEXT,
+    updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS film_viewings (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    film_key   TEXT NOT NULL,
+    tmdb_id    INTEGER,
+    title      TEXT NOT NULL,
+    year       INTEGER,
+    watched_on TEXT NOT NULL,
+    companions TEXT,
+    note       TEXT,
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ix_film_viewings_key ON film_viewings(film_key);
 CREATE VIRTUAL TABLE IF NOT EXISTS movies_fts USING fts5(title, genres, content='movies', content_rowid='id');
 CREATE TRIGGER IF NOT EXISTS movies_ai AFTER INSERT ON movies BEGIN
     INSERT INTO movies_fts(rowid, title, genres) VALUES (new.id, new.title, new.genres);

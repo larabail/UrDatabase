@@ -29,6 +29,64 @@
             <Setter Property="FontSize" Value="11.5"/>
             <Setter Property="LineHeight" Value="16"/>
         </Style>
+
+        <!-- Ten stars in a 250-pixel column, so no chrome at all: a lit star is
+             brass, an unlit one is the dim ink every other secondary mark here
+             uses. Hover previews in the hover brass without committing. -->
+        <Style Selector="Button.star">
+            <Setter Property="Width" Value="22"/>
+            <Setter Property="Height" Value="26"/>
+            <Setter Property="Padding" Value="0"/>
+            <Setter Property="FontSize" Value="17"/>
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Foreground" Value="{DynamicResource DimBrush}"/>
+            <Setter Property="HorizontalContentAlignment" Value="Center"/>
+            <Setter Property="VerticalContentAlignment" Value="Center"/>
+            <Setter Property="Cursor" Value="Hand"/>
+        </Style>
+        <Style Selector="Button.star /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="Transparent"/>
+        </Style>
+        <Style Selector="Button.star.lit">
+            <Setter Property="Foreground" Value="{DynamicResource BrassBrush}"/>
+        </Style>
+        <Style Selector="Button.star:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Foreground" Value="{DynamicResource BrassHoverBrush}"/>
+        </Style>
+        <Style Selector="Button.star:pressed /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="Transparent"/>
+        </Style>
+
+        <!-- A person you have watched with before. Outlined when not in the
+             line, brass when they are, which is the same on/off language the
+             stars use. -->
+        <Style Selector="ToggleButton.companion">
+            <Setter Property="Margin" Value="0,0,6,6"/>
+            <Setter Property="Padding" Value="9,2"/>
+            <Setter Property="MinHeight" Value="24"/>
+            <Setter Property="FontSize" Value="11.5"/>
+            <Setter Property="CornerRadius" Value="12"/>
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource EdgeBrush}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Foreground" Value="{DynamicResource ProseBrush}"/>
+        </Style>
+        <Style Selector="ToggleButton.companion /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="Transparent"/>
+        </Style>
+        <Style Selector="ToggleButton.companion:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource BrassHoverBrush}"/>
+            <Setter Property="Foreground" Value="{DynamicResource BoneBrush}"/>
+        </Style>
+        <Style Selector="ToggleButton.companion:checked /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource BrassBrush}"/>
+            <Setter Property="Foreground" Value="{DynamicResource BrassBrush}"/>
+        </Style>
+
         <!-- The brass ring a poster card wears under the pointer, so a still
              reads as something to click in the same way. -->
         <Style Selector="Border.still">
@@ -315,6 +373,151 @@
                                   Background="Transparent"
                                   Padding="0,0,12,0"
                                   Margin="0,0,0,16">
+                        <StackPanel>
+                        <!--
+                            The owner's own history with the film: a rating out of ten, a few
+                            words, and each time they watched it — the day, who with, a note.
+
+                            Ten stars because UrActor uses ten, so a later sync has nothing to
+                            convert. Kept in the catalogue on this computer and sent nowhere; see
+                            FilmJournalStore. Hidden when the film cannot be named at all.
+                        -->
+                        <StackPanel x:Name="JournalPanel"
+                                    Margin="0,22,0,0"
+                                    IsVisible="False">
+                            <Grid ColumnDefinitions="*,Auto" Margin="0,0,0,5">
+                                <TextBlock Classes="label"
+                                           Text="YOUR RATING"
+                                           LetterSpacing="1.6"/>
+                                <TextBlock x:Name="RatingValue"
+                                           Grid.Column="1"
+                                           Classes="mono"
+                                           FontSize="11.5"
+                                           Foreground="{StaticResource BrassBrush}"
+                                           VerticalAlignment="Bottom"/>
+                            </Grid>
+                            <Rectangle Height="1"
+                                       Fill="{StaticResource EdgeBrush}"
+                                       Margin="0,0,0,6"/>
+                            <StackPanel x:Name="StarsRow"
+                                        Orientation="Horizontal"/>
+                            <TextBox x:Name="ReviewBox"
+                                     Classes="field"
+                                     Margin="0,6,0,0"
+                                     MaxHeight="96"
+                                     AcceptsReturn="True"
+                                     TextWrapping="Wrap"
+                                     Watermark="What did you think?"
+                                     LostFocus="ReviewBox_LostFocus"/>
+
+                            <TextBlock Classes="label"
+                                       Text="VIEWINGS"
+                                       LetterSpacing="1.6"
+                                       Margin="0,16,0,5"/>
+                            <Rectangle Height="1"
+                                       Fill="{StaticResource EdgeBrush}"
+                                       Margin="0,0,0,8"/>
+                            <TextBlock x:Name="NoViewingsText"
+                                       Classes="dim"
+                                       FontSize="11.5"
+                                       Text="Not logged yet."
+                                       Margin="0,0,0,6"/>
+                            <ItemsControl x:Name="ViewingsList">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate DataType="models:FilmViewing">
+                                        <Grid ColumnDefinitions="*,Auto" Margin="0,0,0,7">
+                                            <StackPanel Grid.Column="0">
+                                                <TextBlock Classes="mono"
+                                                           FontSize="11.5"
+                                                           Foreground="{StaticResource BoneBrush}"
+                                                           Text="{Binding WatchedOnText}"/>
+                                                <TextBlock Classes="castRole"
+                                                           Text="{Binding CompanionsText}"
+                                                           IsVisible="{Binding HasCompanions}"
+                                                           TextWrapping="Wrap"/>
+                                                <TextBlock Classes="castRole"
+                                                           Text="{Binding Note}"
+                                                           IsVisible="{Binding HasNote}"
+                                                           FontStyle="Italic"
+                                                           TextWrapping="Wrap"/>
+                                            </StackPanel>
+                                            <Button Grid.Column="1"
+                                                    Classes="ghost"
+                                                    Padding="6,0"
+                                                    Height="22"
+                                                    VerticalAlignment="Top"
+                                                    Content="✕"
+                                                    Tag="{Binding Id}"
+                                                    ToolTip.Tip="Forget this viewing"
+                                                    Click="RemoveViewing_Click"/>
+                                        </Grid>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+
+                            <Button x:Name="LogViewingButton"
+                                    Classes="ghost"
+                                    Height="30"
+                                    Margin="0,2,0,0"
+                                    Content="+ I watched this"
+                                    Click="LogViewing_Click"/>
+
+                            <StackPanel x:Name="LogViewingForm"
+                                        Spacing="6"
+                                        Margin="0,4,0,0"
+                                        IsVisible="False">
+                                <CalendarDatePicker x:Name="WatchedOnPicker"
+                                                    HorizontalAlignment="Stretch"
+                                                    SelectedDateFormat="Long"/>
+                                <TextBox x:Name="CompanionsBox"
+                                         Classes="field"
+                                         Watermark="Who with? Ana, Luis"
+                                         TextChanged="CompanionsBox_TextChanged"/>
+                                <!-- Everybody logged before, most often first, one click
+                                     each. A chip adds the name to the line, or takes it
+                                     out again; the line stays the thing that is saved. -->
+                                <ItemsControl x:Name="CompanionChips">
+                                    <ItemsControl.ItemsPanel>
+                                        <ItemsPanelTemplate>
+                                            <WrapPanel/>
+                                        </ItemsPanelTemplate>
+                                    </ItemsControl.ItemsPanel>
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate DataType="models:CompanionChip">
+                                            <ToggleButton Classes="companion"
+                                                          Content="{Binding Name}"
+                                                          IsChecked="{Binding IsIncluded, Mode=OneWay}"
+                                                          Tag="{Binding Name}"
+                                                          Click="CompanionChip_Click"/>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                                <TextBox x:Name="ViewingNoteBox"
+                                         Classes="field"
+                                         Watermark="Note (optional)"/>
+                                <StackPanel Orientation="Horizontal" Spacing="8">
+                                    <Button x:Name="SaveViewingButton"
+                                            Classes="primary"
+                                            Content="Log it"
+                                            Click="SaveViewing_Click"/>
+                                    <Button Classes="ghost"
+                                            Height="34"
+                                            Content="Cancel"
+                                            Click="CancelViewing_Click"/>
+                                </StackPanel>
+                            </StackPanel>
+
+                            <TextBlock x:Name="JournalStatus"
+                                       Classes="dim"
+                                       FontSize="11"
+                                       TextWrapping="Wrap"
+                                       IsVisible="False"
+                                       Margin="0,6,0,0"/>
+                            <TextBlock Classes="attribution"
+                                       Margin="0,8,0,0"
+                                       Text="Kept on this computer only."/>
+                        </StackPanel>
+
                         <StackPanel x:Name="AwardsPanel"
                                     Margin="0,22,0,0"
                                     IsVisible="False">
@@ -363,6 +566,7 @@
                                        Classes="attribution"
                                        Margin="0,10,0,0"
                                        Text="Academy Awards data from the UrActor API."/>
+                        </StackPanel>
                         </StackPanel>
                     </ScrollViewer>
                 </Grid>
