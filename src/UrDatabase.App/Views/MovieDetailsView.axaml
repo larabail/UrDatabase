@@ -571,13 +571,25 @@
                     </ScrollViewer>
                 </Grid>
 
-                <!-- The plot takes the space that is left and scrolls inside
-                     it; the credits are pinned to the foot of the column. A
-                     fixed-height plot instead slices the last line in half on a
-                     long one and leaves a quarter of the window dead under the
-                     credits on a short one, which is the worst of both. -->
-                <Grid Grid.Column="2"
-                      RowDefinitions="Auto,Auto,Auto,*,Auto,Auto,Auto">
+                <!-- One stack, top to bottom, every row at its own height, and
+                     the whole column scrolls when the window is shorter than it.
+                     Nothing here stretches to fill the window: a row that took
+                     "the space that is left" opened a band of empty backdrop on
+                     a tall window and pinned the credits to the foot of it. The
+                     plot alone is capped, by DetailsLayout, so a long synopsis
+                     does not push everything else below the fold. Horizontal
+                     scrolling is disabled so the shelves are measured against
+                     the real width and fill it. The column's right margin keeps
+                     the scroll bar off the shelves' right-hand arrows. -->
+                <ScrollViewer x:Name="DetailsScroller"
+                              Grid.Column="2"
+                              VerticalScrollBarVisibility="Auto"
+                              HorizontalScrollBarVisibility="Disabled"
+                              Background="Transparent">
+                <Grid x:Name="DetailsColumn"
+                      VerticalAlignment="Top"
+                      Margin="0,0,14,0"
+                      RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto,Auto">
 
                     <TextBlock Grid.Row="0"
                                x:Name="TitleText"
@@ -732,8 +744,7 @@
                     -->
                     <StackPanel x:Name="StillsPane"
                                 Grid.Row="4"
-                                Margin="0,14,0,0"
-                                VerticalAlignment="Top"
+                                Margin="0,16,0,0"
                                 IsVisible="False">
                         <TextBlock Classes="label"
                                    Text="STILLS"
@@ -783,14 +794,13 @@
                         rather than a library, which is why the recommendation
                         supplies only the ordering — see RelatedFilms.
 
-                        Hidden entirely when it is empty, and the plot takes the
-                        space back. A heading over an empty row is the app
+                        Hidden entirely when it is empty, and the column closes
+                        up over it. A heading over an empty row is the app
                         reporting a failure it did not have.
                     -->
                     <StackPanel x:Name="RelatedPane"
                                 Grid.Row="5"
                                 Margin="0,16,0,0"
-                                VerticalAlignment="Center"
                                 IsVisible="False">
                         <TextBlock x:Name="RelatedHeading"
                                    Classes="label"
@@ -839,7 +849,7 @@
 
                     <Grid Grid.Row="6"
                           ColumnDefinitions="*,48,260"
-                          Margin="0,24,0,24">
+                          Margin="0,16,0,24">
 
                         <StackPanel Grid.Column="0">
                             <TextBlock Classes="label"
@@ -919,6 +929,7 @@
                         </StackPanel>
                     </Grid>
                 </Grid>
+                </ScrollViewer>
             </Grid>
         </DockPanel>
 

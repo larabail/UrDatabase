@@ -27,11 +27,11 @@ namespace UrDatabase.Services
     public static class RelatedFilms
     {
         /// <summary>
-        /// How many posters the shelf holds. It is one row that does not scroll vertically, and a
-        /// film's recommendations run to twenty — past about eight the row is wider than the
-        /// window and the tail is unreachable.
+        /// How many posters the shelf holds: enough to run the width of a wide window, with the
+        /// shelf's arrows reaching the rest on a narrow one. A film's recommendations run to
+        /// twenty, and the tail of them is the least related.
         /// </summary>
-        public const int Max = 8;
+        public const int Max = 16;
 
         /// <summary>
         /// The films to show, and on what basis they were chosen.

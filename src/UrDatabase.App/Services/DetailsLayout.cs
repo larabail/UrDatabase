@@ -1,30 +1,31 @@
 namespace UrDatabase.Services
 {
     /// <summary>
-    /// How the details column shares its height between the plot, the strip of stills and the
-    /// shelf of related films, given which of the last two a film has.
+    /// How tall the plot on a film's details page may grow, given what sits under it.
     /// </summary>
     /// <remarks>
-    /// Exactly one of the three takes the space that is left. With a shelf it is the shelf, and
-    /// the plot is capped so the posters have somewhere to be — lower still when the stills need
-    /// room too, because a plot that scrolls loses nothing and a shelf pushed through the credits
-    /// loses everything. With stills alone the strip takes it and sits directly under the plot,
-    /// which is where it was asked for, rather than at the foot of an empty band. With neither,
-    /// the plot has the space, exactly as the screen was before either existed.
+    /// The column is a stack: title, facts, plot, stills, shelf, credits, one after the other at
+    /// their own heights, and the whole column scrolls when the window is shorter than that. No
+    /// row stretches to fill the window. One that did — the shelf, the strip or the plot taking
+    /// "the space that is left" — opened a band of empty backdrop above and below itself on a tall
+    /// window and pinned the credits to its foot, which read as a page that had failed to load.
+    ///
+    /// The plot is still capped when there is something under it, and scrolls inside the cap, so a
+    /// long synopsis does not push the stills and the shelf below the fold. With neither it has no
+    /// cap: there is nothing for it to keep in view, and the column scrolls if it has to.
     /// </remarks>
-    public readonly record struct DetailsLayout(
-        bool PlotFills, bool StillsFill, bool RelatedFills, double PlotMaxHeight)
+    public static class DetailsLayout
     {
         public const double PlotCapWithShelf = 168;
         public const double PlotCapWithShelfAndStills = 120;
         public const double PlotCapWithStills = 240;
 
-        public static DetailsLayout For(bool hasRelated, bool hasStills) => (hasRelated, hasStills) switch
+        public static double PlotMaxHeight(bool hasRelated, bool hasStills) => (hasRelated, hasStills) switch
         {
-            (true, true) => new(false, false, true, PlotCapWithShelfAndStills),
-            (true, false) => new(false, false, true, PlotCapWithShelf),
-            (false, true) => new(false, true, false, PlotCapWithStills),
-            _ => new(true, false, false, double.PositiveInfinity),
+            (true, true) => PlotCapWithShelfAndStills,
+            (true, false) => PlotCapWithShelf,
+            (false, true) => PlotCapWithStills,
+            _ => double.PositiveInfinity,
         };
     }
 }
