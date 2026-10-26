@@ -299,6 +299,78 @@ namespace UrDatabase.Tests
                 Directory.GetFiles(FilmFolder(603)).Select(Path.GetFileName).OrderBy(n => n, StringComparer.Ordinal));
         }
 
+        // ---------- strips cached under the old cap ----------
+
+        private static string Listing(int count) =>
+            "{\"backdrops\":[" + string.Join(",", Enumerable.Range(0, count).Select(i =>
+                $"{{\"file_path\":\"/f{i:00}.jpg\",\"width\":1920,\"height\":1080}}")) + "]}";
+
+        /// <summary>A manifest as builds before the cap was recorded wrote it.</summary>
+        private void CacheLegacyStrip(int id, int count)
+        {
+            Directory.CreateDirectory(FilmFolder(id));
+            var files = Enumerable.Range(0, count).Select(i => $"{i:00}-f{i:00}.jpg").ToList();
+            foreach (var file in files) File.WriteAllBytes(Path.Combine(FilmFolder(id), file), Jpeg);
+            File.WriteAllLines(Path.Combine(FilmFolder(id), FilmStills.ManifestName), files);
+        }
+
+        [Fact]
+        public async Task A_full_strip_cached_under_the_old_cap_is_asked_for_again_and_grows()
+        {
+            CacheLegacyStrip(603, FilmStills.LegacyMaxStills);
+
+            var handler = Serving(Listing(FilmStills.MaxStills + 4));
+            using (var tmdb = Create(handler))
+            {
+                var stills = await new FilmStills(tmdb, StillsRoot).LoadAsync(603, null);
+
+                Assert.Contains(handler.Requests, url => url.Contains("/images?"));
+                Assert.Equal(FilmStills.MaxStills, stills.Count);
+            }
+
+            // Recorded under the new cap, so the next visit trusts it.
+            var offline = Unreachable();
+            using var again = Create(offline);
+            Assert.Equal(FilmStills.MaxStills, (await new FilmStills(again, StillsRoot).LoadAsync(603, null)).Count);
+            Assert.Equal(0, offline.CallCount);
+        }
+
+        [Fact]
+        public async Task A_short_strip_cached_under_the_old_cap_was_already_everything()
+        {
+            CacheLegacyStrip(603, FilmStills.LegacyMaxStills - 3);
+
+            var offline = Unreachable();
+            using var tmdb = Create(offline);
+            var stills = await new FilmStills(tmdb, StillsRoot).LoadAsync(603, null);
+
+            Assert.Equal(FilmStills.LegacyMaxStills - 3, stills.Count);
+            Assert.Equal(0, offline.CallCount);
+        }
+
+        [Fact]
+        public async Task A_full_old_strip_is_still_shown_when_it_cannot_be_asked_for_again()
+        {
+            CacheLegacyStrip(603, FilmStills.LegacyMaxStills);
+
+            using var tmdb = Create(Unreachable());
+            var stills = await new FilmStills(tmdb, StillsRoot).LoadAsync(603, null);
+
+            Assert.Equal(FilmStills.LegacyMaxStills, stills.Count);
+            Assert.All(stills, s => Assert.True(File.Exists(s.Thumbnail)));
+        }
+
+        /// <summary>
+        /// Eight frames stopped about half way across a maximised window and left the rest of the
+        /// row as empty backdrop. The strip scrolls with its arrows, so a narrow window loses
+        /// nothing by holding more.
+        /// </summary>
+        [Fact]
+        public void The_strip_holds_enough_to_run_the_width_of_a_wide_window()
+        {
+            Assert.True(FilmStills.MaxStills * DetailsLayoutTests.StillPitch >= DetailsLayoutTests.WideTextColumn);
+        }
+
         [Fact]
         public async Task Leaving_the_page_cancels_the_request_rather_than_answering_empty()
         {
