@@ -41,15 +41,34 @@ It runs on Windows and macOS from one codebase, built with
   with no runtime, because a programme has episodes of a length rather than one
   of its own. Only what is known is printed, so a film nothing has measured
   reads `2025 · ★ 7.6` with no empty separator. **The star is IMDb's and nobody
-  else's**: it appears only once the catalogue holds an IMDb rating — fetched
-  from OMDb the first time a film's or a local programme's details are opened
-  — and a card whose only rating is TMDB's average or a server's community
-  rating shows none, because a filled star and a hollow one are the same mark
-  at that size and this app has shipped a mislabelled rating before. Those other
-  numbers still drive the rating filter below, and the details screen shows
-  every rating under its own source's name. Hovering a card spells the star out
-  as `IMDb 7.6`. A part-watched card puts how much is left on a line of its own
-  underneath, so neither trims the other (`Services/CardMeta`).
+  else's**: it appears once the catalogue holds an IMDb rating, and a card whose
+  only rating is TMDB's average or a server's community rating shows none,
+  because a filled star and a hollow one are the same mark at that size and this
+  app has shipped a mislabelled rating before. Those other numbers still drive
+  the rating filter below, and the details screen shows every rating under its
+  own source's name. Hovering a card spells the star out as `IMDb 7.6`. A
+  part-watched card puts how much is left on a second line underneath, so
+  neither trims the other; that line is reserved on every card, so a
+  part-watched film does not make its shelf taller (`Services/CardMeta`).
+- **IMDb ratings fill themselves in.** With an OMDb key, a background pass
+  fetches the IMDb rating for every film and programme in the library — local,
+  on the server, or both — and each card gains its star as the answer lands,
+  with no reload. A card needs an IMDb id to be rated: a server film or
+  programme usually carries one from Jellyfin, a local programme has one once
+  TMDB has described it, and a local film gets one from TMDB, recorded by the
+  facts pass from the request it already makes (a film described before this
+  was added costs one more TMDB request, once). Opening a film or a programme
+  puts the rating it fetches onto its card as well. The pass is deliberately
+  slow and polite: it waits until artwork, genres and facts have all arrived;
+  it asks OMDb once a second and a half at most; every answer — including "this
+  title has no rating" — is cached in the catalogue and never asked for again,
+  barring a manual refresh of that title's page; and it stops for the day once
+  the app has made **500 OMDb requests**, half the free tier's 1,000, counting
+  the details screen's too, so a day of browsing still has room to open films.
+  If OMDb says the day's limit is reached or refuses the key, it stops at once,
+  caches nothing from that answer, and carries on the next day (UTC). With no
+  OMDb key it does nothing at all (`Services/ImdbRatingBackfill`,
+  `Services/OmdbUsage`, `Services/TmdbImdbIds`).
 - **Filter by where a film is.** When the library draws on both this computer
   and a server, a row above the genres offers **Everywhere**, **Offline** and
   **On the server**, each with a count. Genre and location are different
@@ -826,7 +845,7 @@ supply your own.
 | Service | Get a key from | What it buys |
 | --- | --- | --- |
 | TMDB | [your TMDB account settings](https://www.themoviedb.org/settings/api) | Posters and details. Without it, browsing, genres and search still work |
-| OMDb | [omdbapi.com](https://www.omdbapi.com/apikey.aspx) | The IMDb star, and nothing else |
+| OMDb | [omdbapi.com](https://www.omdbapi.com/apikey.aspx) | The IMDb star, and nothing else. The free tier's 1,000 requests a day is enough: the background pass stops at 500 |
 | UrActor | [developer.uractor.com](https://developer.uractor.com/) | The Academy Award nominations under the poster, and nothing else |
 
 Any of them can be given in `appsettings.json`, as `TmdbApiKey`, `OmdbApiKey`
@@ -955,9 +974,9 @@ The rating badge on a server film says `Jellyfin` when it is Jellyfin's own
 community rating, and `IMDb` only for the IMDb rating from OMDb. They are
 different numbers from different populations and are never shown under each
 other's name. For the same reason a server film's library card carries no star
-for its community rating: the star there is reserved for IMDb, and a server film
-only has an IMDb rating on its card when it is folded onto a local copy that has
-one.
+for its community rating: the star there is reserved for IMDb, and arrives when
+the background pass has fetched the IMDb rating for the IMDb id Jellyfin gave —
+or, if Jellyfin gave only a TMDB id, for the one TMDB gives for it.
 
 #### Television
 
@@ -1953,13 +1972,14 @@ Stated plainly, so nobody has to find out by using it:
   them; **Wrong film?** supplies the id and the facts together. Episodes and
   programmes have no runtime of their own, so a length filter leaves television
   out.
-- **Most cards have no IMDb star yet.** The star under a title is IMDb's only,
-  and the catalogue fetches an IMDb rating from OMDb when a film's details are
-  opened, not in the background pass. So a film nobody has opened shows its year
-  and length and no rating, even though it may already have a TMDB or Jellyfin
-  rating the filter uses. A film only on the server never gets one on its card:
-  its IMDb id is not carried onto the card, so a rating cached when its details
-  were opened is not found for it.
+- **A large library takes days to get all its IMDb stars.** The background pass
+  keeps to 500 OMDb requests a day, so a library of two thousand titles is fully
+  rated on the fourth day the app is open, and the cards waiting their turn show
+  their year and length with no star even when the filter already has a TMDB or
+  Jellyfin rating for them. A title with no IMDb id anywhere — a local film TMDB
+  could not identify, or a server item Jellyfin has no provider ids for — is
+  never rated. A title OMDb answered "no rating" for keeps that answer until
+  you refresh its page by hand, even if IMDb has rated it since.
 - **A film in both places is matched by identity, then by name.** The server's
   copy and this computer's are shown as one card when they agree on a TMDB id,
   and otherwise when their titles agree once case, accents and punctuation are

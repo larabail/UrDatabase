@@ -255,21 +255,35 @@
                      On a line of its own rather than beside the meta line:
                      "2025 · 2h 15m · ★ 7.6" already takes most of a 152px
                      card, and "1 HR 20 MIN LEFT" beside it would trim one or
-                     the other to nothing. Only a part-watched card is the
-                     taller for it. The tooltip has all of it.
-                     -->
-                <TextBlock Classes="mono"
-                           FontSize="10.5"
-                           Text="{Binding MetaLine}"
-                           TextTrimming="CharacterEllipsis"
-                           IsVisible="{Binding MetaLine, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
-                <TextBlock Classes="mono"
-                           FontSize="10.5"
-                           Margin="0,2,0,0"
-                           Foreground="{StaticResource BrassBrush}"
-                           Text="{Binding ResumeNote}"
-                           TextTrimming="CharacterEllipsis"
-                           IsVisible="{Binding HasResume}"/>
+                     the other to nothing. The tooltip has all of it.
+
+                     The two lines are a block of fixed height, reserved on
+                     every card whether or not it has anything to put in it,
+                     for the reason the title above is: a part-watched film
+                     keeps its resume note on every shelf it appears on, and a
+                     card that grew a line would make its shelf taller only
+                     while it was scrolled into view, and give the grids rows
+                     of uneven height. A card with no year, runtime or rating
+                     keeps the space too. -->
+                <Grid Classes="cardMeta"
+                      Height="30"
+                      RowDefinitions="14,2,14">
+                    <TextBlock Grid.Row="0"
+                               Classes="mono"
+                               FontSize="10.5"
+                               LineHeight="14"
+                               Text="{Binding MetaLine}"
+                               TextTrimming="CharacterEllipsis"
+                               IsVisible="{Binding MetaLine, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
+                    <TextBlock Grid.Row="2"
+                               Classes="mono"
+                               FontSize="10.5"
+                               LineHeight="14"
+                               Foreground="{StaticResource BrassBrush}"
+                               Text="{Binding ResumeNote}"
+                               TextTrimming="CharacterEllipsis"
+                               IsVisible="{Binding HasResume}"/>
+                </Grid>
             </StackPanel>
         </DataTemplate>
         <!-- One row of that card, for the two grid views. The wrapping is done

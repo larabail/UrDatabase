@@ -75,7 +75,9 @@ namespace UrDatabase.Tests
             Assert.Equal(3, source.Split("cancelEnrichment: loading.Cancel").Length - 1);
             Assert.Contains("relatedLookup: (movie, ct) => LoadRelatedAsync(movie, null, ct)", source);
             Assert.Contains("stillsLookup: LoadStillsAsync", source);
-            Assert.Contains("loadRating: RetryMissingSeriesRatingAsync", source);
+            // Manual refresh forgets a cached "no rating", and the rating it finds reaches the card.
+            Assert.Contains("loadRating: (id, ct) => LoadSeriesRatingForCardsAsync(vm.LocalId, vm.RemoteId, id, true, ct)", source);
+            Assert.Contains("? await RetryMissingSeriesRatingAsync(imdbId, ct)", source);
 
             var movie = File.ReadAllText(Path.Combine(RepositoryRoot(), "src", "UrDatabase.App",
                 "Views", "MovieDetailsView.axaml.cs"));

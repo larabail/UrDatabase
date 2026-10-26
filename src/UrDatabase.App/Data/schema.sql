@@ -175,7 +175,23 @@ CREATE TABLE IF NOT EXISTS imdb_ratings (
     source     TEXT NOT NULL DEFAULT 'omdb'
 );
 
--- The movie library of a Jellyfin server, as of the last successful sync. Metadata only:
+-- Which IMDb title a TMDB film is, as TMDB said. An empty imdb_id records that TMDB has none,
+-- so the question is not asked again. Filled for free by the facts pass, and by the IMDb
+-- rating backfill for any film the facts pass described before this table existed.
+CREATE TABLE IF NOT EXISTS tmdb_imdb_ids (
+    tmdb_id    INTEGER PRIMARY KEY,
+    imdb_id    TEXT NOT NULL,
+    fetched_at TEXT NOT NULL
+);
+
+-- How many OMDb requests this install has made on each UTC day, and whether OMDb has said the
+-- day's limit is reached. The free tier allows 1,000 a day; the background rating backfill
+-- keeps to a share of that and stops for the day the moment OMDb refuses.
+CREATE TABLE IF NOT EXISTS omdb_usage (
+    day           TEXT PRIMARY KEY,
+    requests      INTEGER NOT NULL DEFAULT 0,
+    limit_reached INTEGER NOT NULL DEFAULT 0
+);
 -- nothing here is a file. Playing one of these streams from the server, unless it has been
 -- downloaded, in which case the copy is an ordinary row in movies and files like any other.
 --

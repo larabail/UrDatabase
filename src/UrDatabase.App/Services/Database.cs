@@ -397,6 +397,16 @@ CREATE TABLE IF NOT EXISTS imdb_ratings (
     fetched_at TEXT NOT NULL,
     source     TEXT NOT NULL DEFAULT 'omdb'
 );
+CREATE TABLE IF NOT EXISTS tmdb_imdb_ids (
+    tmdb_id    INTEGER PRIMARY KEY,
+    imdb_id    TEXT NOT NULL,
+    fetched_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS omdb_usage (
+    day           TEXT PRIMARY KEY,
+    requests      INTEGER NOT NULL DEFAULT 0,
+    limit_reached INTEGER NOT NULL DEFAULT 0
+);
 CREATE TABLE IF NOT EXISTS jellyfin_movies (
     item_id          TEXT PRIMARY KEY,
     title            TEXT NOT NULL,

@@ -50,13 +50,27 @@ namespace UrDatabase.Services
         ///
         /// The IMDb rating is also selected on its own, because the card prints only that one:
         /// <c>Rating</c> cannot say which of the two it turned out to be.
+        ///
+        /// Found two ways. A rating fetched for this film while its details were open is linked to
+        /// it by <c>movie_id</c>; one the background backfill fetched is found through the IMDb id
+        /// TMDB gave for the film's TMDB id, which follows a corrected match with nothing to
+        /// unlink.
         /// </summary>
-        private const string ImdbForFilm = @"(SELECT r.rating FROM imdb_ratings r
+        private const string ImdbForFilm = @"COALESCE(
+                (SELECT r.rating FROM imdb_ratings r
                  WHERE r.movie_id = m.id AND r.rating IS NOT NULL AND r.rating > 0
-                 ORDER BY r.fetched_at DESC LIMIT 1)";
+                 ORDER BY r.fetched_at DESC LIMIT 1),
+                (SELECT r.rating FROM tmdb_imdb_ids x JOIN imdb_ratings r ON r.imdb_id = x.imdb_id
+                 WHERE x.tmdb_id = m.tmdb_id AND r.rating IS NOT NULL AND r.rating > 0))";
+
+        private const string ImdbIdForFilm = @"COALESCE(
+                (SELECT NULLIF(x.imdb_id, '') FROM tmdb_imdb_ids x WHERE x.tmdb_id = m.tmdb_id),
+                (SELECT r.imdb_id FROM imdb_ratings r WHERE r.movie_id = m.id
+                 ORDER BY r.fetched_at DESC LIMIT 1))";
 
         private const string FactColumns = @"
        m.runtime_minutes AS RuntimeMinutes,
+       " + ImdbIdForFilm + @" AS ImdbId,
        " + ImdbForFilm + @" AS ImdbRating,
        COALESCE(" + ImdbForFilm + @", m.rating) AS Rating,
        m.cast_list AS CastList, m.crew_list AS CrewList,
@@ -84,9 +98,9 @@ ORDER BY rank";
         /// re-linked by hand to a film leaves its episode behind, and that episode is not here.
         /// A programme with no such episode at all is not a card: there is nothing in it to play.
         ///
-        /// The IMDb rating is the one the details screen cached for the programme's IMDb id, if it
-        /// has. It is the rating filter's number too, so a programme cannot wear a star the filter
-        /// does not know about.
+        /// The IMDb rating is the one cached for the programme's IMDb id, by the details screen or
+        /// the background backfill. It is the rating filter's number too, so a programme cannot
+        /// wear a star the filter does not know about.
         /// </summary>
         private const string SeriesColumns = @"
 SELECT s.id AS Id, s.title AS Title, s.year AS Year, s.genres AS Genres, s.poster_path AS PosterPath,
@@ -99,6 +113,7 @@ SELECT s.id AS Id, s.title AS Title, s.year AS Year, s.genres AS Genres, s.poste
                WHERE e.series_id = s.id AND f.missing_since IS NULL)     AS HasFileHere,
        EXISTS (SELECT 1 FROM episodes e JOIN files f ON f.episode_id = e.id
                WHERE e.series_id = s.id AND f.missing_since IS NOT NULL) AS HasFileMissing,
+       NULLIF(TRIM(s.imdb_id), '') AS ImdbId,
        (SELECT r.rating FROM imdb_ratings r
         WHERE r.imdb_id = s.imdb_id AND r.rating IS NOT NULL AND r.rating > 0) AS ImdbRating,
        (SELECT r.rating FROM imdb_ratings r

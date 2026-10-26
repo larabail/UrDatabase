@@ -44,8 +44,48 @@ namespace UrDatabase.Models
         /// Kept apart from <see cref="Rating"/>, which falls back to those other numbers so the
         /// rating filter has something to work with. The card prints only this one, under a star,
         /// and a star on a TMDB average would be the mislabelling this app has shipped before.
+        ///
+        /// Raises a change for the card's line and tooltip, because a rating can arrive for a card
+        /// already on screen — from the background backfill, or from its details being opened.
         /// </remarks>
-        public double? ImdbRating { get; set; }
+        public double? ImdbRating
+        {
+            get => _imdbRating;
+            set
+            {
+                if (_imdbRating == value) return;
+                _imdbRating = value;
+                OnPropertyChanged();
+                OnPropertyChanged(nameof(MetaLine));
+                OnPropertyChanged(nameof(CardTooltip));
+            }
+        }
+
+        private double? _imdbRating;
+
+        /// <summary>
+        /// The IMDb title this is, when anything has said: the server's provider id, the
+        /// programme's TMDB description, or TMDB's answer for a film. Null when nothing has.
+        /// </summary>
+        public string? ImdbId { get; set; }
+
+        /// <summary>
+        /// Puts an IMDb rating that has just arrived onto the card, and keeps the rating filter's
+        /// number in step with what the next library read would give it.
+        /// </summary>
+        /// <remarks>
+        /// That read prefers the IMDb rating for anything in the catalogue, so a local card takes
+        /// it outright. A server card's filter number is the server's community rating and stays
+        /// so, unless it had none — the same "only into a blank" rule its other facts follow.
+        /// </remarks>
+        public void ApplyImdbRating(double rating)
+        {
+            if (double.IsNaN(rating) || rating <= 0) return;
+
+            ImdbRating = rating;
+            if (Source == MovieSource.Local) Rating = rating;
+            else Rating ??= rating;
+        }
 
         /// <summary>
         /// The billed cast, one <c>"Name (Character)"</c> per line, in the same shape the details
@@ -104,6 +144,7 @@ namespace UrDatabase.Models
             Rating ??= facts.Rating;
             CastList = JoinLines(facts.Cast) ?? CastList;
             CrewList = JoinLines(facts.Crew) ?? CrewList;
+            ImdbId ??= facts.ImdbId;
             FactsKnown = true;
 
             // The card prints the runtime, and the poster pass lands facts on a card already on
@@ -593,6 +634,11 @@ namespace UrDatabase.Models
             Rating ??= server.Rating;
             if (string.IsNullOrWhiteSpace(CastList)) CastList = server.CastList;
             if (string.IsNullOrWhiteSpace(CrewList)) CrewList = server.CrewList;
+
+            // The server's IMDb id is a provider id, as good as TMDB's; and a rating the backfill
+            // found under it is IMDb's, so it may wear the star here as it would on its own card.
+            ImdbId ??= server.ImdbId;
+            ImdbRating ??= server.ImdbRating;
         }
 
         public IEnumerable<string> GenresList =>

@@ -14,11 +14,13 @@ namespace UrDatabase.Services
     {
         private readonly IImdbRatingLookup _lookup;
         private readonly bool _ownsLookup;
+        private readonly Func<DateTime> _utcNow;
 
-        public ImdbRatingService(IImdbRatingLookup lookup, bool ownsLookup = false)
+        public ImdbRatingService(IImdbRatingLookup lookup, bool ownsLookup = false, Func<DateTime>? utcNow = null)
         {
             _lookup = lookup;
             _ownsLookup = ownsLookup;
+            _utcNow = utcNow ?? (() => DateTime.UtcNow);
         }
 
         public bool IsConfigured => _lookup.IsAvailable;
@@ -47,12 +49,51 @@ namespace UrDatabase.Services
             // service's number under IMDb's name.
             if (!_lookup.IsAvailable) return null;
 
-            var rating = await _lookup.LookupAsync(imdbId, ct);
-            WriteCache(conn, imdbId, movieId, rating);
-            return rating;
+            // OMDb has already said today is spent. Asking again only earns another refusal.
+            var day = OmdbUsage.DayOf(_utcNow());
+            if (TryReadUsage(conn, day).LimitReached) return null;
+
+            var result = await _lookup.LookupResultAsync(imdbId, ct);
+            await RecordUsageAsync(conn, day, result, ct);
+
+            // Only an answer about the title is remembered. A spent quota or an outage cached as
+            // "no rating" would hide the title's rating until somebody refreshed it by hand.
+            if (result.IsAnswer) WriteCache(conn, imdbId, movieId, result.Rating);
+            return result.Rating;
         }
 
-        private static bool TryReadCache(SqliteConnection conn, string imdbId, out double? rating)
+        /// <summary>The day's spend, or nothing spent when it cannot be read.</summary>
+        internal static (int Requests, bool LimitReached) TryReadUsage(SqliteConnection conn, string day)
+        {
+            try
+            {
+                return OmdbUsage.Read(conn, day);
+            }
+            catch (Exception ex)
+            {
+                AppLog.Write("omdb.log", $"usage read failed: {ex.Message}");
+                return (0, false);
+            }
+        }
+
+        /// <summary>Counts a request that was made. A failure to count is logged and not fatal.</summary>
+        internal static async Task RecordUsageAsync(SqliteConnection conn, string day, ImdbLookupResult result, CancellationToken ct)
+        {
+            try
+            {
+                await OmdbUsage.RecordAsync(conn, day, result.StopsForTheDay, ct).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                AppLog.Write("omdb.log", $"usage write failed: {ex.Message}");
+            }
+        }
+
+        internal static bool TryReadCache(SqliteConnection conn, string imdbId, out double? rating)
         {
             rating = null;
             try
@@ -75,7 +116,7 @@ namespace UrDatabase.Services
             }
         }
 
-        private static void WriteCache(SqliteConnection conn, string imdbId, long? movieId, double? rating)
+        internal static void WriteCache(SqliteConnection conn, string imdbId, long? movieId, double? rating)
         {
             try
             {
