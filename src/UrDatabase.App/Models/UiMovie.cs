@@ -37,6 +37,17 @@ namespace UrDatabase.Models
         public double? Rating { get; set; }
 
         /// <summary>
+        /// The IMDb rating, out of ten, when the catalogue has fetched one, and null otherwise —
+        /// never a TMDB average or a server's community rating standing in for it.
+        /// </summary>
+        /// <remarks>
+        /// Kept apart from <see cref="Rating"/>, which falls back to those other numbers so the
+        /// rating filter has something to work with. The card prints only this one, under a star,
+        /// and a star on a TMDB average would be the mislabelling this app has shipped before.
+        /// </remarks>
+        public double? ImdbRating { get; set; }
+
+        /// <summary>
         /// The billed cast, one <c>"Name (Character)"</c> per line, in the same shape the details
         /// screen and the Jellyfin cache use.
         /// </summary>
@@ -94,6 +105,10 @@ namespace UrDatabase.Models
             CastList = JoinLines(facts.Cast) ?? CastList;
             CrewList = JoinLines(facts.Crew) ?? CrewList;
             FactsKnown = true;
+
+            // The card prints the runtime, and the poster pass lands facts on a card already on
+            // screen.
+            OnPropertyChanged(nameof(MetaLine));
         }
 
         private static IEnumerable<string> SplitLines(string? stored) =>
@@ -230,8 +245,9 @@ namespace UrDatabase.Models
         }
 
         /// <summary>
-        /// The line under the title on a card: the year, for a series how many seasons are behind
-        /// it, and for an episode where in its programme it is.
+        /// The line under the title on a card: the year, the runtime and the IMDb rating; for a
+        /// series how many seasons are behind it instead of a runtime; and for an episode where in
+        /// its programme it is. See <see cref="Services.CardMeta"/> for the rule.
         /// </summary>
         /// <remarks>
         /// One property rather than the view choosing between three, because the choice is a rule
@@ -247,34 +263,9 @@ namespace UrDatabase.Models
         /// says nothing. It is on <see cref="CardTooltip"/> in full instead, and on the series
         /// screen the card opens.
         ///
-        /// Empty rather than null for a film with no year, so the view has one thing to test.
+        /// Empty rather than null for a film that knows nothing, so the view has one thing to test.
         /// </remarks>
-        public string MetaLine
-        {
-            get
-            {
-                var year = Year is int value ? value.ToString(CultureInfo.InvariantCulture) : "";
-
-                if (IsEpisode)
-                {
-                    // The name only when the server numbered nothing at all, which is the one case
-                    // where it is the only thing that distinguishes this card from its siblings.
-                    var label = EpisodeLabel;
-                    return label.Length > 0 ? label : (EpisodeTitle ?? "").Trim();
-                }
-
-                if (!IsSeries) return year;
-
-                var seasons = SeasonCount is int count && count > 0
-                    ? count == 1 ? "1 season" : $"{count.ToString(CultureInfo.InvariantCulture)} seasons"
-                    : "";
-
-                if (year.Length == 0) return seasons;
-                if (seasons.Length == 0) return year;
-
-                return $"{year} · {seasons}";
-            }
-        }
+        public string MetaLine => Services.CardMeta.Line(this);
 
         /// <summary>
         /// Where the row came from: the local catalogue, or a server. Defaults to
@@ -496,7 +487,9 @@ namespace UrDatabase.Models
 
         /// <summary>
         /// What hovering the card says. The title, where an episode sits in its programme and what
-        /// that episode is called, and how far through it is when that is known — a 3px rule along
+        /// that episode is called, the IMDb rating under its own name — the star on the card says
+        /// which service only to somebody who already knows — and how far through it is when that
+        /// is known — a 3px rule along
         /// the bottom of a poster is legible at a glance and says nothing to somebody meeting it
         /// for the first time, and this is where it explains itself.
         /// </summary>
@@ -522,6 +515,9 @@ namespace UrDatabase.Models
 
                     if (episode.Length > 0) parts.Add(episode);
                 }
+
+                if (Services.CardMeta.Rating(ImdbRating).Length > 0)
+                    parts.Add($"IMDb {ImdbRating!.Value.ToString("0.0", CultureInfo.InvariantCulture)}");
 
                 if (!string.IsNullOrWhiteSpace(_resumeNote)) parts.Add(_resumeNote!);
 

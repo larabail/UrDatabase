@@ -47,12 +47,18 @@ namespace UrDatabase.Services
         /// catalogue has fetched it — that is the number the details screen leads with — and
         /// TMDB's average otherwise, so a film opened once does not filter on a different number
         /// from the one it was seen wearing.
+        ///
+        /// The IMDb rating is also selected on its own, because the card prints only that one:
+        /// <c>Rating</c> cannot say which of the two it turned out to be.
         /// </summary>
+        private const string ImdbForFilm = @"(SELECT r.rating FROM imdb_ratings r
+                 WHERE r.movie_id = m.id AND r.rating IS NOT NULL AND r.rating > 0
+                 ORDER BY r.fetched_at DESC LIMIT 1)";
+
         private const string FactColumns = @"
        m.runtime_minutes AS RuntimeMinutes,
-       COALESCE((SELECT r.rating FROM imdb_ratings r
-                 WHERE r.movie_id = m.id AND r.rating IS NOT NULL AND r.rating > 0
-                 ORDER BY r.fetched_at DESC LIMIT 1), m.rating) AS Rating,
+       " + ImdbForFilm + @" AS ImdbRating,
+       COALESCE(" + ImdbForFilm + @", m.rating) AS Rating,
        m.cast_list AS CastList, m.crew_list AS CrewList,
        (m.facts_fetched_at IS NOT NULL) AS FactsKnown,";
 
@@ -77,6 +83,10 @@ ORDER BY rank";
         /// Counted from episodes that have a file, which is every episode a scan made — but a file
         /// re-linked by hand to a film leaves its episode behind, and that episode is not here.
         /// A programme with no such episode at all is not a card: there is nothing in it to play.
+        ///
+        /// The IMDb rating is the one the details screen cached for the programme's IMDb id, if it
+        /// has. It is the rating filter's number too, so a programme cannot wear a star the filter
+        /// does not know about.
         /// </summary>
         private const string SeriesColumns = @"
 SELECT s.id AS Id, s.title AS Title, s.year AS Year, s.genres AS Genres, s.poster_path AS PosterPath,
@@ -88,7 +98,11 @@ SELECT s.id AS Id, s.title AS Title, s.year AS Year, s.genres AS Genres, s.poste
        EXISTS (SELECT 1 FROM episodes e JOIN files f ON f.episode_id = e.id
                WHERE e.series_id = s.id AND f.missing_since IS NULL)     AS HasFileHere,
        EXISTS (SELECT 1 FROM episodes e JOIN files f ON f.episode_id = e.id
-               WHERE e.series_id = s.id AND f.missing_since IS NOT NULL) AS HasFileMissing";
+               WHERE e.series_id = s.id AND f.missing_since IS NOT NULL) AS HasFileMissing,
+       (SELECT r.rating FROM imdb_ratings r
+        WHERE r.imdb_id = s.imdb_id AND r.rating IS NOT NULL AND r.rating > 0) AS ImdbRating,
+       (SELECT r.rating FROM imdb_ratings r
+        WHERE r.imdb_id = s.imdb_id AND r.rating IS NOT NULL AND r.rating > 0) AS Rating";
 
         private const string SeriesHasEpisodes = @"
 EXISTS (SELECT 1 FROM episodes e JOIN files f ON f.episode_id = e.id WHERE e.series_id = s.id)";

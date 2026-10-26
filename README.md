@@ -36,6 +36,20 @@ It runs on Windows and macOS from one codebase, built with
   wheel still scrolls the page vertically. The last item can be read in full.
   `Cmd+F` — `Ctrl+F` on Windows — puts the cursor in the
   search field, and the field says so (`Controls/ScrollableShelf`, `Views/MainWindow`).
+- **Year, length and IMDb rating under every title.** Each card's small line
+  reads `2025 · 2h 15m · ★ 7.6`; a series reads `2011 · 3 seasons · ★ 8.4`,
+  with no runtime, because a programme has episodes of a length rather than one
+  of its own. Only what is known is printed, so a film nothing has measured
+  reads `2025 · ★ 7.6` with no empty separator. **The star is IMDb's and nobody
+  else's**: it appears only once the catalogue holds an IMDb rating — fetched
+  from OMDb the first time a film's or a local programme's details are opened
+  — and a card whose only rating is TMDB's average or a server's community
+  rating shows none, because a filled star and a hollow one are the same mark
+  at that size and this app has shipped a mislabelled rating before. Those other
+  numbers still drive the rating filter below, and the details screen shows
+  every rating under its own source's name. Hovering a card spells the star out
+  as `IMDb 7.6`. A part-watched card puts how much is left on a line of its own
+  underneath, so neither trims the other (`Services/CardMeta`).
 - **Filter by where a film is.** When the library draws on both this computer
   and a server, a row above the genres offers **Everywhere**, **Offline** and
   **On the server**, each with a count. Genre and location are different
@@ -51,7 +65,7 @@ It runs on Windows and macOS from one codebase, built with
   Series share the genre shelves with films, because Jellyfin gives a programme
   real genres and it belongs in Drama rather than in a wing of its own — but
   every series card carries a **Series** badge and its season count where a film
-  shows its year, so the two are mixed but never silently. A programme found on
+  shows its runtime, so the two are mixed but never silently. A programme found on
   this computer is a series card exactly like a server's. Nothing is both, so
   unlike the row above these counts do add up. It is hidden entirely on a library
   of films only, and on one of television only: a permanent "Television 0" beside
@@ -927,13 +941,16 @@ that rather than complaining about whichever half is missing.
 The rating badge on a server film says `Jellyfin` when it is Jellyfin's own
 community rating, and `IMDb` only for the IMDb rating from OMDb. They are
 different numbers from different populations and are never shown under each
-other's name.
+other's name. For the same reason a server film's library card carries no star
+for its community rating: the star there is reserved for IMDb, and a server film
+only has an IMDb rating on its card when it is folded onto a local copy that has
+one.
 
 #### Television
 
 Series from the server's `tvshows` libraries are synced beside its films and
 appear on the same genre shelves, each carrying a **Series** badge and the number
-of seasons behind it where a film shows its year. The **Television** control in
+of seasons behind it where a film shows its runtime. The **Television** control in
 the row above the genres takes them out of the library in one click, and that
 row appears only when there is actually both kinds to choose between.
 
@@ -1923,6 +1940,13 @@ Stated plainly, so nobody has to find out by using it:
   them; **Wrong film?** supplies the id and the facts together. Episodes and
   programmes have no runtime of their own, so a length filter leaves television
   out.
+- **Most cards have no IMDb star yet.** The star under a title is IMDb's only,
+  and the catalogue fetches an IMDb rating from OMDb when a film's details are
+  opened, not in the background pass. So a film nobody has opened shows its year
+  and length and no rating, even though it may already have a TMDB or Jellyfin
+  rating the filter uses. A film only on the server never gets one on its card:
+  its IMDb id is not carried onto the card, so a rating cached when its details
+  were opened is not found for it.
 - **A film in both places is matched by identity, then by name.** The server's
   copy and this computer's are shown as one card when they agree on a TMDB id,
   and otherwise when their titles agree once case, accents and punctuation are
