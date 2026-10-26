@@ -38,6 +38,7 @@ namespace UrDatabase.Services
                 PosterPath = posterUrl?.Invoke(movie),
                 RuntimeMinutes = movie.RuntimeMinutes is > 0 ? movie.RuntimeMinutes : null,
                 Rating = FilmFactsStore.NormaliseRating(movie.CommunityRating),
+                ImdbId = TmdbImdbIds.Normalise(movie.ImdbId),
                 CastList = NullIfEmpty(JellyfinCache.JoinCredits(movie.Cast)),
                 CrewList = NullIfEmpty(JellyfinCache.JoinCredits(movie.Crew))
             };
@@ -109,6 +110,10 @@ namespace UrDatabase.Services
                 // No runtime: a programme has episodes of a length, not a length of its own, so a
                 // length filter leaves series out rather than guessing one for them.
                 Rating = FilmFactsStore.NormaliseRating(series.CommunityRating),
+
+                // An IMDb id is one catalogue for films and television alike, unlike TMDB's two,
+                // so this one is safe to carry: it is what lets the backfill rate the programme.
+                ImdbId = TmdbImdbIds.Normalise(series.ImdbId),
                 CastList = NullIfEmpty(JellyfinCache.JoinCredits(series.Cast)),
                 CrewList = NullIfEmpty(JellyfinCache.JoinCredits(series.Crew))
             };

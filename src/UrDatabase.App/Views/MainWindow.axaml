@@ -237,39 +237,51 @@
                            TextTrimming="CharacterEllipsis"
                            Margin="0,9,0,2"/>
 
-                <!-- The year; for a series how many seasons are behind it; and
+                <!-- The year, the runtime and the IMDb rating; for a series
+                     how many seasons are behind it instead of a runtime; and
                      for an episode where in its programme it sits, which is
                      the fact that makes an episode card legible at all — its
                      own name frequently is not. One binding rather than the
                      template choosing, because what a card says about itself
                      is a rule and rules in a view cannot be tested: see
-                     UiMovie.MetaLine.
+                     CardMeta. The star is IMDb's only.
 
-                     Beside it, for a part-watched film, how much of it is
+                     Under it, for a part-watched film, how much of it is
                      left — which is the question somebody scanning the
                      Continue watching row is actually asking, and the one the
                      rule above the poster can only gesture at. In brass, so
                      the two facts do not read as one sentence.
 
-                     A Grid rather than a horizontal StackPanel: an episode's
-                     meta line is "S1E1 · In throes of increasing wonder … "
-                     and would push how-much-is-left off the side of a 152px
-                     card and over its neighbour. Here the left column trims
-                     and the brass keeps its width. The tooltip has all of it.
-                     -->
-                <Grid ColumnDefinitions="*,Auto">
-                    <TextBlock Grid.Column="0"
+                     On a line of its own rather than beside the meta line:
+                     "2025 · 2h 15m · ★ 7.6" already takes most of a 152px
+                     card, and "1 HR 20 MIN LEFT" beside it would trim one or
+                     the other to nothing. The tooltip has all of it.
+
+                     The two lines are a block of fixed height, reserved on
+                     every card whether or not it has anything to put in it,
+                     for the reason the title above is: a part-watched film
+                     keeps its resume note on every shelf it appears on, and a
+                     card that grew a line would make its shelf taller only
+                     while it was scrolled into view, and give the grids rows
+                     of uneven height. A card with no year, runtime or rating
+                     keeps the space too. -->
+                <Grid Classes="cardMeta"
+                      Height="30"
+                      RowDefinitions="14,2,14">
+                    <TextBlock Grid.Row="0"
                                Classes="mono"
                                FontSize="10.5"
+                               LineHeight="14"
                                Text="{Binding MetaLine}"
                                TextTrimming="CharacterEllipsis"
                                IsVisible="{Binding MetaLine, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
-                    <TextBlock Grid.Column="1"
+                    <TextBlock Grid.Row="2"
                                Classes="mono"
                                FontSize="10.5"
-                               Margin="7,0,0,0"
+                               LineHeight="14"
                                Foreground="{StaticResource BrassBrush}"
                                Text="{Binding ResumeNote}"
+                               TextTrimming="CharacterEllipsis"
                                IsVisible="{Binding HasResume}"/>
                 </Grid>
             </StackPanel>

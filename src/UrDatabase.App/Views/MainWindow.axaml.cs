@@ -228,6 +228,16 @@ namespace UrDatabase.Views
         private ImdbRatingService _ratings = null!;
 
         /// <summary>
+        /// Fills in IMDb ratings for the whole library behind the poster pass. Rebuilt with the
+        /// configuration, and idle for good without an OMDb key. Shares the rating service's OMDb
+        /// client, so it is stopped before that client is disposed.
+        /// </summary>
+        private ImdbRatingBackfill? _ratingBackfill;
+
+        /// <summary>The backfill's TMDB client, for films whose IMDb id is not known yet. Null without a key.</summary>
+        private TmdbService? _ratingBackfillTmdb;
+
+        /// <summary>
         /// Academy Award nominations, cached in the catalogue. Rebuilt with the configuration for
         /// the same reason as the rating service, and idle until a film is opened.
         /// </summary>
@@ -313,7 +323,7 @@ namespace UrDatabase.Views
 
             // Runs after the poster drain in OnClosing, and has to: cancelling this first would
             // cut short the very fetches the drain is there to let finish.
-            Closed += (_, __) => { DetailsView.Close(); SeriesView.Close(); _cts.Cancel(); _progressTimer?.Stop(); _personDebounce?.Stop(); _searchLoop.Dispose(); _posterLoader?.Dispose(); _ratings.Dispose(); _awards.Dispose(); _jellyfin?.Dispose(); };
+            Closed += (_, __) => { DetailsView.Close(); SeriesView.Close(); _cts.Cancel(); _progressTimer?.Stop(); _personDebounce?.Stop(); _searchLoop.Dispose(); _posterLoader?.Dispose(); _ratingBackfill?.Dispose(); _ratingBackfillTmdb?.Dispose(); _ratings.Dispose(); _awards.Dispose(); _jellyfin?.Dispose(); };
 
             DataContext = this;
 
@@ -421,8 +431,11 @@ namespace UrDatabase.Views
 
             // Constructed eagerly but idle: no request is made until a movie is opened, and none
             // at all when no OMDb key is available.
+            _ratingBackfill?.Dispose();
+            _ratingBackfillTmdb?.Dispose();
             _ratings?.Dispose();
-            _ratings = new ImdbRatingService(new OmdbService(_config.OmdbApiKey), ownsLookup: true);
+            var omdb = new OmdbService(_config.OmdbApiKey);
+            _ratings = new ImdbRatingService(omdb, ownsLookup: true);
 
             _awards?.Dispose();
             _awards = new OscarsService(new UrActorService(_config.UrActorApiKey), ownsLookup: true);
@@ -439,6 +452,30 @@ namespace UrDatabase.Views
             _posterLoader?.Dispose();
             _posterFailuresReported = 0;
             _posterLoader = new PosterAutoLoader(_config, _dbPath, maxConcurrency: 4, onFailure: ReportPosterFailure);
+
+            // Behind the poster pass: it waits whenever that has anything queued, so artwork,
+            // genres and facts always come first. Asks TMDB for a film's IMDb id only when the
+            // facts pass did not already record it.
+            _ratingBackfillTmdb = string.IsNullOrWhiteSpace(_config.TmdbApiKey)
+                ? null
+                : new TmdbService(
+                    apiKey: _config.TmdbApiKey,
+                    posterCacheDir: _config.PosterCacheDir ?? "",
+                    imageSize: _config.TmdbImageSize ?? "w342",
+                    downloadPosters: false);
+            var backfillTmdb = _ratingBackfillTmdb;
+            var posters = _posterLoader;
+            _ratingBackfill = new ImdbRatingBackfill(
+                _dbPath,
+                omdb,
+                resolveImdbId: backfillTmdb is null ? null : async (tmdbId, ct) =>
+                {
+                    var details = await backfillTmdb.GetDetailsByIdAsync(tmdbId, ct)
+                        ?? throw new HttpRequestException($"TMDB did not return film {tmdbId}.");
+                    return details.ImdbId;
+                },
+                isBusy: () => posters.Pending > 0,
+                onRating: found => ShowOnUiThread(() => ApplyImdbRatingToCards(found.ImdbId, found.Rating, found.TmdbId)));
 
             _library = new LibraryLoader(
                 new MovieRepository(_dbPath),
@@ -488,6 +525,10 @@ namespace UrDatabase.Views
                     .Concat(JellyfinLibrary.ToUiSeriesList(series, s => _jellyfin.BuildPrimaryImageUrl(s.ItemId, s.ImageTag)))
                     .ToList();
 
+                // The server's cards do not come out of the catalogue's query, so nothing else
+                // would give them the IMDb ratings it already holds for them.
+                ImdbRatingBackfill.StampCached(conn, _remoteMovies);
+
                 _resume = JellyfinResumeCache.Load(conn);
                 _dismissals = ResumeDismissalStore.Load(conn);
             }
@@ -530,6 +571,9 @@ namespace UrDatabase.Views
             SetStatus(view.Status, isLibrarySummary: view.Tally is not null);
             WarmPosters(_allMovies, includeKnown: _refreshing);
             ReapplyFilters();
+
+            // After the posters are queued, so its first look at the poster pass sees it busy.
+            _ratingBackfill?.Offer(_allMovies);
 
             _ = AdoptWatchlistKeysAsync(_allMovies);
         }
@@ -2027,7 +2071,8 @@ namespace UrDatabase.Views
             {
                 await loading.ShowAsync(
                     () => DetailsView.ShowAsync(
-                        vm, _dbPath, _config, LoadImdbRatingAsync, _jellyfin, _cts.Token,
+                        vm, _dbPath, _config, (imdbId, movieId, ct) => LoadMovieRatingForCardsAsync(vm, imdbId, movieId, ct),
+                        _jellyfin, _cts.Token,
                         LoadAwardsAsync, related,
                         relatedLookup: (movie, ct) => LoadRelatedAsync(movie, null, ct),
                         cancelEnrichment: loading.Cancel,
@@ -2277,7 +2322,7 @@ namespace UrDatabase.Views
 
         private Task LoadMovieRatingAsync(MovieDetailsVm vm, DetailLoading loading) =>
             loading.RunAsync("IMDb rating",
-                ct => LoadImdbRatingAsync(vm.ImdbId, vm.LocalId > 0 ? vm.LocalId : null, ct),
+                ct => LoadMovieRatingForCardsAsync(vm, vm.ImdbId, vm.LocalId > 0 ? vm.LocalId : null, ct),
                 rating => { vm.ImdbRating = rating; DetailsView.Refresh(vm); });
 
         private Task LoadMovieAwardsAsync(MovieDetailsVm vm, DetailLoading loading) =>
@@ -2480,14 +2525,14 @@ namespace UrDatabase.Views
                     // an IMDb id while the screen is open.
                     if (string.IsNullOrWhiteSpace(vm.ImdbId))
                         await SeriesView.ShowAsync(vm, appLifetime: _cts.Token, localLoader: _localSeries,
-                            loadRating: RetryMissingSeriesRatingAsync, config: _config);
+                            loadRating: (id, ct) => LoadSeriesRatingForCardsAsync(vm.LocalId, vm.RemoteId, id, true, ct), config: _config);
                     else
                         await loading.ShowAsync(
                             () => SeriesView.ShowAsync(vm, appLifetime: _cts.Token, localLoader: _localSeries,
-                                loadRating: RetryMissingSeriesRatingAsync, cancelEnrichment: loading.Cancel,
+                                loadRating: (id, ct) => LoadSeriesRatingForCardsAsync(vm.LocalId, vm.RemoteId, id, true, ct), cancelEnrichment: loading.Cancel,
                                 config: _config),
                             load => load.RunAsync("IMDb rating",
-                                ct => LoadImdbRatingAsync(vm.ImdbId, null, ct),
+                                ct => LoadSeriesRatingForCardsAsync(vm.LocalId, vm.RemoteId, vm.ImdbId, false, ct),
                                 rating => SeriesView.UpdateRating(vm, rating)));
                 }
                 finally
@@ -2568,9 +2613,9 @@ namespace UrDatabase.Views
                 {
                     await loading.ShowAsync(
                         () => SeriesView.ShowAsync(vm, _series, _jellyfin, _cts.Token, openAtSeason,
-                            loadRating: RetryMissingSeriesRatingAsync, cancelEnrichment: loading.Cancel),
+                            loadRating: (id, ct) => LoadSeriesRatingForCardsAsync(vm.LocalId, vm.RemoteId, id, true, ct), cancelEnrichment: loading.Cancel),
                         load => load.RunAsync("IMDb rating",
-                            ct => LoadImdbRatingAsync(vm.ImdbId, null, ct),
+                            ct => LoadSeriesRatingForCardsAsync(vm.LocalId, vm.RemoteId, vm.ImdbId, false, ct),
                             rating => SeriesView.UpdateRating(vm, rating)));
                 }
                 finally
@@ -2936,6 +2981,77 @@ namespace UrDatabase.Views
             {
                 AppLog.Write("omdb.log", $"rating lookup failed for {imdbId}: {ex.Message}");
                 return null;
+            }
+        }
+
+        /// <summary>
+        /// A film's IMDb rating for its details screen, put onto its library card as well.
+        /// </summary>
+        /// <remarks>
+        /// Without this the screen showed the rating and the card behind it went on showing none
+        /// until the library was next read — the same film, in the same window, disagreeing with
+        /// itself. Every way the screen asks goes through here: opening it, refreshing it, and
+        /// correcting its match.
+        /// </remarks>
+        private async Task<double?> LoadMovieRatingForCardsAsync(MovieDetailsVm vm, string? imdbId, long? movieId, CancellationToken ct)
+        {
+            var rating = await LoadImdbRatingAsync(imdbId, movieId, ct);
+
+            if (rating is double value && !string.IsNullOrWhiteSpace(imdbId))
+            {
+                var localId = vm.LocalId;
+                var remoteId = vm.RemoteId;
+                var tmdbId = vm.TmdbId;
+
+                ShowOnUiThread(() => ApplyImdbRatingToCards(imdbId!, value, tmdbId, card =>
+                    card.IsFilm
+                    && ((localId > 0 && card.Source == MovieSource.Local && card.Id == localId)
+                        || (!string.IsNullOrWhiteSpace(remoteId)
+                            && string.Equals(card.RemoteId, remoteId, StringComparison.OrdinalIgnoreCase)))));
+            }
+
+            return rating;
+        }
+
+        /// <summary>The same for a programme's screen, matched on its row or its server id.</summary>
+        private async Task<double?> LoadSeriesRatingForCardsAsync(
+            long localId, string? remoteId, string? imdbId, bool forgetMissing, CancellationToken ct)
+        {
+            var rating = forgetMissing
+                ? await RetryMissingSeriesRatingAsync(imdbId, ct)
+                : await LoadImdbRatingAsync(imdbId, null, ct);
+
+            if (rating is double value && !string.IsNullOrWhiteSpace(imdbId))
+            {
+                ShowOnUiThread(() => ApplyImdbRatingToCards(imdbId!, value, null, card =>
+                    card.IsSeries
+                    && ((localId > 0 && card.Source == MovieSource.Local && card.Id == localId)
+                        || (!string.IsNullOrWhiteSpace(remoteId)
+                            && string.Equals(card.RemoteId, remoteId, StringComparison.OrdinalIgnoreCase)))));
+            }
+
+            return rating;
+        }
+
+        /// <summary>
+        /// Puts an IMDb rating onto every card that is that title, wherever it came from: the
+        /// background backfill, or a details screen that has just fetched it.
+        /// </summary>
+        /// <param name="tmdbId">A TMDB film the rating was found through, matched on films only.</param>
+        /// <param name="alsoMatches">
+        /// The card a details screen was opened from, which may not know its IMDb id yet.
+        /// </param>
+        private void ApplyImdbRatingToCards(string imdbId, double rating, int? tmdbId, Func<UiMovie, bool>? alsoMatches = null)
+        {
+            var changed = ImdbRatingBackfill.ApplyToCards(
+                _allMovies.Concat(_remoteMovies).Distinct(), imdbId, rating, tmdbId, alsoMatches);
+
+            // The rating filter reads Rating, which may just have changed. Redrawn on the same
+            // slow beat as arriving genres, and only when the filter is in use.
+            if (changed && _refinement.IsActive)
+            {
+                _genresStale = true;
+                _progressTimer?.Start();
             }
         }
 

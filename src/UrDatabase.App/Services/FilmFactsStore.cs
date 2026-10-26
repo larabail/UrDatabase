@@ -37,7 +37,11 @@ namespace UrDatabase.Services
                 details?.Runtime is int minutes && minutes > 0 ? minutes : null,
                 NormaliseRating(details?.VoteAverage),
                 CreditLine.Cast(people),
-                CreditLine.Crew(people));
+                CreditLine.Crew(people))
+            {
+                TmdbId = details?.Id is int id && id > 0 ? id : null,
+                ImdbId = TmdbImdbIds.Normalise(details?.ImdbId)
+            };
         }
 
         /// <summary>A rating on TMDB's and Jellyfin's scale of ten, or null when there is none.</summary>
@@ -81,6 +85,12 @@ WHERE id=@id";
             cmd.Parameters.AddWithValue("@fetched", DateTime.UtcNow.ToString("O", CultureInfo.InvariantCulture));
 
             await cmd.ExecuteNonQueryAsync(token).ConfigureAwait(false);
+
+            // The IMDb id came in the same response, so recording it is free — and it is all the
+            // rating backfill needs to rate this film without asking TMDB again. Only a record
+            // that named its TMDB film says anything; an empty answer is not written down.
+            if (facts.TmdbId is int tmdbId)
+                await TmdbImdbIds.WriteAsync(conn, tmdbId, facts.ImdbId, token).ConfigureAwait(false);
         }
 
         private static object NullIfEmpty(string value) => value.Length == 0 ? DBNull.Value : value;

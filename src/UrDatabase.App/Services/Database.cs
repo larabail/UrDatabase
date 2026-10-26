@@ -235,6 +235,58 @@ namespace UrDatabase.Services
             AddColumnIfMissing(conn, "episodes", "air_date", "TEXT");
             AddColumnIfMissing(conn, "episodes", "still_path", "TEXT");
             AddColumnIfMissing(conn, "episodes", "tmdb_fetched_at", "TEXT");
+
+            // Every "no rating" an older build cached. It cached one for any OMDb failure — a spent
+            // quota, a refused key, a 503, a timeout — and a cached answer is never asked again,
+            // so a title caught by that bug would never get its star. Those rows look exactly
+            // like genuine answers, so all of them are forgotten, once: a genuine "none" costs one
+            // more request within the backfill's daily budget, and a wrong one gets its rating.
+            // Rows this build writes are real answers and are left alone on every later open.
+            ApplyOnce(conn, ForgetPre035NoRatings, "DELETE FROM imdb_ratings WHERE rating IS NULL");
+        }
+
+        /// <summary>The name <see cref="Migrate"/> records once the old "no rating" rows are gone.</summary>
+        internal const string ForgetPre035NoRatings = "0.35.0-forget-omdb-no-rating-answers";
+
+        /// <summary>
+        /// Runs a change to existing rows exactly once per catalogue, recorded by name in
+        /// <c>applied_migrations</c>.
+        /// </summary>
+        /// <remarks>
+        /// The record and the change are one transaction, and the record is claimed first: of two
+        /// connections opening the catalogue at once — the poster pass opens four — the second
+        /// waits on the write lock, then finds the name already there and does nothing.
+        /// </remarks>
+        internal static void ApplyOnce(SqliteConnection conn, string name, string sql)
+        {
+            if (!TableExists(conn, "applied_migrations")) return;
+
+            using (var check = conn.CreateCommand())
+            {
+                check.CommandText = "SELECT 1 FROM applied_migrations WHERE name=@name";
+                check.Parameters.AddWithValue("@name", name);
+                if (check.ExecuteScalar() is not null) return;
+            }
+
+            using var tx = conn.BeginTransaction();
+
+            using (var claim = conn.CreateCommand())
+            {
+                claim.Transaction = tx;
+                claim.CommandText = "INSERT OR IGNORE INTO applied_migrations (name, applied_at) VALUES (@name, @at)";
+                claim.Parameters.AddWithValue("@name", name);
+                claim.Parameters.AddWithValue("@at", DateTime.UtcNow.ToString("O", System.Globalization.CultureInfo.InvariantCulture));
+                if (claim.ExecuteNonQuery() == 0) return;
+            }
+
+            using (var change = conn.CreateCommand())
+            {
+                change.Transaction = tx;
+                change.CommandText = sql;
+                change.ExecuteNonQuery();
+            }
+
+            tx.Commit();
         }
 
         /// <summary>
@@ -396,6 +448,20 @@ CREATE TABLE IF NOT EXISTS imdb_ratings (
     rating     REAL,
     fetched_at TEXT NOT NULL,
     source     TEXT NOT NULL DEFAULT 'omdb'
+);
+CREATE TABLE IF NOT EXISTS applied_migrations (
+    name       TEXT PRIMARY KEY,
+    applied_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS tmdb_imdb_ids (
+    tmdb_id    INTEGER PRIMARY KEY,
+    imdb_id    TEXT NOT NULL,
+    fetched_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS omdb_usage (
+    day           TEXT PRIMARY KEY,
+    requests      INTEGER NOT NULL DEFAULT 0,
+    limit_reached INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS jellyfin_movies (
     item_id          TEXT PRIMARY KEY,

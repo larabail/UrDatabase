@@ -37,6 +37,57 @@ namespace UrDatabase.Models
         public double? Rating { get; set; }
 
         /// <summary>
+        /// The IMDb rating, out of ten, when the catalogue has fetched one, and null otherwise —
+        /// never a TMDB average or a server's community rating standing in for it.
+        /// </summary>
+        /// <remarks>
+        /// Kept apart from <see cref="Rating"/>, which falls back to those other numbers so the
+        /// rating filter has something to work with. The card prints only this one, under a star,
+        /// and a star on a TMDB average would be the mislabelling this app has shipped before.
+        ///
+        /// Raises a change for the card's line and tooltip, because a rating can arrive for a card
+        /// already on screen — from the background backfill, or from its details being opened.
+        /// </remarks>
+        public double? ImdbRating
+        {
+            get => _imdbRating;
+            set
+            {
+                if (_imdbRating == value) return;
+                _imdbRating = value;
+                OnPropertyChanged();
+                OnPropertyChanged(nameof(MetaLine));
+                OnPropertyChanged(nameof(CardTooltip));
+            }
+        }
+
+        private double? _imdbRating;
+
+        /// <summary>
+        /// The IMDb title this is, when anything has said: the server's provider id, the
+        /// programme's TMDB description, or TMDB's answer for a film. Null when nothing has.
+        /// </summary>
+        public string? ImdbId { get; set; }
+
+        /// <summary>
+        /// Puts an IMDb rating that has just arrived onto the card, and keeps the rating filter's
+        /// number in step with what the next library read would give it.
+        /// </summary>
+        /// <remarks>
+        /// That read prefers the IMDb rating for anything in the catalogue, so a local card takes
+        /// it outright. A server card's filter number is the server's community rating and stays
+        /// so, unless it had none — the same "only into a blank" rule its other facts follow.
+        /// </remarks>
+        public void ApplyImdbRating(double rating)
+        {
+            if (double.IsNaN(rating) || rating <= 0) return;
+
+            ImdbRating = rating;
+            if (Source == MovieSource.Local) Rating = rating;
+            else Rating ??= rating;
+        }
+
+        /// <summary>
         /// The billed cast, one <c>"Name (Character)"</c> per line, in the same shape the details
         /// screen and the Jellyfin cache use.
         /// </summary>
@@ -93,7 +144,12 @@ namespace UrDatabase.Models
             Rating ??= facts.Rating;
             CastList = JoinLines(facts.Cast) ?? CastList;
             CrewList = JoinLines(facts.Crew) ?? CrewList;
+            ImdbId ??= facts.ImdbId;
             FactsKnown = true;
+
+            // The card prints the runtime, and the poster pass lands facts on a card already on
+            // screen.
+            OnPropertyChanged(nameof(MetaLine));
         }
 
         private static IEnumerable<string> SplitLines(string? stored) =>
@@ -230,8 +286,9 @@ namespace UrDatabase.Models
         }
 
         /// <summary>
-        /// The line under the title on a card: the year, for a series how many seasons are behind
-        /// it, and for an episode where in its programme it is.
+        /// The line under the title on a card: the year, the runtime and the IMDb rating; for a
+        /// series how many seasons are behind it instead of a runtime; and for an episode where in
+        /// its programme it is. See <see cref="Services.CardMeta"/> for the rule.
         /// </summary>
         /// <remarks>
         /// One property rather than the view choosing between three, because the choice is a rule
@@ -247,34 +304,9 @@ namespace UrDatabase.Models
         /// says nothing. It is on <see cref="CardTooltip"/> in full instead, and on the series
         /// screen the card opens.
         ///
-        /// Empty rather than null for a film with no year, so the view has one thing to test.
+        /// Empty rather than null for a film that knows nothing, so the view has one thing to test.
         /// </remarks>
-        public string MetaLine
-        {
-            get
-            {
-                var year = Year is int value ? value.ToString(CultureInfo.InvariantCulture) : "";
-
-                if (IsEpisode)
-                {
-                    // The name only when the server numbered nothing at all, which is the one case
-                    // where it is the only thing that distinguishes this card from its siblings.
-                    var label = EpisodeLabel;
-                    return label.Length > 0 ? label : (EpisodeTitle ?? "").Trim();
-                }
-
-                if (!IsSeries) return year;
-
-                var seasons = SeasonCount is int count && count > 0
-                    ? count == 1 ? "1 season" : $"{count.ToString(CultureInfo.InvariantCulture)} seasons"
-                    : "";
-
-                if (year.Length == 0) return seasons;
-                if (seasons.Length == 0) return year;
-
-                return $"{year} · {seasons}";
-            }
-        }
+        public string MetaLine => Services.CardMeta.Line(this);
 
         /// <summary>
         /// Where the row came from: the local catalogue, or a server. Defaults to
@@ -496,7 +528,9 @@ namespace UrDatabase.Models
 
         /// <summary>
         /// What hovering the card says. The title, where an episode sits in its programme and what
-        /// that episode is called, and how far through it is when that is known — a 3px rule along
+        /// that episode is called, the IMDb rating under its own name — the star on the card says
+        /// which service only to somebody who already knows — and how far through it is when that
+        /// is known — a 3px rule along
         /// the bottom of a poster is legible at a glance and says nothing to somebody meeting it
         /// for the first time, and this is where it explains itself.
         /// </summary>
@@ -522,6 +556,9 @@ namespace UrDatabase.Models
 
                     if (episode.Length > 0) parts.Add(episode);
                 }
+
+                if (Services.CardMeta.Rating(ImdbRating).Length > 0)
+                    parts.Add($"IMDb {ImdbRating!.Value.ToString("0.0", CultureInfo.InvariantCulture)}");
 
                 if (!string.IsNullOrWhiteSpace(_resumeNote)) parts.Add(_resumeNote!);
 
@@ -597,6 +634,11 @@ namespace UrDatabase.Models
             Rating ??= server.Rating;
             if (string.IsNullOrWhiteSpace(CastList)) CastList = server.CastList;
             if (string.IsNullOrWhiteSpace(CrewList)) CrewList = server.CrewList;
+
+            // The server's IMDb id is a provider id, as good as TMDB's; and a rating the backfill
+            // found under it is IMDb's, so it may wear the star here as it would on its own card.
+            ImdbId ??= server.ImdbId;
+            ImdbRating ??= server.ImdbRating;
         }
 
         public IEnumerable<string> GenresList =>

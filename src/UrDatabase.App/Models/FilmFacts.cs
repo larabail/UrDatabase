@@ -22,5 +22,15 @@ namespace UrDatabase.Models
         IReadOnlyList<string> Crew)
     {
         public static FilmFacts None { get; } = new(null, null, Array.Empty<string>(), Array.Empty<string>());
+
+        /// <summary>
+        /// The TMDB film these facts describe, and the IMDb title TMDB says it is. Both null when
+        /// the facts did not come from a TMDB record. Saved alongside the facts so the IMDb rating
+        /// backfill can find the film's rating without asking TMDB a second time.
+        /// </summary>
+        public int? TmdbId { get; init; }
+
+        /// <inheritdoc cref="TmdbId"/>
+        public string? ImdbId { get; init; }
     }
 }
