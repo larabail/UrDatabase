@@ -294,9 +294,11 @@ It runs on Windows and macOS from one codebase, built with
 
   With no TMDB key, or for a film nothing has identified, it falls back to films
   sharing the most genres, and says so in its heading rather than claiming a
-  resemblance nobody computed. When there is nothing to show it hides entirely
-  and the plot takes the space back (`Services/RelatedFilms`).
-- **Stills from the film, under its plot.** A strip of up to eight frames sits
+  resemblance nobody computed. It holds up to sixteen posters, enough to run
+  the width of a wide window, with arrows for the rest on a narrow one. When
+  there is nothing to show it hides entirely and the page closes up over it
+  (`Services/RelatedFilms`).
+- **Stills from the film, under its plot.** A strip of up to sixteen frames sits
   directly beneath the synopsis, and clicking one fills the window with it at
   1280 pixels wide; the arrow keys step through the strip and Escape puts it
   away. They are TMDB's backdrops for the film — for nearly every film,
@@ -310,10 +312,21 @@ It runs on Windows and macOS from one codebase, built with
   like posters, so a film opened once shows its strip again offline and with
   no key. A strip is only trusted from disk once every frame on it arrived, so
   an interrupted one is asked for again rather than shown half-empty forever.
+  A strip cached by an older build with all eight of its frames is asked for
+  again once, in case there are more to fill a wide window, and is still shown
+  if that fails.
   **Refresh** goes past the cache, and **Wrong film?** fetches the strip of the
   film you chose. With no TMDB key, nothing cached, or a film nothing has
   identified, the strip is hidden rather than left as an empty heading
-  (`Services/FilmStills`, `Services/DetailsLayout`).
+  (`Services/FilmStills`).
+- **A details page that stays compact at any size.** Title, facts, plot,
+  stills, the shelf and the credits sit one under the other at their own
+  heights, and the column scrolls when the window is shorter than they are;
+  nothing stretches to fill a tall window, so a maximised page has no bands of
+  empty backdrop between its sections. The stills and the shelf run the full
+  width. The plot is capped while there is a strip or a shelf under it, and
+  scrolls inside the cap, so a long synopsis does not push them below the fold
+  (`Services/DetailsLayout`).
 - **The Academy, under the poster.** A film that was nominated for an Oscar says
   so: wins first, marked with a star, then the nominations, with the category and
   who it was for. The panel is hidden outright for the great majority of films

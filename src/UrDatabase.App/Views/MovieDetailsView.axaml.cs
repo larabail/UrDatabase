@@ -275,6 +275,9 @@ namespace UrDatabase.Views
             RefreshStatus.Text = "";
             ShowStills(null);
             ShowRelated(related);
+            // Following a film off the shelf at the foot of the column would otherwise open the
+            // next one scrolled to where the last was left.
+            DetailsScroller.Offset = default;
             IsVisible = true;
 
             // Focus has to land inside this screen or Escape and the arrow keys keep going to
@@ -600,12 +603,10 @@ namespace UrDatabase.Views
         }
 
         /// <summary>
-        /// Fills the shelf of films to watch next, or hides it and gives the space back.
+        /// Fills the shelf of films to watch next, or hides it and lets the column close up.
         /// </summary>
         /// <remarks>
-        /// The row heights are swapped rather than left fixed — see <see cref="DetailsLayout"/>.
-        /// Leaving the plot capped with no shelf under it would reintroduce the empty band this
-        /// shelf was added to fill, only higher up.
+        /// The plot's cap follows whether there is a shelf under it — see <see cref="DetailsLayout"/>.
         /// </remarks>
         private void ShowRelated(RelatedShelf? related)
         {
@@ -635,16 +636,8 @@ namespace UrDatabase.Views
 
         private void ApplyColumnLayout()
         {
-            var layout = DetailsLayout.For(_hasRelated, _stills.Count > 0);
-            var rows = ((Grid)RelatedPane.Parent!).RowDefinitions;
-            rows[3].Height = Fill(layout.PlotFills);
-            rows[4].Height = Fill(layout.StillsFill);
-            rows[5].Height = Fill(layout.RelatedFills);
-
             // A long plot under a cap scrolls, which is what the ScrollViewer around it is for.
-            PlotPane.MaxHeight = layout.PlotMaxHeight;
-
-            static GridLength Fill(bool fills) => fills ? new GridLength(1, GridUnitType.Star) : GridLength.Auto;
+            PlotPane.MaxHeight = DetailsLayout.PlotMaxHeight(_hasRelated, _stills.Count > 0);
         }
 
         private async Task ReloadStillsAsync(MovieDetailsVm vm, CancellationToken ct)

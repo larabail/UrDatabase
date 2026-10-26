@@ -31,7 +31,15 @@ namespace UrDatabase.Services
     /// </remarks>
     public sealed class FilmStills
     {
-        public const int MaxStills = 8;
+        public const int MaxStills = 16;
+
+        /// <summary>
+        /// The cap strips were picked under before the manifest recorded one. Eight frames stopped
+        /// half way across a wide window; a strip cached then with all eight may have more to give.
+        /// </summary>
+        internal const int LegacyMaxStills = 8;
+
+        private const string CapPrefix = "#max ";
         public const string ThumbnailSize = "w300";
         public const string FullSize = "w1280";
         internal const string ManifestName = "stills.txt";
@@ -80,7 +88,7 @@ namespace UrDatabase.Services
             if (tmdbId is not int id || id <= 0) return None;
 
             var folder = _cacheRoot is null ? null : Path.Combine(_cacheRoot, id.ToString(CultureInfo.InvariantCulture));
-            if (!refresh && folder is not null && ReadCached(folder) is { } cached) return cached;
+            if (!refresh && folder is not null && ReadCachedStrip(folder) is { MayHaveMore: false } cached) return cached.Stills;
             if (_tmdb is null || !_tmdb.HasApiKey) return Cached(folder);
 
             IReadOnlyList<TmdbService.TmdbImage> backdrops;
@@ -150,9 +158,16 @@ namespace UrDatabase.Services
 
         /// <summary>
         /// A film's strip as cached, or null when it is not — including when it was only partly
-        /// cached, so the next visit asks again rather than showing half a strip forever.
+        /// cached, so the next visit asks again rather than showing half a strip forever — and
+        /// whether it was cut short by a smaller cap than today's. Such a strip is still shown
+        /// when nothing better can be had, but is asked for again when it can be.
         /// </summary>
-        internal static IReadOnlyList<FilmStill>? ReadCached(string folder)
+        private sealed record CachedStrip(IReadOnlyList<FilmStill> Stills, int PickedUnder)
+        {
+            public bool MayHaveMore => PickedUnder < MaxStills && Stills.Count >= PickedUnder;
+        }
+
+        private static CachedStrip? ReadCachedStrip(string folder)
         {
             try
             {
@@ -160,10 +175,18 @@ namespace UrDatabase.Services
                 if (!File.Exists(manifest)) return null;
 
                 var stills = new List<FilmStill>();
+                var pickedUnder = LegacyMaxStills;
                 foreach (var line in File.ReadAllLines(manifest))
                 {
                     var file = line.Trim();
                     if (file.Length == 0) continue;
+
+                    if (file.StartsWith(CapPrefix, StringComparison.Ordinal))
+                    {
+                        if (!int.TryParse(file.AsSpan(CapPrefix.Length), NumberStyles.None, CultureInfo.InvariantCulture, out pickedUnder))
+                            return null;
+                        continue;
+                    }
 
                     var match = CachedName.Match(file);
                     if (!match.Success || !PlainImageName.IsMatch(match.Groups["name"].Value)) return null;
@@ -174,7 +197,7 @@ namespace UrDatabase.Services
                     stills.Add(new FilmStill(path, TmdbService.BuildSizedImageUrl(FullSize, match.Groups["name"].Value)));
                 }
 
-                return stills;
+                return new CachedStrip(stills, pickedUnder);
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
             {
@@ -183,7 +206,7 @@ namespace UrDatabase.Services
         }
 
         private static IReadOnlyList<FilmStill> Cached(string? folder) =>
-            folder is null ? None : ReadCached(folder) ?? None;
+            folder is null ? None : ReadCachedStrip(folder)?.Stills ?? None;
 
         private async Task<IReadOnlyList<FilmStill>> CacheAsync(string folder, IReadOnlyList<string> names, CancellationToken ct)
         {
@@ -250,7 +273,7 @@ namespace UrDatabase.Services
             var staging = Path.Combine(folder, $"{ManifestName}.{Guid.NewGuid():N}{TmdbService.StagingSuffix}");
             try
             {
-                File.WriteAllLines(staging, files);
+                File.WriteAllLines(staging, files.Prepend(CapPrefix + MaxStills.ToString(CultureInfo.InvariantCulture)));
                 File.Move(staging, manifest, overwrite: true);
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)

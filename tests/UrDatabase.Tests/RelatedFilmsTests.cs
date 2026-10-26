@@ -113,12 +113,23 @@ namespace UrDatabase.Tests
         }
 
         [Fact]
-        public void The_shelf_is_capped_so_it_cannot_run_off_the_window()
+        public void The_shelf_is_capped()
         {
-            var library = Enumerable.Range(0, 20).Select(i => Film(i + 2, $"Film {i}", tmdbId: 200 + i)).ToList();
-            var recommended = Enumerable.Range(0, 20).Select(i => Recommendation(200 + i)).ToList();
+            var library = Enumerable.Range(0, 30).Select(i => Film(i + 2, $"Film {i}", tmdbId: 200 + i)).ToList();
+            var recommended = Enumerable.Range(0, 30).Select(i => Recommendation(200 + i)).ToList();
 
             Assert.Equal(RelatedFilms.Max, RelatedFilms.For(recommended, library, Open()).Films.Count);
+        }
+
+        /// <summary>
+        /// Eight posters stopped about half way across a maximised window and left the rest of the
+        /// row as empty backdrop. The shelf scrolls with its arrows now, so a narrow window loses
+        /// nothing by holding more.
+        /// </summary>
+        [Fact]
+        public void The_shelf_holds_enough_to_run_the_width_of_a_wide_window()
+        {
+            Assert.True(RelatedFilms.Max * DetailsLayoutTests.PosterPitch >= DetailsLayoutTests.WideTextColumn);
         }
 
         [Fact]
