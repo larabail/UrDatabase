@@ -16,6 +16,9 @@ namespace UrDatabase.Services
         private readonly bool _ownsLookup;
         private readonly Func<DateTime> _utcNow;
 
+        /// <summary>Set once OMDb refuses this instance's key; see <see cref="ImdbLookupResult.RefusesTheKey"/>.</summary>
+        private volatile bool _keyRefused;
+
         public ImdbRatingService(IImdbRatingLookup lookup, bool ownsLookup = false, Func<DateTime>? utcNow = null)
         {
             _lookup = lookup;
@@ -49,12 +52,17 @@ namespace UrDatabase.Services
             // service's number under IMDb's name.
             if (!_lookup.IsAvailable) return null;
 
+            // OMDb has refused this key. Not recorded anywhere: saving a corrected key in settings
+            // builds a new service, which asks straight away.
+            if (_keyRefused) return null;
+
             // OMDb has already said today is spent. Asking again only earns another refusal.
             var day = OmdbUsage.DayOf(_utcNow());
             if (TryReadUsage(conn, day).LimitReached) return null;
 
             var result = await _lookup.LookupResultAsync(imdbId, ct);
             await RecordUsageAsync(conn, day, result, ct);
+            if (result.RefusesTheKey) _keyRefused = true;
 
             // Only an answer about the title is remembered. A spent quota or an outage cached as
             // "no rating" would hide the title's rating until somebody refreshed it by hand.

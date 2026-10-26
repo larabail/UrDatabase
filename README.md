@@ -65,8 +65,13 @@ It runs on Windows and macOS from one codebase, built with
   barring a manual refresh of that title's page; and it stops for the day once
   the app has made **500 OMDb requests**, half the free tier's 1,000, counting
   the details screen's too, so a day of browsing still has room to open films.
-  If OMDb says the day's limit is reached or refuses the key, it stops at once,
-  caches nothing from that answer, and carries on the next day (UTC). With no
+  If OMDb says the day's limit is reached, it stops at once, caches nothing from
+  that answer, and carries on the next day (UTC). If OMDb refuses the key, it
+  stops until the key is changed in **Settings** or the app is restarted, and
+  that refusal is never held against the day, so a mistyped key that you correct
+  works straight away. Older builds cached "no rating" for every OMDb failure,
+  including a spent quota or an outage, so the first launch of this one forgets
+  every "no rating" it finds, once, and asks again within the same budget. With no
   OMDb key it does nothing at all (`Services/ImdbRatingBackfill`,
   `Services/OmdbUsage`, `Services/TmdbImdbIds`).
 - **Filter by where a film is.** When the library draws on both this computer
@@ -1978,8 +1983,11 @@ Stated plainly, so nobody has to find out by using it:
   their year and length with no star even when the filter already has a TMDB or
   Jellyfin rating for them. A title with no IMDb id anywhere — a local film TMDB
   could not identify, or a server item Jellyfin has no provider ids for — is
-  never rated. A title OMDb answered "no rating" for keeps that answer until
-  you refresh its page by hand, even if IMDb has rated it since.
+  never rated. A title OMDb genuinely answered "no rating" for keeps that answer
+  until you refresh its page by hand, even if IMDb has rated it since. Answers
+  that older builds cached by mistake are not covered by that: they are cleared
+  once, on the first launch after upgrading, and asked again, which makes that
+  first day's budget go a little less far.
 - **A film in both places is matched by identity, then by name.** The server's
   copy and this computer's are shown as one card when they agree on a TMDB id,
   and otherwise when their titles agree once case, accents and punctuation are

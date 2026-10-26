@@ -175,6 +175,14 @@ CREATE TABLE IF NOT EXISTS imdb_ratings (
     source     TEXT NOT NULL DEFAULT 'omdb'
 );
 
+-- One-time data fixes that have been applied to this catalogue, by name, so each runs exactly
+-- once however many times the catalogue is opened. Schema changes do not need this; they are
+-- idempotent on their own. Only a change to existing rows does.
+CREATE TABLE IF NOT EXISTS applied_migrations (
+    name       TEXT PRIMARY KEY,
+    applied_at TEXT NOT NULL
+);
+
 -- Which IMDb title a TMDB film is, as TMDB said. An empty imdb_id records that TMDB has none,
 -- so the question is not asked again. Filled for free by the facts pass, and by the IMDb
 -- rating backfill for any film the facts pass described before this table existed.

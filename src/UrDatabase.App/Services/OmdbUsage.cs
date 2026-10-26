@@ -15,6 +15,9 @@ namespace UrDatabase.Services
     /// screen makes as well as the background backfill's — so the backfill can stop at its own
     /// share and leave the rest for somebody opening films. Days are UTC: OMDb does not say when
     /// its day turns over, and a fixed boundary is easier to reason about than a guessed one.
+    ///
+    /// Only "limit reached" is recorded against the day. A refused key is about the key, and
+    /// a corrected key must be able to ask the moment it is saved.
     /// </remarks>
     public static class OmdbUsage
     {

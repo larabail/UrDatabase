@@ -277,6 +277,117 @@ namespace UrDatabase.Tests
             Assert.Single(lookup.Asked);
         }
 
+        /// <summary>
+        /// A refused key is about the key, not about the day. Saving a corrected key in settings
+        /// rebuilds the backfill and the rating service, and they must be able to ask at once
+        /// rather than wait for UTC midnight with nothing to say why.
+        /// </summary>
+        [Fact]
+        public async Task A_refused_key_is_not_remembered_past_the_instance_that_saw_it()
+        {
+            var refused = new ScriptedLookup(_ => ImdbLookupResult.Refused);
+            using (var backfill = Backfill(refused))
+            {
+                backfill.Offer(new[] { Card("tt0000001") });
+                await backfill.WhenIdleAsync();
+
+                // The same instance stays stopped: the key will not mend itself.
+                backfill.Offer(new[] { Card("tt0000002") });
+                await backfill.WhenIdleAsync();
+                Assert.Single(refused.Asked);
+            }
+
+            Assert.False(Usage().Limit);
+
+            var corrected = new ScriptedLookup(_ => ImdbLookupResult.Of(7.0));
+            using (var rebuilt = Backfill(corrected))
+            {
+                rebuilt.Offer(new[] { Card("tt0000001") });
+                await rebuilt.WhenIdleAsync();
+            }
+
+            using (var service = new ImdbRatingService(corrected, utcNow: () => _now))
+            using (var conn = Database.Open(DbPath))
+                Assert.Equal(7.0, await service.GetRatingAsync(conn, "tt0000003"));
+
+            Assert.Equal(new[] { "tt0000001", "tt0000003" }, corrected.Asked);
+        }
+
+        [Fact]
+        public async Task The_details_screen_stops_asking_with_a_refused_key_but_only_until_it_is_rebuilt()
+        {
+            var refused = new ScriptedLookup(_ => ImdbLookupResult.Refused);
+            using (var service = new ImdbRatingService(refused, utcNow: () => _now))
+            using (var conn = Database.Open(DbPath))
+            {
+                Assert.Null(await service.GetRatingAsync(conn, "tt0000001"));
+                Assert.Null(await service.GetRatingAsync(conn, "tt0000002"));
+            }
+
+            Assert.Single(refused.Asked);
+            Assert.Equal((1, false), Usage());
+            Assert.Equal(-1, Cached("tt0000001"));
+
+            var corrected = new ScriptedLookup(_ => ImdbLookupResult.Of(7.0));
+            using (var service = new ImdbRatingService(corrected, utcNow: () => _now))
+            using (var conn = Database.Open(DbPath))
+                Assert.Equal(7.0, await service.GetRatingAsync(conn, "tt0000001"));
+        }
+
+        // ---------- answers older builds cached by mistake ----------
+
+        /// <summary>
+        /// Before this release every OMDb failure — a 401, a 503, a timeout — was cached as "no
+        /// rating", and a cached answer is never asked again. Those rows are indistinguishable
+        /// from genuine ones, so the first open after upgrading forgets every "no rating" once,
+        /// and the backfill asks again within its daily budget.
+        /// </summary>
+        [Fact]
+        public void Upgrading_forgets_every_no_rating_answer_once_and_only_once()
+        {
+            using (var conn = Database.Open(DbPath))
+            {
+                // A catalogue as an older build left it: no record of this migration.
+                conn.Execute("DROP TABLE IF EXISTS applied_migrations");
+                ImdbRatingService.WriteCache(conn, "tt0000001", null, null);
+                ImdbRatingService.WriteCache(conn, "tt0000002", null, 7.4);
+            }
+
+            using (var _ = Database.Open(DbPath)) { }
+
+            Assert.Equal(-1, Cached("tt0000001"));
+            Assert.Equal(7.4, Cached("tt0000002"));
+
+            // An answer this build caches is a real one, and survives every later open.
+            using (var conn = Database.Open(DbPath))
+                ImdbRatingService.WriteCache(conn, "tt0000003", null, null);
+
+            using (var _ = Database.Open(DbPath)) { }
+            using (var _ = Database.Open(DbPath)) { }
+
+            Assert.Null(Cached("tt0000003"));
+        }
+
+        [Fact]
+        public async Task A_title_forgotten_on_upgrade_is_asked_about_again()
+        {
+            using (var conn = Database.Open(DbPath))
+            {
+                conn.Execute("DROP TABLE IF EXISTS applied_migrations");
+                ImdbRatingService.WriteCache(conn, "tt0000001", null, null);
+            }
+
+            using (var _ = Database.Open(DbPath)) { }
+
+            var lookup = new ScriptedLookup(_ => ImdbLookupResult.Of(8.2));
+            using var backfill = Backfill(lookup);
+            backfill.Offer(new[] { Card("tt0000001") });
+            await backfill.WhenIdleAsync();
+
+            Assert.Equal(new[] { "tt0000001" }, lookup.Asked);
+            Assert.Equal(8.2, Cached("tt0000001"));
+        }
+
         [Fact]
         public async Task It_gives_up_after_a_run_of_failures_rather_than_spending_the_day_on_them()
         {

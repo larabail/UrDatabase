@@ -26,8 +26,9 @@ namespace UrDatabase.Services
     /// OMDb's free tier is 1,000 requests a day, and this is the one thing in the app that could
     /// spend it all unattended. So it keeps to <see cref="DefaultDailyBudget"/> of them, counting
     /// every request the app made that day including the details screen's, leaves a gap between
-    /// requests, and stops for the rest of the day the moment OMDb says the limit is reached or
-    /// refuses the key. Days are UTC; see <see cref="OmdbUsage"/>.
+    /// requests, and stops for the rest of the day the moment OMDb says the limit is reached. A
+    /// refused key stops this instance only, so saving a corrected key — which builds a new one —
+    /// starts it again at once. Days are UTC; see <see cref="OmdbUsage"/>.
     /// </para>
     /// <para>
     /// It runs behind the poster pass rather than beside it: whenever <c>isBusy</c> says artwork,
@@ -79,6 +80,12 @@ namespace UrDatabase.Services
         private Task _worker = Task.CompletedTask;
         private bool _running;
         private string? _haltedDay;
+
+        /// <summary>
+        /// Set when OMDb refuses the key. Held only by this instance, never recorded: a corrected
+        /// key in settings builds a new backfill, which asks straight away.
+        /// </summary>
+        private bool _keyRefused;
 
         private readonly record struct Target(string? ImdbId, int? TmdbId);
 
@@ -165,7 +172,7 @@ namespace UrDatabase.Services
 
         private void StartIfNeeded()
         {
-            if (_running || _stopping.IsCancellationRequested) return;
+            if (_running || _keyRefused || _stopping.IsCancellationRequested) return;
             if (_withImdbId.IsEmpty && _withTmdbId.IsEmpty) return;
             if (_haltedDay is not null && _haltedDay == OmdbUsage.DayOf(_utcNow())) return;
 
@@ -188,6 +195,12 @@ namespace UrDatabase.Services
                     if (step == Step.HaltForTheDay)
                     {
                         lock (_lock) _haltedDay = OmdbUsage.DayOf(_utcNow());
+                        return;
+                    }
+
+                    if (step == Step.KeyRefused)
+                    {
+                        lock (_lock) _keyRefused = true;
                         return;
                     }
 
@@ -240,7 +253,7 @@ namespace UrDatabase.Services
             return false;
         }
 
-        private enum Step { Skipped, Asked, Failed, HaltForTheDay }
+        private enum Step { Skipped, Asked, Failed, HaltForTheDay, KeyRefused }
 
         private async Task<Step> ProcessAsync(Target target, CancellationToken ct)
         {
@@ -306,8 +319,14 @@ namespace UrDatabase.Services
 
             if (result.StopsForTheDay)
             {
-                AppLog.Write("omdb.log", $"backfill: OMDb answered {result.Status}; stopping for {day}.");
+                AppLog.Write("omdb.log", $"backfill: OMDb said the limit is reached; stopping for {day}.");
                 return Step.HaltForTheDay;
+            }
+
+            if (result.RefusesTheKey)
+            {
+                AppLog.Write("omdb.log", "backfill: OMDb refused the key; stopping until the key is changed or the app restarts.");
+                return Step.KeyRefused;
             }
 
             if (!result.IsAnswer) return Step.Failed;

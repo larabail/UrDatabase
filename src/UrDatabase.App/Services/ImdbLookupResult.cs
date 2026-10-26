@@ -37,7 +37,17 @@ namespace UrDatabase.Services
         /// <summary>True when the result says something about the title and belongs in the cache.</summary>
         public bool IsAnswer => Status is ImdbLookupStatus.Rated or ImdbLookupStatus.NoRating;
 
-        /// <summary>True when no further request is worth making today.</summary>
-        public bool StopsForTheDay => Status is ImdbLookupStatus.LimitReached or ImdbLookupStatus.Refused;
+        /// <summary>
+        /// True when OMDb said the day's quota is spent: a fact about the day, recorded so that no
+        /// part of the app asks again before it turns over.
+        /// </summary>
+        public bool StopsForTheDay => Status is ImdbLookupStatus.LimitReached;
+
+        /// <summary>
+        /// True when OMDb refused the key. A fact about the key, not the day, so it is never
+        /// recorded: whoever saw it stops asking with that key, and a corrected key — which
+        /// rebuilds the services that hold it — can ask at once.
+        /// </summary>
+        public bool RefusesTheKey => Status is ImdbLookupStatus.Refused;
     }
 }
