@@ -230,6 +230,29 @@ namespace UrDatabase.Tests
         }
 
         /// <summary>
+        /// The journal reads a film's rating under its TMDB key and its current title only, never
+        /// under the name the scan gave it. So a film with a file that used to be called "Origen
+        /// MicroHD" does not show a rating kept under that name, and the empty row that still
+        /// answers to it is the only place that rating can be seen.
+        /// </summary>
+        [Fact]
+        public async Task A_rating_under_a_films_former_scan_name_still_keeps_the_empty_row_that_shows_it()
+        {
+            var real = SeedFilm("Origen", Write("Films", "Origen (2010).mkv"));
+            Exec("UPDATE movies SET scan_title = 'Origen MicroHD', year = 2010 WHERE id = @real", new { real });
+            var empty = SeedFilm("Origen MicroHD", path: null);
+            Exec("UPDATE movies SET year = 2010 WHERE id = @empty", new { empty });
+            Exec("INSERT INTO film_ratings (film_key, title, year, rating, updated_at) VALUES ('title:origen microhd|2010', 'Origen MicroHD', 2010, 9, '2026-01-01')");
+
+            await ScanAsync();
+
+            Assert.Equal(1, Count("SELECT COUNT(*) FROM movies WHERE id = @empty", new { empty }));
+
+            using var conn = Database.Open(_dbPath);
+            Assert.Equal(new[] { OrphanKeepReason.Rated }, OrphanFilms.Describe(conn, empty)!.Reasons);
+        }
+
+        /// <summary>
         /// A correction made before this column existed is still somebody's choice. It wrote a
         /// TMDB id and kept the scanned name together; the automatic retitle only ever stripped
         /// release tags, so a scan_title that is not just the title plus tags was a person.

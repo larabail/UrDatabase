@@ -153,7 +153,7 @@ WHERE id = @id
         /// What keeps <paramref name="row"/>, in a fixed order. Empty means nothing does.
         /// </summary>
         /// <param name="sharedKeys">
-        /// Journal keys a film that still has a file answers to. A rating under one of those is
+        /// Journal keys a film that still has a file shows its rating and viewings under. A rating under one of those is
         /// still on screen on that film, so it is not lost with this row and does not keep it —
         /// which is what clears the empty twin of a film rated under its TMDB key.
         /// </param>
@@ -344,8 +344,22 @@ WHERE id = @id
             };
         }
 
+        /// <summary>
+        /// The journal keys a film with a file actually shows: its TMDB key, or its title key until
+        /// it has one, and its current title key. Never the key of the name the scan gave it — the
+        /// journal does not read under <c>scan_title</c>, so a rating kept there is not on screen
+        /// on this film and must still keep whichever empty row does answer to it.
+        /// </summary>
         private static ISet<string> SharedKeys(IEnumerable<OrphanCandidate> rows) =>
-            rows.Where(r => r.HasFiles).SelectMany(JournalKeys).ToHashSet(StringComparer.Ordinal);
+            rows.Where(r => r.HasFiles)
+                .SelectMany(r => new[]
+                {
+                    FilmKey.For(r.TmdbId is long tmdb and > 0 and <= int.MaxValue ? (int)tmdb : null, r.Title, r.Year),
+                    FilmKey.ForTitle(r.Title, r.Year),
+                })
+                .Where(k => k is not null)
+                .Select(k => k!)
+                .ToHashSet(StringComparer.Ordinal);
 
         private static OrphanUserMarks LoadMarks(SqliteConnection conn, SqliteTransaction? tx) => new()
         {
