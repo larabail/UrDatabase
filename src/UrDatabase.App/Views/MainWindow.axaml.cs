@@ -2083,12 +2083,14 @@ namespace UrDatabase.Views
                 // would still be shown as living only on the server until something reloaded it.
                 // A renamed one is a row whose name, sort position and genre shelf have all moved.
                 // A reported problem is a badge the card behind this screen does not carry yet.
-                if (DetailsView.DownloadedSomething || DetailsView.RenamedSomething || DetailsView.ChangedProblems)
+                // A removed film is a card for a row that no longer exists.
+                if (DetailsView.DownloadedSomething || DetailsView.RenamedSomething || DetailsView.ChangedProblems ||
+                    DetailsView.RemovedSomething)
                     await _searchLoop.RefreshAsync(SearchBox.Text);
 
                 // Only the shelf moved, so only the shelf is rebuilt; nothing needs reading again
-                // but the list itself.
-                if (DetailsView.WatchlistChanged)
+                // but the list itself. Removing a film takes its watchlist entry with it.
+                if (DetailsView.WatchlistChanged || DetailsView.RemovedSomething)
                 {
                     LoadWatchlist();
                     RebuildGroups();

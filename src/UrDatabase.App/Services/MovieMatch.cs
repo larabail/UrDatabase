@@ -78,6 +78,12 @@ namespace UrDatabase.Services
         /// film whose genres came from somewhere better, and "TMDB said nothing" is not the same
         /// fact as "this film has no genres".
         /// </param>
+        /// <param name="byHand">
+        /// True when a person chose this film with Wrong film?. Recorded so a film somebody
+        /// identified themselves is not cleared away with the leftovers if it ever loses its file;
+        /// see <see cref="OrphanFilms"/>. Never cleared again: a later automatic pass does not
+        /// unmake a person's choice.
+        /// </param>
         public static Task SaveAsync(
             SqliteConnection conn,
             long movieId,
@@ -85,11 +91,13 @@ namespace UrDatabase.Services
             string? posterPath,
             string? title = null,
             string? genres = null,
+            bool byHand = false,
             CancellationToken ct = default) =>
             DatabaseWriteLane.RunAsync(conn, async token =>
             {
                 var columns = new List<string> { "tmdb_id=@tmdb" };
                 if (posterPath is not null) columns.Add("poster_path=@poster");
+                if (byHand) columns.Add("matched_by_hand=1");
 
                 // Only when the column is empty. A film the user has corrected, or one a Jellyfin
                 // server already described, keeps what it has: this runs on every launch for every

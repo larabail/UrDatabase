@@ -700,6 +700,40 @@
                             </StackPanel>
                         </Border>
 
+                        <!-- A catalogued film with no file at all: a leftover the scan
+                             keeps only because a person put something into it. Says
+                             which, and offers the way out. See OrphanFilms. -->
+                        <Border x:Name="OrphanBanner"
+                                HorizontalAlignment="Left"
+                                BorderBrush="{StaticResource EdgeBrush}"
+                                BorderThickness="1"
+                                CornerRadius="{StaticResource RadiusSmall}"
+                                Padding="8,4,4,4"
+                                Margin="0,0,0,12"
+                                IsVisible="False">
+                            <StackPanel Orientation="Horizontal" Spacing="10">
+                                <TextBlock Text="NO FILE"
+                                           Foreground="{DynamicResource DimBrush}"
+                                           FontFamily="{StaticResource MonoFont}"
+                                           FontSize="10.5"
+                                           FontWeight="SemiBold"
+                                           LetterSpacing="1"
+                                           VerticalAlignment="Center"/>
+                                <TextBlock x:Name="OrphanSummary"
+                                           Foreground="{StaticResource ProseBrush}"
+                                           FontSize="12.5"
+                                           MaxWidth="560"
+                                           TextWrapping="Wrap"
+                                           VerticalAlignment="Center"/>
+                                <Button x:Name="RemoveFromLibraryButton"
+                                        Classes="ghost"
+                                        Content="Remove from library"
+                                        VerticalAlignment="Center"
+                                        ToolTip.Tip="Take this film out of the library. It has no file to play."
+                                        Click="RemoveFromLibrary_Click"/>
+                            </StackPanel>
+                        </Border>
+
                         <TextBlock x:Name="GenresText"
                                    Classes="mono"
                                    FontSize="11"

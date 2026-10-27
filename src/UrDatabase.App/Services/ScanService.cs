@@ -82,9 +82,11 @@ namespace UrDatabase.Services
         /// about — one that knows whether it ran to the end, because only a scan that looked
         /// everywhere may conclude anything from not having found something.
         ///
-        /// Nothing is deleted here, and that is a decision rather than an omission. From inside
+        /// No file is deleted here, and that is a decision rather than an omission. From inside
         /// this process a film you deleted and a film on a drive you unplugged are the same
-        /// absence, so the scan marks it and leaves the reading to a person.
+        /// absence, so the scan marks it and leaves the reading to a person. What is deleted is a
+        /// film row with no file row at all — see <see cref="OrphanFilms"/> — which neither of
+        /// those absences can produce.
         /// </summary>
         public async Task<ScanResult> ScanAsync(SqliteConnection conn, IEnumerable<string> folders, IProgress<string>? progress = null, CancellationToken ct = default)
         {
@@ -145,7 +147,16 @@ namespace UrDatabase.Services
                     // shape that makes an ordinary row look like debris — the movie row is
                     // committed and the file that was to be attached to it is not — so a scan
                     // that hit one has no business concluding anything about an empty row.
-                    if (counts.Failed == 0) await SweepDiscardedNamesAsync(conn);
+                    if (counts.Failed == 0)
+                    {
+                        await SweepDiscardedNamesAsync(conn);
+
+                        // Under the same conditions, and for the same reason: a file that failed to
+                        // record leaves exactly a film row with no file, and this would read that
+                        // as a leftover. A cancelled scan may have stopped half way through
+                        // re-filing a programme, and the next completed one finishes the job.
+                        await SweepOrphansAsync(conn);
+                    }
                 }
             }
             catch (Exception)
@@ -351,7 +362,7 @@ WHERE id = @id;
             {
                 var episodeId = await EpisodeForFileAsync(conn, tx, catalogue.Episodes, parsed);
                 return await RecordEpisodeFileAsync(
-                    conn, tx, catalogue.Movies, files, counts, scanId, path, existing, moved, episodeId, parsed.IsInferred);
+                    conn, tx, files, counts, scanId, path, existing, moved, episodeId);
             }
 
             // Filed as an episode by an earlier scan, and no longer read as one — a season folder
@@ -359,7 +370,7 @@ WHERE id = @id;
             // whose name stopped matching it: inventing a film for it would make it both.
             if (existing?.EpisodeId is long kept)
                 return await RecordEpisodeFileAsync(
-                    conn, tx, catalogue.Movies, files, counts, scanId, path, existing, moved, kept, inferred: true);
+                    conn, tx, files, counts, scanId, path, existing, moved, kept);
 
             return await RecordFilmFileAsync(conn, tx, catalogue.Movies, files, scanId, path, existing, moved);
         }
@@ -388,9 +399,11 @@ WHERE id = @id;
             var modified = info.Exists ? info.LastWriteTimeUtc.ToString("o") : null;
             var seenAt = ScanSessions.Timestamp(DateTimeOffset.UtcNow);
 
-            // A moved row is resolved by name exactly as it always was; only a row still at its
-            // own path is consulted about its link, which is what MovieForFileAsync expects.
-            var movieId = await MovieForFileAsync(conn, tx, movies, moved ? null : existing, FilenameParser.Parse(path));
+            // A moved file is consulted about its link exactly as one still at its own path is. It
+            // used to be resolved by name alone, and a name that no longer matched the row it was
+            // linked to — an old noisy title, a corrected one — inserted a new row for it while the
+            // update below kept the file on the old one, so every such move left an empty film.
+            var movieId = await MovieForFileAsync(conn, tx, movies, existing, FilenameParser.Parse(path));
 
             var outcome = FileOutcome.Unchanged;
             if (moved)
@@ -490,60 +503,6 @@ WHERE id = @id;
 ";
 
         /// <summary>
-        /// A film row that has just lost its last file to an episode. Usually a row that existed
-        /// only because an earlier scan misread that episode as a film — but not always, so the
-        /// caller asks <see cref="FilmRowIsWorthKeepingAsync"/> first.
-        /// </summary>
-        private const string DeleteEmptiedMovieSql = @"
-DELETE FROM movies
-WHERE id = @id AND NOT EXISTS (SELECT 1 FROM files WHERE files.movie_id = @id);
-";
-
-        /// <summary>
-        /// Whether an emptied film row carries something that deleting it would lose.
-        /// </summary>
-        /// <remarks>
-        /// Anything a person wrote against it, whatever the evidence that its file is an episode:
-        /// a rating or a viewing (keyed on its TMDB id, or on its title and year until it has one),
-        /// a reported problem or a place on the watchlist (keyed on <c>local:{id}</c>). Those
-        /// tables do not reference <c>movies</c>, so deleting the row would not delete them — it
-        /// would orphan them where nothing ever reads them again.
-        ///
-        /// And, when the episode was only inferred — a <c>1x02</c> pair, a number in a season
-        /// folder — any identification at all. Those shapes are ones a film can share, and a TMDB
-        /// match, a poster and a corrected name are not worth staking on a guess. The file is
-        /// re-filed either way; only the row is spared, and it can be dealt with by hand.
-        /// </remarks>
-        private static async Task<bool> FilmRowIsWorthKeepingAsync(
-            SqliteConnection conn, SqliteTransaction tx, long id, bool inferred)
-        {
-            var row = await conn.QuerySingleOrDefaultAsync<LinkedMovieRow>(
-                "SELECT title AS Title, year AS Year, tmdb_id AS TmdbId, scan_title AS ScanTitle FROM movies WHERE id = @id",
-                new { id }, tx);
-            if (row is null) return false;
-
-            if (inferred && (row.TmdbId is not null || !string.IsNullOrWhiteSpace(row.ScanTitle))) return true;
-
-            var local = Watchlist.LocalKey(id);
-            var journalKeys = new[]
-                {
-                    FilmKey.For(row.TmdbId is long tmdb ? (int)tmdb : null, row.Title, row.Year),
-                    FilmKey.ForTitle(row.Title, row.Year),
-                    FilmKey.ForTitle(row.ScanTitle, row.Year),
-                }
-                .Where(k => k is not null)
-                .Distinct()
-                .ToArray();
-
-            return await conn.ExecuteScalarAsync<long>(@"
-SELECT EXISTS (SELECT 1 FROM film_ratings  WHERE film_key IN @journalKeys)
-    OR EXISTS (SELECT 1 FROM film_viewings WHERE film_key IN @journalKeys)
-    OR EXISTS (SELECT 1 FROM watchlist     WHERE item_key = @local)
-    OR EXISTS (SELECT 1 FROM film_problems WHERE film_key = @local)",
-                new { journalKeys, local }, tx) != 0;
-        }
-
-        /// <summary>
         /// Writes a file that is an episode, re-filing it when an earlier scan made it a film.
         /// </summary>
         /// <remarks>
@@ -552,22 +511,20 @@ SELECT EXISTS (SELECT 1 FROM film_ratings  WHERE film_key IN @journalKeys)
         /// scan reads paths. A schema migration that parsed every path in <c>files</c> would be a
         /// scan that ran without being asked, on a drive that may not be plugged in.
         ///
-        /// The emptied film row goes with it, unless it is worth keeping — see
-        /// <see cref="FilmRowIsWorthKeepingAsync"/>. Kept for no reason, it would be a film with no
-        /// file sitting in the unmatched count for ever.
+        /// The film row the file leaves is not judged here. A film keeps every other file it has,
+        /// and once the walk is over <see cref="SweepOrphansAsync"/> clears whatever row this left
+        /// with none at all, unless a person put something into it.
         /// </remarks>
         private static async Task<FileOutcome> RecordEpisodeFileAsync(
             SqliteConnection conn,
             SqliteTransaction tx,
-            MovieIndex movies,
             ScanFileIndex files,
             ScanCounts counts,
             long scanId,
             string path,
             ScanFileRow? existing,
             bool moved,
-            long episodeId,
-            bool inferred)
+            long episodeId)
         {
             var info = new FileInfo(path);
             var size = info.Exists ? info.Length : 0L;
@@ -613,20 +570,9 @@ SELECT EXISTS (SELECT 1 FROM film_ratings  WHERE film_key IN @journalKeys)
                 return FileOutcome.Inserted;
             }
 
-            var formerFilm = existing.MovieId;
-
             await conn.ExecuteAsync(UpdateEpisodeFileSql, parameters, tx);
 
-            if (formerFilm is long film)
-            {
-                counts.Refiled++;
-
-                if (!await FilmRowIsWorthKeepingAsync(conn, tx, film, inferred))
-                {
-                    var deleted = await conn.ExecuteAsync(DeleteEmptiedMovieSql, new { id = film }, tx);
-                    if (deleted > 0) movies.Remove(film);
-                }
-            }
+            if (existing.MovieId is not null) counts.Refiled++;
 
             if (outcome == FileOutcome.Moved) files.Repath(existing, path);
 
@@ -793,6 +739,41 @@ RETURNING id",
         }
 
         /// <summary>
+        /// Clears out every film row with no file at all and nothing a person put into it, through
+        /// the write lane and in its own transaction. See <see cref="OrphanFilms"/>.
+        /// </summary>
+        /// <remarks>
+        /// This is how an episode an earlier scan filed as a film stops being a film once it has
+        /// been re-filed under its programme. It used to be decided file by file as each one was
+        /// re-filed, and the rule there kept a row for having a TMDB id or a <c>scan_title</c> —
+        /// both of which the app writes on its own, so the rows it kept were mostly the very ones
+        /// it had misread. Deciding once, after the walk, also catches a row emptied some other
+        /// way, and one an older scan created without a file in the first place.
+        ///
+        /// Best effort, like the sweep above, and for the same reason.
+        /// </remarks>
+        private static async Task SweepOrphansAsync(SqliteConnection conn)
+        {
+            try
+            {
+                await DatabaseWriteLane.RunAsync(
+                    conn,
+                    _ =>
+                    {
+                        using var tx = conn.BeginTransaction();
+                        OrphanFilms.Sweep(conn, tx);
+                        tx.Commit();
+                        return Task.CompletedTask;
+                    },
+                    CancellationToken.None);
+            }
+            catch (Exception ex)
+            {
+                AppLog.Write("scan.log", $"could not clear film rows with no file: {ex.Message}");
+            }
+        }
+
+        /// <summary>
         /// Records how a scan ended when it is already on its way out with an exception.
         ///
         /// Best effort by design. The usual reason a scan throws is that the database went away
@@ -855,7 +836,9 @@ RETURNING id",
                       WHERE id = @id AND tmdb_id IS NULL AND scan_title IS NULL",
                     new { title = parsed.Title, year = parsed.Year, id = linked }, tx);
 
-                if (renamed > 0) movies.Add(linked, parsed.Title, row.Year ?? parsed.Year);
+                // An alias rather than a new entry: the index counts films, and a scan reports how
+                // many it added from that count, so a rename must not read as a film added.
+                if (renamed > 0) movies.AddAlias(linked, parsed.Title, row.Year ?? parsed.Year);
             }
 
             return linked;

@@ -177,6 +177,11 @@ namespace UrDatabase.Services
             AddColumnIfMissing(conn, "movies", "crew_list", "TEXT");
             AddColumnIfMissing(conn, "movies", "facts_fetched_at", "TEXT");
 
+            // Whether a person chose the film's TMDB match. Zero on every existing row, which is
+            // not quite honest — a correction made before this column existed left no marker — so
+            // OrphanFilms.WasMatchedByHand also reads the shape such a correction left behind.
+            AddColumnIfMissing(conn, "movies", "matched_by_hand", "INTEGER NOT NULL DEFAULT 0");
+
             // What kind of thing a resume entry is about, and — for an episode — what its card has
             // to say. The row used to be films only, so a library synced before television was in
             // it has a jellyfin_resume table with none of these: without them the next sync fails
@@ -243,7 +248,27 @@ namespace UrDatabase.Services
             // more request within the backfill's daily budget, and a wrong one gets its rating.
             // Rows this build writes are real answers and are left alone on every later open.
             ApplyOnce(conn, ForgetPre035NoRatings, "DELETE FROM imdb_ratings WHERE rating IS NULL");
+
+            // Film rows with no file at all, left by scans that re-filed episodes under their
+            // programmes while keeping the film rows they emptied, and by older scans that
+            // inserted a row for a cleaned name and left the file on the noisy one. Every
+            // completed scan clears these from now on; this clears an existing library on its
+            // first open, without making the owner rescan to be rid of them.
+            //
+            // Safe to do without a scan, unlike anything about a missing file, because it reads no
+            // path: a file on an unplugged drive still has its file row, and only a row with none
+            // at all is touched. Once only, so a row that becomes file-less later is judged by a
+            // scan, which runs when the owner asked for one.
+            if (TableExists(conn, "watchlist") && TableExists(conn, "film_problems") &&
+                TableExists(conn, "film_ratings") && TableExists(conn, "film_viewings") &&
+                ColumnExists(conn, "movies", "matched_by_hand"))
+            {
+                ApplyOnce(conn, RemoveFileLessFilms, (c, tx) => OrphanFilms.Sweep(c, tx));
+            }
         }
+
+        /// <summary>The name <see cref="Migrate"/> records once file-less film rows have been cleared.</summary>
+        internal const string RemoveFileLessFilms = "0.35.1-remove-file-less-film-rows";
 
         /// <summary>The name <see cref="Migrate"/> records once the old "no rating" rows are gone.</summary>
         internal const string ForgetPre035NoRatings = "0.35.0-forget-omdb-no-rating-answers";
@@ -257,7 +282,20 @@ namespace UrDatabase.Services
         /// connections opening the catalogue at once — the poster pass opens four — the second
         /// waits on the write lock, then finds the name already there and does nothing.
         /// </remarks>
-        internal static void ApplyOnce(SqliteConnection conn, string name, string sql)
+        internal static void ApplyOnce(SqliteConnection conn, string name, string sql) =>
+            ApplyOnce(conn, name, (c, tx) =>
+            {
+                using var change = c.CreateCommand();
+                change.Transaction = tx;
+                change.CommandText = sql;
+                change.ExecuteNonQuery();
+            });
+
+        /// <summary>
+        /// The same, for a change that has to be worked out in code rather than written as one
+        /// statement. It runs inside the transaction that records it.
+        /// </summary>
+        internal static void ApplyOnce(SqliteConnection conn, string name, Action<SqliteConnection, SqliteTransaction> change)
         {
             if (!TableExists(conn, "applied_migrations")) return;
 
@@ -279,12 +317,7 @@ namespace UrDatabase.Services
                 if (claim.ExecuteNonQuery() == 0) return;
             }
 
-            using (var change = conn.CreateCommand())
-            {
-                change.Transaction = tx;
-                change.CommandText = sql;
-                change.ExecuteNonQuery();
-            }
+            change(conn, tx);
 
             tx.Commit();
         }
@@ -380,7 +413,8 @@ CREATE TABLE IF NOT EXISTS movies (
     rating           REAL,
     cast_list        TEXT,
     crew_list        TEXT,
-    facts_fetched_at TEXT
+    facts_fetched_at TEXT,
+    matched_by_hand  INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS files (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
