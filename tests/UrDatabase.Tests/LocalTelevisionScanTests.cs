@@ -343,27 +343,6 @@ namespace UrDatabase.Tests
         // ------------------------------------------------- film rows worth keeping
 
         /// <summary>
-        /// A season-folder episode is an inference, not a name. When the film row it was filed
-        /// under has been identified, the file is re-filed and the row — its TMDB match, its
-        /// poster — is kept rather than deleted on the strength of a guess.
-        /// </summary>
-        [Fact]
-        public async Task An_inferred_episode_does_not_delete_an_identified_film_row()
-        {
-            var path = Write("Show", "Season 01", "02 - Title.mkv");
-            SeedOldCatalogue(("Show", path));
-            using (var conn = Database.Open(_dbPath))
-                conn.Execute("UPDATE movies SET tmdb_id = 42, poster_path = '/p.jpg' WHERE id = 1");
-
-            await ScanAsync();
-
-            using var read = Database.Open(_dbPath);
-            Assert.Equal(1, read.ExecuteScalar<long>("SELECT COUNT(*) FROM movies WHERE id = 1 AND tmdb_id = 42"));
-            Assert.Equal(1, read.ExecuteScalar<long>(
-                "SELECT COUNT(*) FROM files WHERE file_path = @p AND movie_id IS NULL AND episode_id IS NOT NULL", new { p = path }));
-        }
-
-        /// <summary>
         /// Whatever the evidence, a film row a person has written something against is kept:
         /// a rating, a viewing, a reported problem or a place on the watchlist.
         /// </summary>

@@ -37,7 +37,11 @@ CREATE TABLE IF NOT EXISTS movies (
     crew_list        TEXT,
     -- When those four were last asked for. Null means never, which is what tells the poster pass a
     -- film still needs the request; a film TMDB knows no runtime for is not asked again forever.
-    facts_fetched_at TEXT
+    facts_fetched_at TEXT,
+    -- 1 once somebody chose this film's match with Wrong film?, as opposed to the poster pass
+    -- guessing it. A film row with no file at all is cleared away unless a person put something
+    -- into it, and an automatic match is not that. See OrphanFilms.
+    matched_by_hand  INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS files (

@@ -216,10 +216,12 @@ It runs on Windows and macOS from one codebase, built with
   one programme by the same rules that make them one film, and a folder named
   `Fargo (2014)` supplies the year. A library scanned before this existed is put
   right by its next scan: every episode it had catalogued as a film is re-filed
-  under its programme, and the film row it leaves empty is removed — unless you
-  rated it, logged a viewing, reported a problem with it or put it on the
-  Watchlist, or (when the episode was only inferred from a `1x02` pair or a
-  season folder) it had been identified. A file you linked to a film by hand
+  under its programme, and the film row it leaves empty is removed once the walk
+  is over — unless you rated it, logged a viewing, reported a problem with it,
+  put it on the Watchlist or chose its match with **Wrong film?**. A TMDB match
+  the poster pass found on its own does not keep it, and nor does the name an
+  earlier scan cleaned of release tags; see
+  [Film rows with no file at all](#film-rows-with-no-file-at-all). A file you linked to a film by hand
   stays that film, even after it moves, and an episode stays that episode when
   its season folder is flattened. Anything the parser cannot read with
   confidence — anime's absolute numbering, a daily show's dates, a `640x480`
@@ -1110,14 +1112,50 @@ server film, a scan is the way back.
 Three things deliberately do not trigger any of this. A scan you cancelled
 stopped somewhere arbitrary and marks nothing. A watch folder that was not there
 when the scan ran was not searched, so an unplugged drive costs you nothing. And
-a film the catalogue holds no file for at all — a row restored from an older
-library — is left alone, because only a mark a scan actually wrote is evidence
-that something went away.
+a film the catalogue holds no file for at all is not something a scan saw go
+away — it never had a file row to mark. That case is handled separately, below.
+
+#### Film rows with no file at all
+
+Only a scan creates a film row, and it creates one to hold a file, so a row with
+no file row whatsoever is something left behind: an episode an earlier scan
+filed as a film, emptied when a later one re-filed it under its programme; a row
+an older scan inserted for a cleaned-up name while the file stayed on the noisy
+one; the scanner's guess you overruled by linking its file to another
+film with **Link File…**. Each was a card with nothing to play, counted among the
+unmatched films for good.
+
+Every completed scan now removes them, and so does the first open of a library
+upgraded to 0.35.1, once (`applied_migrations` records it), so nobody has to
+rescan to be rid of the ones they already have. Neither reads a path, which is
+why the upgrade can do it without a scan: a film whose file was deleted, or sits
+on a drive that is not plugged in, still has its file row — marked missing or
+not — and is never touched.
+
+What keeps such a row is a person. A match you chose with **Wrong film?**
+(`movies.matched_by_hand`, or for a correction made before that column existed,
+a TMDB id beside a `scan_title` that is not just the title with release tags on
+it); a rating or a viewing, unless a film that still has its file answers to
+the same key and so still shows it; a place on the Watchlist; a reported
+problem. A TMDB id the poster pass found on its own does not, and neither does
+the `scan_title` an earlier scan wrote when it cleaned release tags off a name —
+those are the app's guesses, and the rows they used to keep were mostly the
+episodes it had misread.
+
+A row kept that way says so: its page shows a **NO FILE** banner naming what is
+keeping it, and **Remove from library** takes it out after asking. That removes
+the row, its Watchlist place and its reported problem; your rating and viewings
+are kept, because they belong to the film rather than to the copy, and come back
+if the film is catalogued again. **Link File…** is the other way out — give it a
+file and it is an ordinary film again (`Services/OrphanFilms`).
+
+A scan that was cancelled, or that failed to record a file, removes nothing, for
+the reason the next section gives.
 
 #### The row a rename can leave behind
 
-There is one row with no file that *is* removed rather than left, and it is the
-narrowest case in the app. Correcting a film's match renames the row and keeps
+There is one row with no file that is removed straight away rather than at the
+next scan, and it is the narrowest case in the app. Correcting a film's match renames the row and keeps
 the scanned name in `movies.scan_title` so the next scan finds the film it
 already has. That works from the build that introduced it onwards — and a
 catalogue is a file on disk that older builds, and builds on other branches, go
@@ -1149,11 +1187,10 @@ debris that no rename ever saw is still found. A scan that failed to record a
 file does not sweep at all: that failure leaves a committed row with no file,
 which is exactly what debris looks like (`Services/DiscardedNames`).
 
-This is the one place the app deletes a `movies` row, and the reason it is
-allowed to is that the row is worth nothing: the film it names is right beside
-it, holding the file, the identification and the artwork. Contrast the section
-above, where the row is the only record the film ever existed and is kept
-however long it stays missing.
+The row this removes is worth nothing: the film it names is right beside it,
+holding the file, the identification and the artwork. Contrast the section on
+missing files, where the row is the only record the film ever existed and is
+kept however long it stays missing.
 
 #### Playing a server film
 
@@ -1549,7 +1586,9 @@ Local television follows the same reasoning. A file is a film or an episode:
 `episodes` however many copies of it there are, as a film is one row in
 `movies`, and `series` holds the programme. `files.linked_by_hand` records a
 link a person made with **Link File…**, which is what stops a scan re-filing
-that file as the episode its name looks like.
+that file as the episode its name looks like. `movies.matched_by_hand` records a
+match a person chose with **Wrong film?**, which is what keeps a film row that
+has lost every file — see [Film rows with no file at all](#film-rows-with-no-file-at-all).
 
 What TMDB says about a local programme lives on the same rows. `series.tmdb_id`
 is the identification, and `tmdb_fetched_at` is when its description —
@@ -2020,6 +2059,15 @@ Stated plainly, so nobody has to find out by using it:
   filed as the first of them. A programme that is both here and on the server is
   two cards. A local programme cannot go on the Watchlist yet, and an episode
   played from this disk is not logged anywhere — a local film is not either.
+- **A film misread as an episode cannot be taken back from its programme.** A
+  scan files `Something 1x02.mkv`, or a numbered file in a `Season 1` folder, as
+  an episode, and once nothing a person did keeps the film row it came from,
+  that row goes. There is then no film page left to press **Link File…** on, and
+  renaming the file does not help either: a file already filed as an episode
+  stays that episode. Before that happens — while the old row still has its file
+  — **Link File…** on the film is what keeps it a film. A film whose match you
+  chose with **Wrong film?** keeps its row, with a **NO FILE** banner, and
+  **Link File…** there gives the file back to it.
 - **An episode cannot be downloaded.** **Download** keeps a copy of a server
   *film* so it plays with the server switched off; there is no equivalent for an
   episode, or for a season. Episodes stream or they do not play.

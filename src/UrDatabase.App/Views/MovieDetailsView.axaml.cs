@@ -175,6 +175,16 @@ namespace UrDatabase.Views
         /// </summary>
         public bool ChangedProblems { get; private set; }
 
+        /// <summary>
+        /// True once Remove from library took the film on screen out of the catalogue. Read by the
+        /// caller after <see cref="ShowAsync"/> returns: the card behind it names a row that is
+        /// gone, and its place on the Watchlist with it.
+        /// </summary>
+        public bool RemovedSomething { get; private set; }
+
+        /// <summary>What the catalogue holds against a film with no file. Null when it has one.</summary>
+        private OrphanFilmStanding? _orphanStanding;
+
         /// <summary>What has been reported about the film on screen. Null when nothing has.</summary>
         private FilmProblemReport? _problemReport;
 
@@ -257,6 +267,7 @@ namespace UrDatabase.Views
             RenamedSomething = false;
             WatchlistChanged = false;
             ChangedProblems = false;
+            RemovedSomething = false;
             RequestedNext = null;
             DataContext = vm;
 
@@ -290,7 +301,101 @@ namespace UrDatabase.Views
             ShowProblem(null);
             _ = LoadProblemAsync(vm, _cts.Token);
 
+            ShowStanding(null);
+            _ = LoadStandingAsync(vm, _cts.Token);
+
             return _closed.Task;
+        }
+
+        /// <summary>
+        /// Reads whether the film has any file at all, and if not what is keeping it, off the UI
+        /// thread. A server film is not the catalogue's to judge, and a catalogue that cannot be
+        /// read leaves the banner hidden.
+        /// </summary>
+        private async Task LoadStandingAsync(MovieDetailsVm vm, CancellationToken ct)
+        {
+            var dbPath = _dbPath;
+            if (vm.IsRemote || vm.LocalId <= 0 || string.IsNullOrWhiteSpace(dbPath) || !File.Exists(dbPath)) return;
+
+            try
+            {
+                var standing = await Task.Run(() =>
+                {
+                    using var conn = Database.Connect(dbPath);
+                    return OrphanFilms.Describe(conn, vm.LocalId);
+                }, ct);
+
+                if (ct.IsCancellationRequested || !ReferenceEquals(Vm, vm)) return;
+                ShowStanding(standing);
+            }
+            catch (OperationCanceledException)
+            {
+                // The screen moved on.
+            }
+            catch (Exception ex)
+            {
+                await Task.Run(() => AppLog.Write("startup.log", $"could not read whether a film has a file: {ex.Message}"));
+            }
+        }
+
+        private void ShowStanding(OrphanFilmStanding? standing)
+        {
+            _orphanStanding = standing;
+            OrphanBanner.IsVisible = standing is not null;
+            OrphanSummary.Text = OrphanFilms.Explain(standing);
+            RemoveFromLibraryButton.IsEnabled = standing is not null;
+        }
+
+        /// <summary>
+        /// Takes a film with no file out of the library, once the person has said yes to a
+        /// question that tells them what goes with it and what stays.
+        /// </summary>
+        private async void RemoveFromLibrary_Click(object? sender, RoutedEventArgs e)
+        {
+            var vm = Vm;
+            var dbPath = _dbPath;
+            var standing = _orphanStanding;
+            if (vm is null || standing is null || string.IsNullOrWhiteSpace(dbPath)) return;
+
+            var confirmed = await MessageBoxWindow.ConfirmAsync(
+                Owner(), "Remove from library", OrphanFilms.ConfirmRemoval(vm.Title, standing), "Remove");
+            if (!confirmed || !ReferenceEquals(Vm, vm)) return;
+
+            RemoveFromLibraryButton.IsEnabled = false;
+            try
+            {
+                var removed = await Task.Run(async () =>
+                {
+                    using var conn = Database.Open(dbPath);
+                    var done = false;
+                    await DatabaseWriteLane.RunAsync(conn, _ =>
+                    {
+                        done = OrphanFilms.Remove(conn, vm.LocalId);
+                        return Task.CompletedTask;
+                    }, _appLifetime);
+                    return done;
+                });
+
+                if (!removed)
+                {
+                    // A file was linked to it since the screen opened: it is a film again.
+                    if (ReferenceEquals(Vm, vm)) _ = LoadStandingAsync(vm, _cts?.Token ?? default);
+                    return;
+                }
+
+                RemovedSomething = true;
+                if (ReferenceEquals(Vm, vm)) Close();
+            }
+            catch (OperationCanceledException)
+            {
+                // The app is closing.
+            }
+            catch (Exception ex)
+            {
+                await Task.Run(() => AppLog.Write("app.log", $"could not remove movie {vm.LocalId}: {ex.Message}"));
+                await MessageBoxWindow.ShowAsync(Owner(), "UrDatabase", $"Could not remove this film:{Environment.NewLine}{ex.Message}");
+                if (ReferenceEquals(Vm, vm)) RemoveFromLibraryButton.IsEnabled = true;
+            }
         }
 
         /// <summary>
@@ -1437,6 +1542,9 @@ namespace UrDatabase.Views
                 vm.FileMatch = PlayTargetKind.Linked;
                 RememberLink(path);
                 Bind(vm);
+
+                // A film that had no file has one now, so the banner saying otherwise goes.
+                _ = LoadStandingAsync(vm, _cts?.Token ?? default);
             }
             finally
             {
@@ -1745,7 +1853,7 @@ namespace UrDatabase.Views
             try
             {
                 using var conn = Database.Open(_dbPath);
-                await MovieMatch.SaveAsync(conn, vm.LocalId, tmdbId, posterPath, title, ct: ct);
+                await MovieMatch.SaveAsync(conn, vm.LocalId, tmdbId, posterPath, title, byHand: true, ct: ct);
             }
             catch (Exception ex)
             {

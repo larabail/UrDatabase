@@ -45,11 +45,11 @@ namespace UrDatabase.Services
     /// query that supplies the facts or in the window that renders the answer.
     /// </summary>
     /// <remarks>
-    /// A film with no file rows at all is deliberately <see cref="FilmStanding.Kept"/>. Only a
-    /// mark a scan actually wrote is evidence that something went away; a row the catalogue has
-    /// never had a file for — one restored from an older library, or one whose file row was
-    /// orphaned — has had nothing said about it, and reading silence as a deletion would empty
-    /// somebody's library on the strength of a fact nobody recorded.
+    /// A film with no file rows at all is deliberately <see cref="FilmStanding.Kept"/> here. Only a
+    /// mark a scan actually wrote is evidence that something went away, and a row the catalogue
+    /// has never had a file for has had nothing said about it. Such a row is not a missing film but
+    /// a leftover, and <see cref="OrphanFilms"/> deals with it — by deleting it unless a person put
+    /// something into it, which is a different decision from this one and is made elsewhere.
     /// </remarks>
     public static class MissingFilms
     {
