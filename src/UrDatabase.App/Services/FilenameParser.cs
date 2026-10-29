@@ -17,12 +17,14 @@ namespace UrDatabase.Services
     /// "The Matrix [1999].mp4") is to be able to assert on them directly.
     ///
     /// Known limits, all deliberate: a dotted name loses genuine full stops ("S.W.A.T." becomes
-    /// "S W A T"). Release noise is cut in three strengths. A token that can only ever describe a
+    /// "S W A T"). Release noise is cut according to its strength. A token that can only describe a
     /// release — "1080p", "x264", "BDRip", "MicroHD", "Castellano" — ends the title, and
     /// everything after it goes whether it is recognised or not. A token that is also a word —
-    /// "Web", "Dual", "4K" — is only stripped from the end, so "Charlotte's Web" still loses its
-    /// last word. Ordinary words and languages — "Rip", "Audio", "Spanish" — need another tag
-    /// beside them as well, so "The Rip" and "Pump Up the Audio" keep theirs.
+    /// "Web", "Dual", "Extended" — is only stripped from the end, so "Charlotte's Web" still loses its
+    /// last word. Quality labels such as "HD" also end a release suffix, but not at the start of
+    /// a title or after a connective ("Life in HD"). Ordinary words and languages — "Rip",
+    /// "Audio", "Spanish" — need another tag beside them as well, so "The Rip" and
+    /// "Pump Up the Audio" keep theirs.
     ///
     /// Nothing here understands television, and that is now a division of labour rather than a
     /// gap: <see cref="EpisodeParser"/> reads a path that names a season and an episode, and a
@@ -72,6 +74,10 @@ namespace UrDatabase.Services
         private static readonly Regex BareChannels =
             new(@"^[1-9]\.[01]$", RegexOptions.Compiled);
 
+        private static readonly Regex SplitTechnicalTag =
+            new(@"(?<![\p{L}\p{N}])(?:full[\s._-]+hd|micro[\s._-]+hd|hd[\s._-]+(?:rip|tv|cam)|blu[\s._-]+ray|web[\s._-]+(?:dl|rip)|[hx][\s._-]+26[45])(?![\p{L}\p{N}])",
+                RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+
         /// <summary>
         /// A site name stamped onto the file by whoever shared it, as in
         /// "www.DivxTotaL.com - Film.avi". Only with the "www.", because "the.net.1995" is a
@@ -116,8 +122,8 @@ namespace UrDatabase.Services
         };
 
         /// <summary>
-        /// Tokens that are noise at the end of a title but can be a word of one: "4K" is a film
-        /// and "Charlotte's Web" ends in a source tag. Only ever removed from the end, never down
+        /// Tokens that are noise at the end of a title but can be a word of one:
+        /// "Charlotte's Web" ends in a source tag. Only ever removed from the end, never down
         /// to nothing, and never down to a lone article.
         /// </summary>
         private static readonly HashSet<string> TrailingNoise = new(StringComparer.OrdinalIgnoreCase)
@@ -125,7 +131,7 @@ namespace UrDatabase.Services
             // source
             "web", "dvd", "cam", "r5", "screener",
             // resolution and picture
-            "4k", "hd", "sd", "sdr", "imax",
+            "imax",
             // audio
             "atmos", "mp3", "opus", "dd", "ddp", "dual", "multi",
             // edition and release state
@@ -135,6 +141,11 @@ namespace UrDatabase.Services
             "nf", "hulu", "itunes", "stan", "pcok",
             // release groups that are also words
             "sparks", "evo",
+        };
+
+        private static readonly HashSet<string> QualityTags = new(StringComparer.OrdinalIgnoreCase)
+        {
+            "hd", "sd", "fhd", "sdr", "4k", "8k",
         };
 
         /// <summary>
@@ -316,7 +327,7 @@ namespace UrDatabase.Services
                 tokens.RemoveAt(0);
 
             // The title ends at the first release tag, and whatever follows it goes with it.
-            var cut = tokens.FindIndex(token => Classify(token) == Noise.ReleaseTag);
+            var cut = FindReleaseBoundary(tokens);
             if (cut >= 0) tokens.RemoveRange(cut, tokens.Count - cut);
 
             TrimTrailingNoise(tokens, wasCut: cut >= 0);
@@ -326,6 +337,22 @@ namespace UrDatabase.Services
 
             var title = string.Join(' ', tokens).Trim(' ', '-', '.', ',', ':', ';', '_');
             return ApplyTitleCase(title);
+        }
+
+        private static int FindReleaseBoundary(List<string> tokens)
+        {
+            for (var i = 0; i < tokens.Count; i++)
+            {
+                var kind = Classify(tokens[i]);
+                if (kind == Noise.ReleaseTag) return i;
+                if (kind != Noise.Quality) continue;
+
+                // "Inception - HD Group" is a suffix; "HD Memories" and "Life in HD" are not.
+                var before = i - 1;
+                while (before >= 0 && IsPunctuationOnly(tokens[before])) before--;
+                if (before >= 0 && !Connectives.Contains(tokens[before])) return i;
+            }
+            return -1;
         }
 
         /// <summary>
@@ -378,9 +405,11 @@ namespace UrDatabase.Services
         {
             if (string.IsNullOrWhiteSpace(raw)) return new List<string>();
 
-            var text = AnyBracket.Replace(SiteName.Replace(raw, " "), " ").Replace('_', ' ');
+            var text = SplitTechnicalTag.Replace(SiteName.Replace(raw, " "),
+                match => Regex.Replace(match.Value, @"[\s._-]+", ""));
+            text = AnyBracket.Replace(text, " ").Replace('_', ' ');
 
-            text = string.Join(' ', text.Split(' ', StringSplitOptions.RemoveEmptyEntries)
+            text = string.Join(' ', text.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)
                 .Select(token => Classify(token) != Noise.None ? token : Regex.Replace(token, @"(?<=\S)\.(?=\S)", " ")));
 
             return text.Split(' ', StringSplitOptions.RemoveEmptyEntries).ToList();
@@ -388,7 +417,8 @@ namespace UrDatabase.Services
 
         /// <summary>
         /// True when a title holds something that can only be release noise: a site name, or a
-        /// token such as "1080p", "x264", "MicroHD" or "Castellano".
+        /// token such as "1080p", "x264", "MicroHD" or "Castellano", or a quality suffix such as
+        /// "HD SomeGroup". Spaced technical tags ("Full HD", "WEB DL", "H.264") count too.
         /// </summary>
         /// <remarks>
         /// The scanner asks this before it rewrites a title an older build gave a row. A title
@@ -398,7 +428,7 @@ namespace UrDatabase.Services
         /// </remarks>
         public static bool CarriesReleaseTag(string? title) =>
             !string.IsNullOrWhiteSpace(title) &&
-            (SiteName.IsMatch(title) || Tokenize(title).Any(token => Classify(token) == Noise.ReleaseTag));
+            (SiteName.IsMatch(title) || FindReleaseBoundary(Tokenize(title)) >= 0);
 
         private enum Noise
         {
@@ -406,6 +436,9 @@ namespace UrDatabase.Services
 
             /// <summary>Noise only when it ends a title.</summary>
             Trailing,
+
+            /// <summary>Ends a suffix after title text, but can start a title or follow a connective.</summary>
+            Quality,
 
             /// <summary>An ordinary word, noise at the end only when another tag stands before it.</summary>
             Vouched,
@@ -448,6 +481,8 @@ namespace UrDatabase.Services
 
             if (TrailingNoise.Contains(token) || BareChannels.IsMatch(token))
                 return Noise.Trailing;
+
+            if (QualityTags.Contains(token)) return Noise.Quality;
 
             if (VouchedNoise.Contains(token)) return Noise.Vouched;
             if (LanguageNoise.Contains(token)) return Noise.Language;

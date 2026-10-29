@@ -298,14 +298,19 @@ namespace UrDatabase.Tests
         /// no row answers to; creating one would leave the file on the noisy row and an empty
         /// duplicate beside it, which is worse than not cleaning anything.
         /// </summary>
-        [Fact]
-        public async Task A_title_an_older_scan_left_noisy_is_cleaned_in_place_by_the_next_one()
+        [Theory]
+        [InlineData("Origen MicroHD", "Origen.MicroHD.1080p.DUAL.Castellano.mkv")]
+        [InlineData("Origen HD SomeGroup", "Origen.HD.SomeGroup.mkv")]
+        [InlineData("Origen Full HD SomeGroup", "Origen.Full.HD.SomeGroup.mkv")]
+        [InlineData("Origen H 264-GROUP", "Origen.H.264-GROUP.mkv")]
+        public async Task A_title_an_older_scan_left_noisy_is_cleaned_in_place_by_the_next_one(
+            string oldTitle, string fileName)
         {
-            var moviesDir = MakeFiles("Origen.MicroHD.1080p.DUAL.Castellano.mkv");
-            var path = Path.Combine(moviesDir, "Origen.MicroHD.1080p.DUAL.Castellano.mkv");
+            var moviesDir = MakeFiles(fileName);
+            var path = Path.Combine(moviesDir, fileName);
 
             using var conn = Database.Open(DbPath);
-            conn.Execute("INSERT INTO movies (title, year) VALUES ('Origen MicroHD', NULL)");
+            conn.Execute("INSERT INTO movies (title, year) VALUES (@oldTitle, NULL)", new { oldTitle });
             var id = conn.QuerySingle<long>("SELECT id FROM movies");
             conn.Execute("INSERT INTO files (movie_id, file_path) VALUES (@id, @path)", new { id, path });
 
@@ -317,7 +322,9 @@ namespace UrDatabase.Tests
             Assert.Equal(0L, conn.QuerySingle<long>("SELECT COUNT(*) FROM movies_fts WHERE movies_fts MATCH 'MicroHD'"));
 
             // The old name is kept, so the rename is recorded and the noisy name still resolves.
-            Assert.Equal("Origen MicroHD", conn.QuerySingle<string>("SELECT scan_title FROM movies WHERE id = @id", new { id }));
+            Assert.Equal(oldTitle, conn.QuerySingle<string>("SELECT scan_title FROM movies WHERE id = @id", new { id }));
+            Assert.True(File.Exists(path));
+            Assert.Equal(new[] { path }, Directory.GetFiles(moviesDir));
         }
 
         [Theory]

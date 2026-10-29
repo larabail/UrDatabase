@@ -135,6 +135,62 @@ namespace UrDatabase.Tests
         }
 
         [Theory]
+        [InlineData("Inception.HD.SomeGroup", "Inception")]
+        [InlineData("Inception HD-GROUP", "Inception")]
+        [InlineData("Inception - HD English By Uploader", "Inception")]
+        [InlineData("Inception\tHD\tSomeGroup", "Inception")]
+        [InlineData("Inception.SD.SomeGroup", "Inception")]
+        [InlineData("Inception.FHD.SomeGroup", "Inception")]
+        [InlineData("Inception.SDR.SomeGroup", "Inception")]
+        [InlineData("Inception.4K.SomeGroup", "Inception")]
+        [InlineData("Inception.8K.SomeGroup", "Inception")]
+        [InlineData("Inception.Full.HD.SomeGroup", "Inception")]
+        [InlineData("Inception Full-HD SomeGroup", "Inception")]
+        [InlineData("Inception.Micro_HD.SomeGroup", "Inception")]
+        [InlineData("Inception.HD.Rip.SomeGroup", "Inception")]
+        [InlineData("Inception.HD.TV.SomeGroup", "Inception")]
+        [InlineData("Inception.Blu.Ray.SomeGroup", "Inception")]
+        [InlineData("Inception WEB DL SomeGroup", "Inception")]
+        [InlineData("Inception.Web_Rip.SomeGroup", "Inception")]
+        [InlineData("Inception.H.264-GROUP", "Inception")]
+        [InlineData("Inception.X.265.SomeGroup", "Inception")]
+        [InlineData("Spider-Man Full HD SomeGroup", "Spider-Man")]
+        public void Quality_and_split_technical_tags_end_the_release_suffix(string stem, string expected)
+        {
+            Assert.Equal(expected, FilenameParser.Parse(stem + ".mkv").Title);
+            Assert.Equal(expected, FilenameParser.CleanText(stem));
+            Assert.True(FilenameParser.CarriesReleaseTag(stem));
+        }
+
+        [Theory]
+        [InlineData("HD")]
+        [InlineData("4K")]
+        [InlineData("HD Memories")]
+        [InlineData("Life in HD")]
+        [InlineData("The HD Movie")]
+        [InlineData("Full Metal Jacket")]
+        [InlineData("The Rip")]
+        [InlineData("Pump Up the Audio")]
+        [InlineData("Web of Lies")]
+        public void Quality_cleanup_does_not_cut_title_phrases_or_substrings(string title)
+        {
+            Assert.Equal(title, FilenameParser.Parse(title + " (2000).mkv").Title);
+            Assert.Equal(title, FilenameParser.CleanText(title));
+            Assert.False(FilenameParser.CarriesReleaseTag(title));
+        }
+
+        [Theory]
+        [InlineData("Inception HD SomeGroup (2010).mkv")]
+        [InlineData("Inception.Full.HD.SomeGroup.2010.mkv")]
+        [InlineData("Inception 2010 HD SomeGroup.mkv")]
+        public void Quality_cleanup_keeps_the_release_year(string name)
+        {
+            var parsed = FilenameParser.Parse(name);
+            Assert.Equal("Inception", parsed.Title);
+            Assert.Equal(2010, parsed.Year);
+        }
+
+        [Theory]
         [InlineData("Johnny English (2003).mkv", "Johnny English")]
         [InlineData("Johnny English 1080p.mkv", "Johnny English")]
         [InlineData("The Spanish Prisoner (1997) 1080p.mkv", "The Spanish Prisoner")]
