@@ -63,6 +63,18 @@ namespace UrDatabase.Tests
             Assert.Equal("46 Long", parsed.EpisodeTitle);
         }
 
+        [Theory]
+        [InlineData("The Sopranos.S01E02.46 Long.HD.SomeGroup.mkv")]
+        [InlineData("The Sopranos.S01E02.46 Long.Full.HD.SomeGroup.mkv")]
+        public void Quality_cleanup_preserves_the_episode_identity(string path)
+        {
+            Assert.True(EpisodeParser.TryParse(path, out var parsed));
+            Assert.Equal("The Sopranos", parsed.SeriesTitle);
+            Assert.Equal(1, parsed.SeasonNumber);
+            Assert.Equal(2, parsed.EpisodeNumber);
+            Assert.Equal("46 Long", parsed.EpisodeTitle);
+        }
+
         /// <summary>
         /// The reason this class takes a path. Nothing in the filename names the programme, so a
         /// parser reading only the file would have to refuse it — and this is one of the most

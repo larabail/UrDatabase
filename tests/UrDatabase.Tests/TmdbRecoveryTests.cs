@@ -51,8 +51,12 @@ public sealed class TmdbRecoveryTests : IDisposable
         Assert.Equal(2, handler.CallCount);
     }
 
-    [Fact]
-    public async Task A_cleaned_release_name_is_queried_without_overriding_the_catalogued_year()
+    [Theory]
+    [InlineData("The.Matrix.1080p [YTS]")]
+    [InlineData("The Matrix HD SomeGroup")]
+    [InlineData("The.Matrix.Full.HD.SomeGroup")]
+    [InlineData("The.Matrix.H.264-GROUP")]
+    public async Task A_cleaned_release_name_is_queried_without_overriding_the_catalogued_year(string title)
     {
         using var handler = new FakeHttpMessageHandler(request =>
             request.RequestUri!.Query.Contains("query=The%20Matrix&", StringComparison.Ordinal)
@@ -60,7 +64,7 @@ public sealed class TmdbRecoveryTests : IDisposable
                 : Json("""{"results":[]}"""));
         using var tmdb = Service(handler);
 
-        Assert.Equal(42, (await tmdb.SearchPosterAsync("The.Matrix.1080p [YTS]", 1999, default)).TmdbId);
+        Assert.Equal(42, (await tmdb.SearchPosterAsync(title, 1999, default)).TmdbId);
         Assert.All(handler.Requests.Where(url => url.Contains("year=")), url => Assert.Contains("year=1999", url));
     }
 
