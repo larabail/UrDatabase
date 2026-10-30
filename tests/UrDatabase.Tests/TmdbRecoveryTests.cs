@@ -185,7 +185,7 @@ public sealed class TmdbRecoveryTests : IDisposable
     }
 
     [Fact]
-    public async Task A_verified_alias_still_needs_a_year_and_an_unambiguous_candidate()
+    public async Task A_verified_alias_must_be_unambiguous_even_without_a_year()
     {
         using var handler = FakeHttpMessageHandler.Routed(
             ("/search/movie", HttpStatusCode.OK,
@@ -194,9 +194,72 @@ public sealed class TmdbRecoveryTests : IDisposable
         using var tmdb = Service(handler);
 
         Assert.Null((await tmdb.SearchPosterAsync("Local Title", null, default)).TmdbId);
-        Assert.DoesNotContain(handler.Requests, url => url.Contains("/alternative_titles"));
-        Assert.Null((await tmdb.SearchPosterAsync("Local Title", 2001, default)).TmdbId);
         Assert.Equal(2, handler.Requests.Count(url => url.Contains("/alternative_titles")));
+        Assert.Null((await tmdb.SearchPosterAsync("Local Title", 2001, default)).TmdbId);
+        Assert.Equal(4, handler.Requests.Count(url => url.Contains("/alternative_titles")));
+    }
+
+    [Theory]
+    [InlineData("Casi imposible")]
+    [InlineData("Casi imposible BDR1080")]
+    [InlineData("Casi imposible BDR1080 www pctnew org")]
+    public async Task A_yearless_Spanish_title_matches_a_verified_translation(string title)
+    {
+        using var handler = new FakeHttpMessageHandler(request =>
+        {
+            var uri = request.RequestUri!;
+            if (uri.AbsolutePath.EndsWith("/alternative_titles"))
+                return Json("""{"titles":[{"iso_3166_1":"ES","title":"Casi imposible"}]}""");
+            if (uri.AbsolutePath.EndsWith("/genre/movie/list"))
+                return Json("""{"genres":[{"id":35,"name":"Comedy"}]}""");
+            return uri.Query.EndsWith("query=Casi%20imposible", StringComparison.Ordinal)
+                ? Json("""{"results":[{"id":459992,"title":"Long Shot","original_title":"Long Shot","release_date":"2019-05-03","poster_path":"/long-shot.jpg","genre_ids":[35]}]}""")
+                : Json("""{"results":[]}""");
+        });
+        using var tmdb = Service(handler);
+
+        var (id, poster, genres) = await tmdb.SearchFilmAsync(title, null, default);
+
+        Assert.Equal(459992, id);
+        Assert.Equal("/long-shot.jpg", poster);
+        Assert.Equal("Comedy", genres);
+        Assert.Single(handler.Requests, url => url.Contains("/alternative_titles"));
+        Assert.DoesNotContain(handler.Requests, url => url.Contains("year="));
+    }
+
+    [Fact]
+    public async Task Celda_211_is_matched_from_its_original_title_after_cleaning_the_saved_name()
+    {
+        using var handler = new FakeHttpMessageHandler(request =>
+            request.RequestUri!.Query.EndsWith("query=Celda%20211", StringComparison.Ordinal)
+                ? Json("""{"results":[{"id":33273,"title":"Cell 211","original_title":"Celda 211","release_date":"2009-11-06"}]}""")
+                : Json("""{"results":[]}"""));
+        using var tmdb = Service(handler);
+
+        Assert.Equal(33273, (await tmdb.SearchPosterAsync("Celda 211 BDR1080 www newpct1 com", null, default)).TmdbId);
+        Assert.DoesNotContain(handler.Requests, url => url.Contains("/alternative_titles"));
+    }
+
+    [Fact]
+    public async Task Too_many_yearless_candidates_do_not_trigger_unbounded_alias_requests()
+    {
+        using var handler = FakeHttpMessageHandler.Json(
+            """{"results":[{"id":1,"title":"One"},{"id":2,"title":"Two"},{"id":3,"title":"Three"},{"id":4,"title":"Four"}]}""");
+        using var tmdb = Service(handler);
+
+        Assert.Null((await tmdb.SearchPosterAsync("Local Title", null, default)).TmdbId);
+        Assert.DoesNotContain(handler.Requests, url => url.Contains("/alternative_titles"));
+    }
+
+    [Fact]
+    public async Task An_unverified_yearless_near_match_stays_unmatched()
+    {
+        using var handler = FakeHttpMessageHandler.Routed(
+            ("/search/movie", HttpStatusCode.OK, """{"results":[{"id":42,"title":"El Sabor del Drama","release_date":"2026-01-01"}]}"""),
+            ("/alternative_titles", HttpStatusCode.OK, """{"titles":[{"title":"El Sabor del Drama"}]}"""));
+        using var tmdb = Service(handler);
+
+        Assert.Null((await tmdb.SearchPosterAsync("El Drama", null, default)).TmdbId);
     }
 
     [Fact]

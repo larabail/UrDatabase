@@ -470,8 +470,10 @@ Set `STORE_LISTING_LIVE=false` and redeploy to hide it again.
 
 ## Why the builds are made on macOS
 
-Both `pr.yml`'s download packaging job and `release.yml` run on `macos-14`, and that
-cannot be changed without breaking the Mac downloads.
+Both `pr.yml`'s download packaging job and `release.yml` run on `macos-15`.
+They must stay on a macOS host, not necessarily that particular macOS version.
+The image is pinned rather than following `macos-latest`; macOS 14 was replaced
+because its GitHub-hosted runner retires on November 2, 2026.
 
 On Apple silicon the kernel refuses to execute an arm64 binary carrying no code
 signature at all. Not a Gatekeeper prompt — an immediate kill, which a shell

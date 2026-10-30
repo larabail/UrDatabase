@@ -191,6 +191,67 @@ namespace UrDatabase.Tests
         }
 
         [Theory]
+        [InlineData("Casi.imposible.BDR1080.www.pctnew.org].mkv", "Casi imposible")]
+        [InlineData("Celda.211.BDR1080.www.newpct1.com.mkv", "Celda 211")]
+        [InlineData("Caballo de batalla BDR1080 pctfenix com.mkv", "Caballo de batalla")]
+        [InlineData("Cadaver M1080 www pctnew com.mkv", "Cadaver")]
+        [InlineData("Clerks.2.HD1080.mkv", "Clerks 2")]
+        [InlineData("Candyman 4Kwebrip2160 nevatflixhq com.mkv", "Candyman")]
+        [InlineData("Casino 4Krip2160 www pctnew org.mkv", "Casino")]
+        [InlineData("Christine 4KRemux2160 www pctnew org.mkv", "Christine")]
+        [InlineData("Cazafantasmas14K2160 www newpct1 com.mkv", "Cazafantasmas1")]
+        [InlineData("CarlitosySnoopyM1080 www newpct1 com.mkv", "CarlitosySnoopy")]
+        [InlineData("CaminoalaperdicionBDR1080 www newpct1 com.mkv", "Caminoalaperdicion")]
+        [InlineData("CoherenceM1080 www newpct1 com.mkv", "Coherence")]
+        [InlineData("Cars.2 1080.mkv", "Cars 2")]
+        [InlineData("Celda 211 www newpct1 com.mkv", "Celda 211")]
+        [InlineData("Celda 211 www.newpct1.com.mkv", "Celda 211")]
+        public void Screenshot_release_names_keep_only_the_film_title(string fileName, string title)
+        {
+            var parsed = FilenameParser.Parse(fileName);
+            Assert.Equal(title, parsed.Title);
+            Assert.Null(parsed.Year);
+            Assert.Equal(title, FilenameParser.CleanText(System.IO.Path.GetFileNameWithoutExtension(fileName)));
+            Assert.True(FilenameParser.CarriesReleaseTag(System.IO.Path.GetFileNameWithoutExtension(fileName)));
+        }
+
+        [Theory]
+        [InlineData("Celda.211.BDR1080.2009.mkv", "Celda 211", 2009)]
+        [InlineData("Casi.imposible.2019.M1080.mkv", "Casi imposible", 2019)]
+        [InlineData("Blade.Runner.2049.BDR1080.2017.mkv", "Blade Runner 2049", 2017)]
+        public void Compact_tags_do_not_steal_title_numbers_or_release_years(string fileName, string title, int year)
+        {
+            var parsed = FilenameParser.Parse(fileName);
+            Assert.Equal(title, parsed.Title);
+            Assert.Equal(year, parsed.Year);
+        }
+
+        [Theory]
+        [InlineData("1080")]
+        [InlineData("720 Degrees")]
+        [InlineData("Room1080")]
+        [InlineData("Flight 1080 Incident")]
+        [InlineData("M")]
+        [InlineData("THX 1138")]
+        [InlineData("Celda 211")]
+        [InlineData("Apollo 13")]
+        public void Compact_tag_matching_does_not_strip_unrelated_title_numbers(string title)
+        {
+            Assert.Equal(title, FilenameParser.CleanText(title));
+            Assert.False(FilenameParser.CarriesReleaseTag(title));
+        }
+
+        [Theory]
+        [InlineData("Celda 211 www newpct1 com", "Celda 211")]
+        [InlineData("www site com Back to the Future", "Back to the Future")]
+        [InlineData("www newpct1 com La Casa de Papel", "La Casa de Papel")]
+        [InlineData("www site com Es por tu bien", "Es por tu bien")]
+        public void Flattened_website_stamps_are_removed_without_eating_the_title(string title, string expected)
+        {
+            Assert.Equal(expected, FilenameParser.CleanText(title));
+        }
+
+        [Theory]
         [InlineData("Johnny English (2003).mkv", "Johnny English")]
         [InlineData("Johnny English 1080p.mkv", "Johnny English")]
         [InlineData("The Spanish Prisoner (1997) 1080p.mkv", "The Spanish Prisoner")]

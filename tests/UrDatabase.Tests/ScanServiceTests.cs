@@ -366,6 +366,66 @@ namespace UrDatabase.Tests
             Assert.Equal("Origen MicroHD", conn.QuerySingle<string>("SELECT title FROM movies WHERE id = @id", new { id }));
         }
 
+        [Theory]
+        [InlineData(null, false, false, "Celda 211")]
+        [InlineData("Celda.211.BDR1080.www.newpct1.com", false, false, "Celda 211")]
+        [InlineData("Celda.211.BDR1080.www.newpct1.com", true, false, "Celda 211 BDR1080 www newpct1 com")]
+        [InlineData(null, false, true, "Celda 211 BDR1080 www newpct1 com")]
+        [InlineData("A different title", false, false, "Celda 211 BDR1080 www newpct1 com")]
+        public async Task Repeated_cleanup_repairs_only_automatic_unmatched_titles(
+            string? scanTitle, bool matchedByHand, bool linkedByHand, string expected)
+        {
+            const string oldTitle = "Celda 211 BDR1080 www newpct1 com";
+            var folder = MakeFiles("Celda.211.BDR1080.www.newpct1.com.mkv");
+            var path = Path.Combine(folder, "Celda.211.BDR1080.www.newpct1.com.mkv");
+            using var conn = Database.Open(DbPath);
+            var id = conn.ExecuteScalar<long>(
+                "INSERT INTO movies (title, scan_title, matched_by_hand) VALUES (@oldTitle, @scanTitle, @matchedByHand) RETURNING id",
+                new { oldTitle, scanTitle, matchedByHand });
+            conn.Execute("INSERT INTO files (movie_id, file_path, linked_by_hand) VALUES (@id, @path, @linkedByHand)",
+                new { id, path, linkedByHand });
+
+            var scanner = new ScanService();
+            await scanner.ScanAsync(conn, new[] { folder });
+            await scanner.ScanAsync(conn, new[] { folder });
+
+            Assert.Equal(1L, conn.ExecuteScalar<long>("SELECT COUNT(*) FROM movies"));
+            Assert.Equal(expected, conn.ExecuteScalar<string>("SELECT title FROM movies WHERE id = @id", new { id }));
+            Assert.Equal(id, conn.ExecuteScalar<long>("SELECT movie_id FROM files WHERE file_path = @path", new { path }));
+            Assert.Equal(scanTitle ?? (expected == oldTitle ? null : oldTitle),
+                conn.ExecuteScalar<string?>("SELECT scan_title FROM movies WHERE id = @id", new { id }));
+            Assert.True(File.Exists(path));
+        }
+
+        [Fact]
+        public async Task Cleaning_a_previously_retitled_film_keeps_its_review_and_viewings_accessible()
+        {
+            const string title = "Casi imposible BDR1080";
+            var folder = MakeFiles("Casi.imposible.BDR1080.mkv");
+            var path = Path.Combine(folder, "Casi.imposible.BDR1080.mkv");
+            using var conn = Database.Open(DbPath);
+            var id = conn.ExecuteScalar<long>(
+                "INSERT INTO movies (title, scan_title) VALUES (@title, 'Casi.imposible.BDR1080') RETURNING id",
+                new { title });
+            conn.Execute("INSERT INTO files (movie_id, file_path) VALUES (@id, @path)", new { id, path });
+            var key = FilmKey.ForTitle(title, null);
+            conn.Execute("""
+INSERT INTO film_ratings (film_key, title, rating, review, updated_at)
+VALUES (@key, @title, 8, 'Keep my review', '2026-01-01');
+INSERT INTO film_viewings (film_key, title, watched_on, created_at)
+VALUES (@key, @title, '2026-01-01', '2026-01-01');
+""", new { key, title });
+
+            await new ScanService().ScanAsync(conn, new[] { folder });
+
+            var cleanTitle = conn.ExecuteScalar<string>("SELECT title FROM movies WHERE id = @id", new { id });
+            Assert.Equal("Casi imposible", cleanTitle);
+            var cleanKey = FilmKey.ForTitle(cleanTitle, null);
+            Assert.Equal(cleanKey, conn.ExecuteScalar<string>("SELECT film_key FROM film_ratings"));
+            Assert.Equal(cleanKey, conn.ExecuteScalar<string>("SELECT film_key FROM film_viewings"));
+            Assert.Equal("Keep my review", conn.ExecuteScalar<string>("SELECT review FROM film_ratings"));
+        }
+
         [Fact]
         public async Task Scanned_movies_are_searchable_straight_away()
         {

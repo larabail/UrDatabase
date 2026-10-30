@@ -26,6 +26,17 @@ namespace UrDatabase.Tests
 
         // ---------- the picker ----------
 
+        [Theory]
+        [InlineData("Celda 211 BDR1080 www newpct1 com", "Celda 211")]
+        [InlineData("Casi imposible BDR1080", "Casi imposible")]
+        [InlineData("Charlotte's Web", "Charlotte's Web")]
+        [InlineData("HD", "HD")]
+        [InlineData("1080p", "1080p")]
+        public void The_initial_picker_query_cleans_release_tags_but_keeps_real_titles(string title, string expected)
+        {
+            Assert.Equal(expected, TmdbMatchWording.InitialQuery(title));
+        }
+
         [Fact]
         public async Task The_series_picker_searches_television_and_never_the_film_catalogue()
         {

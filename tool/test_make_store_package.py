@@ -203,7 +203,8 @@ class StorePackageTests(unittest.TestCase):
         self.assertNotIn("secrets.", artifact_steps)
         for name in ("pr.yml", "release.yml"):
             original = (ROOT / ".github/workflows" / name).read_text()
-            self.assertIn("runs-on: macos-14", original)
+            self.assertIn("runs-on: macos-15", original)
+            self.assertNotIn("runs-on: macos-14", original)
             self.assertNotIn("*.msix", original)
 
 
