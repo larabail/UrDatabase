@@ -285,6 +285,30 @@ INSERT INTO movies (title, year) VALUES ('Ran', 1985);");
         }
 
         [Fact]
+        public void A_language_note_marks_the_card_and_clearing_it_updates_the_warning_bindings()
+        {
+            var card = new UiMovie { Id = 1, Title = "Ran" };
+            var changed = new List<string?>();
+            ((INotifyPropertyChanged)card).PropertyChanged += (_, e) => changed.Add(e.PropertyName);
+
+            card.ProblemReport = new FilmProblemReport("local:1", Array.Empty<FilmProblemKind>(), "Spanish audio only");
+
+            Assert.True(card.HasProblem);
+            Assert.Contains("Spanish audio only", card.CardTooltip);
+            Assert.Contains("Spanish audio only", card.ProblemTooltip);
+
+            changed.Clear();
+            card.ProblemReport = null;
+
+            Assert.False(card.HasProblem);
+            Assert.Equal("", card.ProblemTooltip);
+            Assert.DoesNotContain("Spanish audio only", card.CardTooltip);
+            Assert.Contains(nameof(UiMovie.HasProblem), changed);
+            Assert.Contains(nameof(UiMovie.ProblemTooltip), changed);
+            Assert.Contains(nameof(UiMovie.CardTooltip), changed);
+        }
+
+        [Fact]
         public void Stamping_puts_each_report_on_its_own_card_and_takes_a_cleared_one_off()
         {
             var local = new UiMovie { Id = 1, Title = "Ran" };
