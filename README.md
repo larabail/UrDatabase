@@ -1836,6 +1836,11 @@ for the release-signing options and their limits.
 that one line is the source of truth for everything below. Do not put a version
 in the `.csproj`.
 
+The PR download-packaging job and the release job are pinned to GitHub's
+`macos-15` runner. The retiring `macos-14` image is no longer used. Packaging
+must remain on macOS so the app launchers can be signed; both Intel and Apple
+silicon downloads are still produced, alongside the Windows ZIP.
+
 `store.yml` separately builds an MSIX on Windows using MakePri and MakeAppx,
 attaching it only to that Actions run. It does not alter the existing macOS-hosted
 release jobs or their required check names. Its Store-only identity version is

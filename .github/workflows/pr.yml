@@ -151,7 +151,7 @@ jobs:
     #
     # Pinned rather than `macos-latest` so the runner architecture cannot
     # change under this job without somebody choosing it.
-    runs-on: macos-14
+    runs-on: macos-15
     timeout-minutes: 30
 
     steps:

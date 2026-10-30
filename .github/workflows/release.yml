@@ -64,7 +64,7 @@ jobs:
     # latency-sensitive thing. On a private repository they bill at ten times
     # the Linux rate, which is worth knowing before anybody flips this
     # repository back to private.
-    runs-on: macos-14
+    runs-on: macos-15
     outputs:
       published: ${{ steps.gate.outputs.publish == 'true' && steps.publish.outcome == 'success' }}
     # Long, because notarization is a queue at Apple rather than work this
