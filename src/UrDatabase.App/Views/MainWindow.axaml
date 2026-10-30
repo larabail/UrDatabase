@@ -37,6 +37,7 @@
                         Background="Transparent"
                         Cursor="Hand"
                         PointerPressed="MovieCard_Click"
+                        AutomationProperties.Name="{Binding CardTooltip}"
                         ToolTip.Tip="{Binding CardTooltip}">
 
                 <!-- What a card can be told to do without opening it. Every
@@ -99,6 +100,7 @@
                          and the same fact. The tooltip says it in words. -->
                     <ProgressBar Minimum="0"
                                  Maximum="100"
+                                 ZIndex="1"
                                  Value="{Binding ResumePercent}"
                                  IsVisible="{Binding HasResume}"
                                  Height="3"
@@ -120,6 +122,15 @@
                             CornerRadius="{StaticResource PosterRadius}"
                             BorderThickness="1"
                             BorderBrush="Transparent"/>
+
+                    <!-- Above the hover ring, without changing the card's size or hit target.
+                         The resume bar stays on top so a warning never hides playback progress. -->
+                    <Border Classes="problemRing"
+                            CornerRadius="{StaticResource PosterRadius}"
+                            BorderThickness="3"
+                            BorderBrush="{DynamicResource NoBrush}"
+                            IsVisible="{Binding HasProblem}"
+                            IsHitTestVisible="False"/>
 
                     <!-- Where the film is, and what it is. A film the server
                          holds and this machine also holds is one card with both

@@ -295,12 +295,18 @@ It runs on Windows and macOS from one codebase, built with
 - **Mark a copy as having a problem.** **Report problem…** on a film's details
   screen opens a short list — **Audio**, **Low resolution**, **Wrong aspect
   ratio**, **Subtitles**, **Picture glitches**, **Other** — and a note for
-  anything that fits none of them. The film's card then carries a red-orange
-  **Problem** badge in its top-left corner, whose tooltip lists what was
-  reported, and the details screen shows the same list above the genres. **Clear**
+  anything that fits none of them, such as **Spanish audio only**. The film's
+  poster then has a persistent red-orange outline and a **Problem** badge in
+  its top-left corner. Both appear throughout the gallery, including genre
+  shelves, search results and the Watchlist; the outline remains visible on
+  hover and on posters without artwork. The tooltip lists what was reported,
+  and the details screen shows the same list above the genres. Playback progress
+  remains visible over the outline. These are your reports, not automatic
+  judgements about a film's language or quality. **Clear**
   (on that banner, or in the list) takes it off once the copy has been replaced;
-  unticking everything and saving does the same. Works for local and server films
-  alike. Reports are kept in the catalogue's `film_problems` table, apart from the
+  clearing all categories and the note, then saving, does the same. Works for
+  local and server films alike. Reports are kept in the catalogue's
+  `film_problems` table, apart from the
   media badges above: those are measured from the file every time, and a squashed
   picture or an out-of-sync track is something only somebody who watched it can
   say. Nothing is sent to Jellyfin (`Services/FilmProblems`,
