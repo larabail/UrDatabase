@@ -427,7 +427,11 @@ It runs on Windows and macOS from one codebase, built with
   missing. If an exact-year search misses, the lookup retries without that
   filter but still requires a matching title and a release year within one year.
   It also cleans release-name noise and verifies translated titles against
-  TMDB's alternative titles. When none of that confirms a title, a search scoped
+  TMDB's alternative titles. An exact, unambiguous alternative title can confirm
+  a film even when its filename has no year: `Casi imposible` can identify
+  *Long Shot* through its verified Spanish title. This checks at most three
+  candidate films; a lone result without a verified title is still not enough
+  when the year is missing. When none of that confirms a title, a search scoped
   to the catalogued year that finds exactly one film, dated within a year of it,
   is accepted — that is the single choice **Wrong film?** would have offered. It
   is still refused when the film has no year, when that result merely contains
@@ -456,7 +460,9 @@ It runs on Windows and macOS from one codebase, built with
   renames one, and a filename spells one wrongly, so some films are matched to
   the wrong TMDB record however careful the rules are. **Wrong film?** on the
   details screen searches TMDB and lists what it finds — poster, title, original
-  title, year and plot — and choosing one replaces the artwork, plot, runtime,
+  title, year and plot. The initial query removes recognisable release tags, so
+  `Celda 211 BDR1080 www newpct1 com` starts as `Celda 211`; anything you type
+  afterwards is searched exactly as entered. Choosing one replaces the artwork, plot, runtime,
   genres, cast and crew, **renames the film to what TMDB calls it**, and records
   the choice in `movies.tmdb_id` so nothing overwrites it and reopening the film
   does not undo it. The name a film was scanned under is kept in
@@ -1672,6 +1678,14 @@ their names. Technical tags split by spaces, dots, underscores or hyphens are
 recognised together too: `Full HD`, `Micro HD`, `HD Rip`, `HD TV`, `Blu Ray`,
 `WEB DL`, `WEB Rip`, `H.264` and `X.265`. Thus
 `Inception.Full.HD.SomeGroup.mkv` also becomes `Inception`, not `Inception Full`.
+Joined source/resolution tags such as `BDR1080`, `M1080`, `HD1080`,
+`4Kwebrip2160`, `4Krip2160` and `4KRemux2160` are recognised too, including a
+tag welded onto the title (`CoherenceM1080` becomes `Coherence`). A welded
+letter tag must start with an uppercase letter to avoid cutting real text like
+`Room1080`. Bare `720`, `1080`, `2160` and `4320` are only removed at the end,
+not from the middle or the whole of a title. Other title numbers, such as the
+`211` in `Celda 211`, stay. Website stamps already flattened into spaces by an
+older scan (`www newpct1 com`) are removed as well as their dotted forms.
 This changes the catalogue title and the TMDB search, never the filename or
 folder on disk.
 
@@ -1681,8 +1695,13 @@ TMDB has not identified it yet and the old title holds an unambiguous release
 tag, and keeps the old title in `scan_title` the way a corrected match does. It
 does not catalogue the film a second time under its clean name; the TMDB lookup
 also retries with the cleaned title, so those rows can be matched even before a
-rescan. After updating, use **Refresh** or restart to retry unmatched films with
-the improved cleaner; use **Scan Folders** to clean eligible catalogue titles.
+rescan. A previous automatic cleanup does not freeze the title: it can be
+cleaned again when the original scanned name agrees, keeping the first
+`scan_title` and moving title-keyed ratings and viewings with it. Manual matches
+and hand-linked files are left alone. After updating, use **Scan Folders** to
+clean eligible catalogue titles, then **Refresh** to retry missing metadata.
+**Refresh** or restarting also retries unmatched films with cleaned queries
+without requiring a rescan.
 
 Each file the scan records gets `files.movie_id` pointing at the film it belongs
 to, and that column is the only thing Play consults. It matters that it is not
@@ -1994,7 +2013,7 @@ Stated plainly, so nobody has to find out by using it:
   now retries cleaned titles and unfiltered-year searches, verifies alternative
   titles, and accepts the only film a year-scoped search finds, but refuses
   conflicting years, ambiguous remakes, a lone result that only contains the
-  title inside a longer one, and any lone result for a film with no year. If a
+  title inside a longer one, and an unverified lone result for a film with no year. If a
   film is still unmatched, open it and use **Wrong film?** rather than accepting
   another film's metadata.
 - **Correcting a match does not correct the year, and there is still no way to

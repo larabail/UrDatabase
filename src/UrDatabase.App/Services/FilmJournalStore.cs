@@ -253,6 +253,18 @@ ORDER BY watched_on DESC, id DESC";
             Move(conn, tx, titleKey, key, film.TmdbId);
         }
 
+        /// <summary>Keeps title-keyed notes reachable when a scan cleans an unidentified film's name.</summary>
+        internal static void RenameUnidentified(
+            SqliteConnection conn, SqliteTransaction tx,
+            string? oldTitle, int? oldYear, string? newTitle, int? newYear)
+        {
+            var oldKey = FilmKey.ForTitle(oldTitle, oldYear)
+                ?? throw new ArgumentException("The previous film title is required.", nameof(oldTitle));
+            var newKey = FilmKey.ForTitle(newTitle, newYear)
+                ?? throw new ArgumentException("The cleaned film title is required.", nameof(newTitle));
+            Move(conn, tx, oldKey, newKey, tmdbId: null);
+        }
+
         /// <summary>
         /// Moves the rows of a film the page knew under another title onto its TMDB key.
         /// </summary>

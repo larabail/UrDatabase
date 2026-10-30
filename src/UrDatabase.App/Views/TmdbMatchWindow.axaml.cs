@@ -82,15 +82,16 @@ namespace UrDatabase.Views
 
         /// <summary>
         /// Opens the picker and returns what was chosen, or null. The first search runs on the
-        /// catalogued title and year, because that is nearly always the right query and making
-        /// the user retype it to see any results at all would be rude.
+        /// catalogued title and year, with recognisable release noise removed. Later searches
+        /// use exactly what the person types.
         /// </summary>
         /// <param name="kind">Whether a film or a programme is being chosen. A film, unless told otherwise.</param>
         public static async Task<TmdbCandidateVm?> ChooseAsync(
             Window owner, AppConfig config, string title, int? year, TmdbMatchKind kind = TmdbMatchKind.Film)
         {
-            var window = new TmdbMatchWindow(config, title, year, kind);
-            if (window._tmdb is not null) _ = window.SearchAsync(title, year);
+            var query = TmdbMatchWording.InitialQuery(title);
+            var window = new TmdbMatchWindow(config, query, year, kind);
+            if (window._tmdb is not null) _ = window.SearchAsync(query, year);
 
             await window.ShowDialog(owner);
             return window._chosen;

@@ -60,6 +60,13 @@ namespace UrDatabase.Services
 
         public static TmdbMatchWording For(TmdbMatchKind kind) => kind == TmdbMatchKind.Series ? Series : Film;
 
+        public static string InitialQuery(string title)
+        {
+            if (!FilenameParser.CarriesReleaseTag(title)) return title;
+            var cleaned = FilenameParser.CleanText(title);
+            return string.IsNullOrWhiteSpace(cleaned) ? title : cleaned;
+        }
+
         /// <summary>What the status line says once a search has answered.</summary>
         public string Results(int count, string query) =>
             count == 0

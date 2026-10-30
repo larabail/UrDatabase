@@ -811,7 +811,9 @@ RETURNING id",
         /// replaced, so the rename is recorded and the old name still resolves. A title that only
         /// ends in an ambiguous word ("The Rip", "Charlotte's Web") is never touched: it is far
         /// likelier to be right than noisy. Nor is a title a person or a corrected match chose, or
-        /// one TMDB already identified.
+        /// one TMDB already identified. An earlier automatic cleanup may be refined when its
+        /// original scanned name still cleans to the same title; title-keyed journal entries move
+        /// with it in the scan transaction.
         /// </remarks>
         private static async Task<long> MovieForFileAsync(
             SqliteConnection conn,
@@ -822,23 +824,28 @@ RETURNING id",
         {
             if (existing?.MovieId is not long linked || movies.TryResolve(parsed, out _, out _))
                 return await EnsureMovieAsync(conn, tx, movies, parsed);
+            if (existing is { LinkedByHand: true }) return linked;
 
             var row = await conn.QuerySingleOrDefaultAsync<LinkedMovieRow>(
-                "SELECT title AS Title, year AS Year, tmdb_id AS TmdbId, scan_title AS ScanTitle FROM movies WHERE id = @id",
+                "SELECT title AS Title, year AS Year, tmdb_id AS TmdbId, scan_title AS ScanTitle, matched_by_hand AS MatchedByHand FROM movies WHERE id = @id",
                 new { id = linked }, tx);
 
             if (row is not null && IsStaleScannedTitle(row, parsed))
             {
-                // SQLite evaluates every SET expression against the old row, so scan_title takes
-                // the title being replaced.
+                // Keep the first scanned name even if another parser update cleans it further.
                 var renamed = await conn.ExecuteAsync(
-                    @"UPDATE movies SET scan_title = title, title = @title, year = COALESCE(year, @year)
-                      WHERE id = @id AND tmdb_id IS NULL AND scan_title IS NULL",
+                    @"UPDATE movies SET scan_title = COALESCE(scan_title, title), title = @title, year = COALESCE(year, @year)
+                      WHERE id = @id AND tmdb_id IS NULL AND matched_by_hand = 0",
                     new { title = parsed.Title, year = parsed.Year, id = linked }, tx);
 
                 // An alias rather than a new entry: the index counts films, and a scan reports how
                 // many it added from that count, so a rename must not read as a film added.
-                if (renamed > 0) movies.AddAlias(linked, parsed.Title, row.Year ?? parsed.Year);
+                if (renamed > 0)
+                {
+                    FilmJournalStore.RenameUnidentified(
+                        conn, tx, row.Title, row.Year, parsed.Title, row.Year ?? parsed.Year);
+                    movies.AddAlias(linked, parsed.Title, row.Year ?? parsed.Year);
+                }
             }
 
             return linked;
@@ -846,13 +853,17 @@ RETURNING id",
 
         private static bool IsStaleScannedTitle(LinkedMovieRow row, ParsedMedia parsed)
         {
-            if (row.TmdbId is not null || !string.IsNullOrWhiteSpace(row.ScanTitle)) return false;
+            if (row.TmdbId is not null || row.MatchedByHand) return false;
             if (string.IsNullOrWhiteSpace(row.Title) || string.IsNullOrWhiteSpace(parsed.Title)) return false;
             if (string.Equals(row.Title, parsed.Title, StringComparison.Ordinal)) return false;
             if (row.Year.HasValue && parsed.Year.HasValue && row.Year != parsed.Year) return false;
             if (!FilenameParser.CarriesReleaseTag(row.Title)) return false;
 
             var cleaned = MovieIndex.NormalizeTitle(FilenameParser.CleanText(row.Title));
+            if (!string.IsNullOrWhiteSpace(row.ScanTitle)
+                && (!FilenameParser.CarriesReleaseTag(row.ScanTitle)
+                    || MovieIndex.NormalizeTitle(FilenameParser.CleanText(row.ScanTitle)) != cleaned))
+                return false;
             return cleaned.Length > 0 && cleaned == MovieIndex.NormalizeTitle(parsed.Title);
         }
 
@@ -862,6 +873,7 @@ RETURNING id",
             public int? Year { get; set; }
             public long? TmdbId { get; set; }
             public string? ScanTitle { get; set; }
+            public bool MatchedByHand { get; set; }
         }
 
         /// <summary>

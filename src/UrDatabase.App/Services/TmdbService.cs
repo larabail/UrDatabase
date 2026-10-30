@@ -296,12 +296,12 @@ namespace UrDatabase.Services
                 }
             }
 
-            if (year is null) return null;
-
             // Search also indexes translated/alternative names not present in title/original_title.
-            // Verify them, rather than trusting a lone result. Bound the extra API work on misses.
-            var plausible = candidates.Where(candidate => candidate.Id > 0 && candidate.Year.HasValue
-                    && Math.Abs(candidate.Year.Value - year.Value) <= 1)
+            // An exact alias can identify a yearless file too; a lone untranslated result cannot.
+            // Bound the extra API work on misses.
+            var plausible = candidates.Where(candidate => candidate.Id > 0
+                    && (year is null || candidate.Year.HasValue
+                        && Math.Abs(candidate.Year.Value - year.Value) <= 1))
                 .DistinctBy(candidate => candidate.Id).Take(4).ToArray();
 
             var verified = new List<TmdbMatch.Candidate>();
@@ -321,7 +321,7 @@ namespace UrDatabase.Services
             }
 
             // Two candidates sharing an alias need a person, not a popularity tie-break.
-            var exact = verified.Where(candidate => candidate.Year == year).ToArray();
+            var exact = verified.Where(candidate => year.HasValue && candidate.Year == year).ToArray();
             if (verified.Count > 0) return exact.Length == 1 ? exact[0] : verified.Count == 1 ? verified[0] : null;
 
             // Last, because it needs no request: the year held one film and nothing contradicts

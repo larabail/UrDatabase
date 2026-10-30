@@ -78,19 +78,27 @@ namespace UrDatabase.Services
             new(@"(?<![\p{L}\p{N}])(?:full[\s._-]+hd|micro[\s._-]+hd|hd[\s._-]+(?:rip|tv|cam)|blu[\s._-]+ray|web[\s._-]+(?:dl|rip)|[hx][\s._-]+26[45])(?![\p{L}\p{N}])",
                 RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
 
+        // A welded tag needs an uppercase/digit start; otherwise "Room1080" would lose "m1080".
+        private static readonly Regex CompactTechnicalTag =
+            new(@"(?:(?<![\p{L}\p{N}])|(?=(?-i:[A-Z0-9])))(?:(?:4k|8k)(?:webrip|webdl|bdrip|bdr|bd|bluray|remux|rip)?|bdrip|brrip|bdr|bd|m|hd|webrip|webdl|hdrip|bluray|remux)(?:720|1080|2160|4320)[pi]?(?![\p{L}\p{N}])",
+                RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+
+        private static readonly Regex BareResolution =
+            new(@"^(?:720|1080|2160|4320)$", RegexOptions.Compiled);
+
         /// <summary>
         /// A site name stamped onto the file by whoever shared it, as in
-        /// "www.DivxTotaL.com - Film.avi". Only with the "www.", because "the.net.1995" is a
-        /// dotted name and not a domain.
+        /// "www.DivxTotaL.com - Film.avi", or "www DivxTotaL com" in an older catalogue.
+        /// Only with the "www" prefix, because "the.net.1995" is a dotted title, not a domain.
         ///
         /// Exactly one name label, then a top-level domain or one of a few known two-part ones
-        /// ("com.es"). Nothing looser: a dotted release name carries on straight after the domain,
+        /// ("com.es", with its dot intact). Nothing looser: a release name carries on after the domain,
         /// and a pattern allowed to roam over further labels backtracks to whichever title word
         /// is also a domain — "www.site.com.Back.to.the.Future" lost everything up to "to".
         /// </summary>
         private static readonly Regex SiteName =
-            new(@"(?<![\p{L}\p{N}])www\.[\p{L}\p{N}-]+\.(?:(?:com|net|org)\.(?:es|mx|ar|uk|br|cl|pe)|com|net|org|info|biz|es|tv|to|me|cc|ws|mx|ar|eu|co|io|nu|la|ch|cx)(?![\p{L}\p{N}])",
-                RegexOptions.Compiled | RegexOptions.IgnoreCase);
+            new(@"(?<![\p{L}\p{N}])www(?:\.|\s+)[\p{L}\p{N}-]+(?:\.|\s+)(?:(?:com|net|org)\.(?:es|mx|ar|uk|br|cl|pe)|com|net|org|info|biz|es|tv|to|me|cc|ws|mx|ar|eu|co|io|nu|la|ch|cx)(?![\p{L}\p{N}])",
+                RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
 
         /// <summary>
         /// Tokens that only ever describe a release and never appear in a film's name. The first
@@ -346,6 +354,8 @@ namespace UrDatabase.Services
                 var kind = Classify(tokens[i]);
                 if (kind == Noise.ReleaseTag) return i;
                 if (kind != Noise.Quality) continue;
+                if (BareResolution.IsMatch(tokens[i]) && tokens.Skip(i + 1).Any(token => !IsPunctuationOnly(token)))
+                    continue;
 
                 // "Inception - HD Group" is a suffix; "HD Memories" and "Life in HD" are not.
                 var before = i - 1;
@@ -407,6 +417,7 @@ namespace UrDatabase.Services
 
             var text = SplitTechnicalTag.Replace(SiteName.Replace(raw, " "),
                 match => Regex.Replace(match.Value, @"[\s._-]+", ""));
+            text = CompactTechnicalTag.Replace(text, match => " " + match.Value + " ");
             text = AnyBracket.Replace(text, " ").Replace('_', ' ');
 
             text = string.Join(' ', text.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)
@@ -476,13 +487,14 @@ namespace UrDatabase.Services
                 VideoCodec.IsMatch(token) ||
                 BitDepth.IsMatch(token) ||
                 AudioLayout.IsMatch(token) ||
-                Channels.IsMatch(token))
+                Channels.IsMatch(token) ||
+                CompactTechnicalTag.Match(token) is { Success: true, Index: 0 })
                 return Noise.ReleaseTag;
 
             if (TrailingNoise.Contains(token) || BareChannels.IsMatch(token))
                 return Noise.Trailing;
 
-            if (QualityTags.Contains(token)) return Noise.Quality;
+            if (QualityTags.Contains(token) || BareResolution.IsMatch(token)) return Noise.Quality;
 
             if (VouchedNoise.Contains(token)) return Noise.Vouched;
             if (LanguageNoise.Contains(token)) return Noise.Language;
