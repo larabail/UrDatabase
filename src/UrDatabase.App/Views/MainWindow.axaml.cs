@@ -1107,6 +1107,32 @@ namespace UrDatabase.Views
             ReapplyFilters();
         }
 
+        private async void OrganiseSeries_Click(object? sender, RoutedEventArgs e)
+        {
+            if (!OrganiseSeriesButton.IsEnabled) return;
+            if (_scanning || _syncing)
+            {
+                await MessageBoxWindow.ShowAsync(this, "UrDatabase", "Wait for the current scan or sync to finish before organising series.");
+                return;
+            }
+
+            OrganiseSeriesButton.IsEnabled = false;
+            try
+            {
+                if (await SeriesGroupingWindow.ShowAsync(this, _dbPath))
+                    await _searchLoop.RefreshAsync(SearchBox.Text);
+            }
+            catch (Exception ex)
+            {
+                AppLog.Write("app.log", $"could not open series grouping: {ex.Message}");
+                await MessageBoxWindow.ShowAsync(this, "UrDatabase", $"Could not organise series: {ex.Message}");
+            }
+            finally
+            {
+                OrganiseSeriesButton.IsEnabled = true;
+            }
+        }
+
         private void PersonBox_TextChanged(object? sender, TextChangedEventArgs e)
         {
             if (_personDebounce is null) return;
@@ -2076,7 +2102,8 @@ namespace UrDatabase.Views
                         LoadAwardsAsync, related,
                         relatedLookup: (movie, ct) => LoadRelatedAsync(movie, null, ct),
                         cancelEnrichment: loading.Cancel,
-                        stillsLookup: LoadStillsAsync),
+                        stillsLookup: LoadStillsAsync,
+                        catalogueBusy: () => _scanning || _syncing),
                     enrich);
 
                 // A downloaded film is a row the library behind this screen does not have yet: it
@@ -2084,6 +2111,7 @@ namespace UrDatabase.Views
                 // A renamed one is a row whose name, sort position and genre shelf have all moved.
                 // A reported problem is a badge the card behind this screen does not carry yet.
                 // A removed film is a card for a row that no longer exists.
+                if (DetailsView.RemovedSomething) LoadRemoteCache();
                 if (DetailsView.DownloadedSomething || DetailsView.RenamedSomething || DetailsView.ChangedProblems ||
                     DetailsView.RemovedSomething)
                     await _searchLoop.RefreshAsync(SearchBox.Text);

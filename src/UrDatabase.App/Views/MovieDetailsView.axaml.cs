@@ -182,8 +182,8 @@ namespace UrDatabase.Views
         /// </summary>
         public bool RemovedSomething { get; private set; }
 
-        /// <summary>What the catalogue holds against a film with no file. Null when it has one.</summary>
-        private OrphanFilmStanding? _orphanStanding;
+        private bool _removingMovie;
+        private Func<bool>? _catalogueBusy;
 
         /// <summary>What has been reported about the film on screen. Null when nothing has.</summary>
         private FilmProblemReport? _problemReport;
@@ -244,13 +244,15 @@ namespace UrDatabase.Views
             Func<string, CancellationToken, Task<JellyfinMovie?>>? movieLookup = null,
             Func<MovieDetailsVm, CancellationToken, Task<RelatedShelf>>? relatedLookup = null,
             Action? cancelEnrichment = null,
-            Func<MovieDetailsVm, bool, CancellationToken, Task<IReadOnlyList<FilmStill>>>? stillsLookup = null)
+            Func<MovieDetailsVm, bool, CancellationToken, Task<IReadOnlyList<FilmStill>>>? stillsLookup = null,
+            Func<bool>? catalogueBusy = null)
         {
             // Leaving one film open behind another would strand its completion source and hang
             // whichever caller was awaiting it.
             if (_closed is not null) Close();
 
             Vm = vm;
+            _catalogueBusy = catalogueBusy;
             _dbPath = dbPath;
             _config = config;
             _ratingLookup = ratingLookup;
@@ -268,6 +270,9 @@ namespace UrDatabase.Views
             WatchlistChanged = false;
             ChangedProblems = false;
             RemovedSomething = false;
+            _removingMovie = false;
+            RemoveFromLibraryButton.IsEnabled = !string.IsNullOrWhiteSpace(dbPath)
+                && (vm.LocalId > 0 || !string.IsNullOrWhiteSpace(vm.RemoteId));
             RequestedNext = null;
             DataContext = vm;
 
@@ -340,26 +345,34 @@ namespace UrDatabase.Views
 
         private void ShowStanding(OrphanFilmStanding? standing)
         {
-            _orphanStanding = standing;
             OrphanBanner.IsVisible = standing is not null;
             OrphanSummary.Text = OrphanFilms.Explain(standing);
-            RemoveFromLibraryButton.IsEnabled = standing is not null;
         }
 
         /// <summary>
-        /// Takes a film with no file out of the library, once the person has said yes to a
+        /// Takes a film out of the library, once the person has said yes to a
         /// question that tells them what goes with it and what stays.
         /// </summary>
         private async void RemoveFromLibrary_Click(object? sender, RoutedEventArgs e)
         {
             var vm = Vm;
             var dbPath = _dbPath;
-            var standing = _orphanStanding;
-            if (vm is null || standing is null || string.IsNullOrWhiteSpace(dbPath)) return;
+            if (_removingMovie || vm is null || string.IsNullOrWhiteSpace(dbPath)
+                || (vm.LocalId <= 0 && string.IsNullOrWhiteSpace(vm.RemoteId))) return;
+            if (_catalogueBusy?.Invoke() == true)
+            {
+                await MessageBoxWindow.ShowAsync(Owner(), "UrDatabase", "Wait for the current scan or sync to finish before removing a film.");
+                return;
+            }
 
+            _removingMovie = true;
             var confirmed = await MessageBoxWindow.ConfirmAsync(
-                Owner(), "Remove from library", OrphanFilms.ConfirmRemoval(vm.Title, standing), "Remove");
-            if (!confirmed || !ReferenceEquals(Vm, vm)) return;
+                Owner(), "Remove from library", CatalogueRemoval.ConfirmRemoval(vm.Title), "Remove");
+            if (!confirmed || !ReferenceEquals(Vm, vm))
+            {
+                _removingMovie = false;
+                return;
+            }
 
             RemoveFromLibraryButton.IsEnabled = false;
             try
@@ -370,7 +383,7 @@ namespace UrDatabase.Views
                     var done = false;
                     await DatabaseWriteLane.RunAsync(conn, _ =>
                     {
-                        done = OrphanFilms.Remove(conn, vm.LocalId);
+                        done = CatalogueRemoval.Remove(conn, vm.LocalId, vm.RemoteId);
                         return Task.CompletedTask;
                     }, _appLifetime);
                     return done;
@@ -378,9 +391,7 @@ namespace UrDatabase.Views
 
                 if (!removed)
                 {
-                    // A file was linked to it since the screen opened: it is a film again.
-                    if (ReferenceEquals(Vm, vm)) _ = LoadStandingAsync(vm, _cts?.Token ?? default);
-                    return;
+                    await MessageBoxWindow.ShowAsync(Owner(), "UrDatabase", "This film is no longer in the catalogue.");
                 }
 
                 RemovedSomething = true;
@@ -395,6 +406,10 @@ namespace UrDatabase.Views
                 await Task.Run(() => AppLog.Write("app.log", $"could not remove movie {vm.LocalId}: {ex.Message}"));
                 await MessageBoxWindow.ShowAsync(Owner(), "UrDatabase", $"Could not remove this film:{Environment.NewLine}{ex.Message}");
                 if (ReferenceEquals(Vm, vm)) RemoveFromLibraryButton.IsEnabled = true;
+            }
+            finally
+            {
+                _removingMovie = false;
             }
         }
 

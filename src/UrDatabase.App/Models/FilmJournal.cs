@@ -58,12 +58,13 @@ namespace UrDatabase.Models
     {
         public long Id { get; init; }
         public string Key { get; init; } = "";
-        public DateOnly WatchedOn { get; init; }
+        public DateOnly? WatchedOn { get; init; }
         public IReadOnlyList<string> Companions { get; init; } = Array.Empty<string>();
         public string Note { get; init; } = "";
 
-        /// <summary>"3 Oct 2026", in the invariant culture so it reads the same on every machine.</summary>
-        public string WatchedOnText => WatchedOn.ToString("d MMM yyyy", CultureInfo.InvariantCulture);
+        /// <summary>A calendar day, or an explicit unknown-date label rather than a made-up day.</summary>
+        public string WatchedOnText => WatchedOn?.ToString("d MMM yyyy", CultureInfo.InvariantCulture)
+            ?? "Watched (date unknown)";
 
         /// <summary>"with Ana and Luis", or empty when it was watched alone.</summary>
         public string CompanionsText => Services.Companions.Describe(Companions);

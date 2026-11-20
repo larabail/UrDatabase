@@ -156,7 +156,7 @@ namespace UrDatabase.Tests
             var viewings = FilmJournalStore.LoadViewings(_conn, Matrix());
 
             Assert.Equal(
-                new[] { new DateOnly(2026, 10, 3), new DateOnly(2024, 1, 2), new DateOnly(2019, 6, 1) },
+                new DateOnly?[] { new(2026, 10, 3), new(2024, 1, 2), new(2019, 6, 1) },
                 viewings.Select(v => v.WatchedOn));
             Assert.Equal(new[] { "Ana", "Luis" }, viewings[0].Companions);
             Assert.Equal("Cinema", viewings[0].Note);
@@ -170,6 +170,73 @@ namespace UrDatabase.Tests
             FilmJournalStore.AddViewing(_conn, Matrix(), new DateOnly(2026, 10, 3), null, null, Monday);
 
             Assert.Equal("2026-10-03", Scalar("SELECT watched_on FROM film_viewings"));
+        }
+
+        [Fact]
+        public void A_viewing_with_an_unknown_date_is_kept_and_shown_without_inventing_a_day()
+        {
+            using var cmd = _conn.CreateCommand();
+            cmd.CommandText = @"INSERT INTO film_viewings (film_key, title, watched_on, created_at)
+                                VALUES ('tmdb:603', 'The Matrix', NULL, '2026-10-05')";
+            cmd.ExecuteNonQuery();
+
+            var viewing = Assert.Single(FilmJournalStore.LoadViewings(_conn, Matrix()));
+            Assert.Null(viewing.WatchedOn);
+            Assert.Equal("Watched (date unknown)", viewing.WatchedOnText);
+        }
+
+        [Fact]
+        public async Task Unknown_dates_round_trip_through_the_journal_and_sort_after_known_dates()
+        {
+            var journal = new FilmJournal(_dbPath, () => Monday);
+            var unknown = await journal.AddViewingAsync(Matrix(tmdb: null), null, new[] { "Ana" }, "Long ago");
+            await journal.AdoptAsync(Matrix(tmdb: null).Key, Matrix());
+            await journal.AddViewingAsync(Matrix(), new DateOnly(2020, 1, 1), null, null);
+
+            var entry = await journal.LoadAsync(Matrix());
+            Assert.Equal(2, entry.Viewings.Count);
+            Assert.Equal(unknown, entry.Viewings[1].Id);
+            Assert.Null(entry.Viewings[1].WatchedOn);
+            Assert.Equal("Watched (date unknown)", entry.Viewings[1].WatchedOnText);
+            Assert.Equal("Long ago", entry.Viewings[1].Note);
+            Assert.Equal(new[] { "Ana" }, entry.Viewings[1].Companions);
+            Assert.True(await journal.RemoveViewingAsync(unknown));
+            Assert.Single((await journal.LoadAsync(Matrix())).Viewings);
+        }
+
+        [Fact]
+        public void Upgrading_the_required_date_schema_preserves_viewings_and_does_not_reuse_deleted_ids()
+        {
+            var legacyPath = Path.Combine(_dir, "legacy.db");
+            using (var legacy = new SqliteConnection($"Data Source={legacyPath}"))
+            {
+                legacy.Open();
+                using var cmd = legacy.CreateCommand();
+                cmd.CommandText = @"
+CREATE TABLE film_viewings (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, film_key TEXT NOT NULL, tmdb_id INTEGER,
+    title TEXT NOT NULL, year INTEGER, watched_on TEXT NOT NULL, companions TEXT,
+    note TEXT, created_at TEXT NOT NULL);
+INSERT INTO film_viewings VALUES (12, 'tmdb:603', 603, 'The Matrix', 1999,
+    '2020-01-02', '[""Ana""]', 'Cinema', '2020-01-02');
+INSERT INTO film_viewings VALUES (99, 'tmdb:603', 603, 'The Matrix', 1999,
+    '2021-01-02', NULL, NULL, '2021-01-02');
+DELETE FROM film_viewings WHERE id = 99;";
+                cmd.ExecuteNonQuery();
+            }
+
+            using (var upgraded = Database.Open(legacyPath))
+            {
+                var existing = Assert.Single(FilmJournalStore.LoadViewings(upgraded, Matrix()));
+                Assert.Equal(12, existing.Id);
+                Assert.Equal(new DateOnly(2020, 1, 2), existing.WatchedOn);
+                Assert.Equal("Cinema", existing.Note);
+                Assert.Equal(new[] { "Ana" }, existing.Companions);
+                Assert.True(FilmJournalStore.AddViewing(upgraded, Matrix(), null, null, null, Monday) > 99);
+            }
+
+            using var reopened = Database.Open(legacyPath);
+            Assert.Equal(2, FilmJournalStore.LoadViewings(reopened, Matrix()).Count);
         }
 
         [Fact]

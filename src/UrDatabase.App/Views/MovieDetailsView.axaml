@@ -167,13 +167,20 @@
                                FontSize="12"
                                TextWrapping="Wrap"
                                AutomationProperties.LiveSetting="Polite"/>
-                    <Button x:Name="RefreshButton"
-                            Grid.Column="2"
+                    <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="8">
+                        <Button x:Name="RemoveFromLibraryButton"
+                                Classes="ghost"
+                                Content="Remove from library"
+                                VerticalAlignment="Center"
+                                ToolTip.Tip="Remove the catalogue entry, not the video files."
+                                Click="RemoveFromLibrary_Click"/>
+                        <Button x:Name="RefreshButton"
                             Classes="ghost"
                             Content="Refresh"
                             VerticalAlignment="Center"
                             Click="Refresh_Click"
                             ToolTip.Tip="Reload this movie and retry artwork. Does not scan folders."/>
+                    </StackPanel>
                 </Grid>
             </Border>
 
@@ -468,7 +475,10 @@
                                         IsVisible="False">
                                 <CalendarDatePicker x:Name="WatchedOnPicker"
                                                     HorizontalAlignment="Stretch"
+                                                    IsEnabled="{Binding !IsChecked, ElementName=UnknownViewingDate}"
                                                     SelectedDateFormat="Long"/>
+                                <CheckBox x:Name="UnknownViewingDate"
+                                          Content="I don't remember the date"/>
                                 <TextBox x:Name="CompanionsBox"
                                          Classes="field"
                                          Watermark="Who with? Ana, Luis"
@@ -725,12 +735,6 @@
                                            MaxWidth="560"
                                            TextWrapping="Wrap"
                                            VerticalAlignment="Center"/>
-                                <Button x:Name="RemoveFromLibraryButton"
-                                        Classes="ghost"
-                                        Content="Remove from library"
-                                        VerticalAlignment="Center"
-                                        ToolTip.Tip="Take this film out of the library. It has no file to play."
-                                        Click="RemoveFromLibrary_Click"/>
                             </StackPanel>
                         </Border>
 

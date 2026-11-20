@@ -464,7 +464,7 @@
                 </Border>
 
                 <!-- The top bar: the wordmark, search, and library actions. -->
-                <Grid Height="56"
+                <Grid RowDefinitions="56,Auto"
                       Margin="24,0"
                       ColumnDefinitions="Auto,16,*,16,Auto">
 
@@ -480,12 +480,20 @@
                     <!-- A field, not a pill. A desktop text input that does not
                          look like a text input is a desktop text input nobody
                          types in. -->
-                    <Panel Grid.Column="2"
+                    <Grid x:Name="LibrarySearchFields"
+                          Grid.Row="1"
+                          Grid.ColumnSpan="5"
+                          ColumnDefinitions="2*,12,*"
+                          MaxWidth="800"
+                          HorizontalAlignment="Left"
+                          Margin="0,0,0,12">
+                    <Panel Grid.Column="0"
                            HorizontalAlignment="Stretch"
-                           VerticalAlignment="Center"
-                           MaxWidth="460">
+                           VerticalAlignment="Center">
                         <TextBox x:Name="SearchBox"
                                  Classes="field"
+                                 MinWidth="320"
+                                 AutomationProperties.Name="Search by title"
                                  TextChanged="SearchBox_TextChanged"/>
                         <!-- The shortcut is printed because the app supports it
                              and nothing else would ever say so. -->
@@ -502,6 +510,16 @@
                                        FontSize="10"/>
                         </Border>
                     </Panel>
+                    <TextBox x:Name="PersonBox"
+                             Grid.Column="2"
+                             Classes="field"
+                             MinWidth="230"
+                             VerticalAlignment="Center"
+                             Watermark="Actor or director (optional)"
+                             AutomationProperties.Name="Narrow by actor or director"
+                             ToolTip.Tip="Narrows the title results. Leave the title empty to browse this person's films."
+                             TextChanged="PersonBox_TextChanged"/>
+                    </Grid>
 
                     <StackPanel Grid.Column="4"
                                 Orientation="Horizontal"
@@ -516,6 +534,11 @@
                                 x:Name="ScanButton"
                                 Content="Scan Folders"
                                 Click="ScanButton_Click"/>
+                        <Button Classes="ghost"
+                                x:Name="OrganiseSeriesButton"
+                                Content="Organise series"
+                                ToolTip.Tip="Group local episodes and misidentified films into a series."
+                                Click="OrganiseSeries_Click"/>
                         <!-- Hidden unless a server is configured, so an install
                              with no Jellyfin looks exactly as it did before. -->
                         <Button Classes="ghost away"
@@ -700,7 +723,7 @@
                         BorderThickness="0,0,0,1">
                     <Grid Margin="24,0"
                           Height="44"
-                          ColumnDefinitions="Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto,*">
+                          ColumnDefinitions="Auto,Auto,Auto,Auto,Auto,Auto,*">
 
                         <TextBlock Grid.Column="0"
                                    Classes="label"
@@ -765,27 +788,8 @@
                             </ItemsControl.ItemTemplate>
                         </ItemsControl>
 
-                        <Rectangle Grid.Column="5"
-                                   Width="1"
-                                   Height="16"
-                                   Margin="4,0,20,0"
-                                   Fill="{StaticResource EdgeBrush}"
-                                   VerticalAlignment="Center"/>
-
-                        <!-- One field for both, because the question is "is this
-                             person behind it", and somebody looking for Clint
-                             Eastwood does not want to have to say in advance
-                             whether they mean the actor or the director. -->
-                        <TextBox x:Name="PersonBox"
-                                 Grid.Column="6"
-                                 Classes="field"
-                                 Width="210"
-                                 VerticalAlignment="Center"
-                                 Watermark="Actor or director"
-                                 TextChanged="PersonBox_TextChanged"/>
-
                         <Button x:Name="ClearFiltersButton"
-                                Grid.Column="7"
+                                Grid.Column="5"
                                 Classes="ghost"
                                 Margin="12,0,0,0"
                                 Content="Clear filters"
@@ -793,7 +797,7 @@
                                 Click="ClearFilters_Click"/>
 
                         <TextBlock x:Name="RefinementNoteText"
-                                   Grid.Column="8"
+                                   Grid.Column="6"
                                    Classes="dim"
                                    Margin="16,0,0,0"
                                    TextWrapping="NoWrap"

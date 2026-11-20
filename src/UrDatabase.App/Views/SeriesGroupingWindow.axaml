@@ -1,0 +1,63 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:services="clr-namespace:UrDatabase.Services"
+        x:Class="UrDatabase.Views.SeriesGroupingWindow"
+        Title="Organise series"
+        Width="940" Height="680" MinWidth="720" MinHeight="480"
+        WindowStartupLocation="CenterOwner"
+        Background="{StaticResource RoomBrush}">
+    <Grid Margin="20" RowDefinitions="Auto,Auto,Auto,Auto,*,Auto,Auto">
+        <TextBlock Text="Select local files to put in one series. Nothing is renamed, moved or changed on Jellyfin."
+                   TextWrapping="Wrap" Margin="0,0,0,12"/>
+        <Grid Grid.Row="1" ColumnDefinitions="*,12,*" Margin="0,0,0,12">
+            <ComboBox x:Name="TargetBox" HorizontalAlignment="Stretch"
+                      AutomationProperties.Name="Destination series"
+                      SelectionChanged="Target_SelectionChanged">
+                <ComboBox.ItemTemplate>
+                    <DataTemplate DataType="services:LocalSeriesTarget">
+                        <TextBlock Text="{Binding Label}"/>
+                    </DataTemplate>
+                </ComboBox.ItemTemplate>
+            </ComboBox>
+            <TextBox x:Name="NewTitleBox" Grid.Column="2" Watermark="New series title"
+                     AutomationProperties.Name="New series title"/>
+        </Grid>
+        <TextBox x:Name="FilterBox" Grid.Row="2" Margin="0,0,0,12"
+                 Watermark="Find files by title, series or path"
+                 TextChanged="Filter_Changed"/>
+        <Grid Grid.Row="3" ColumnDefinitions="40,*,12,90,12,90" Margin="8,0,8,6">
+            <TextBlock Grid.Column="1" Text="LOCAL FILES"/>
+            <TextBlock Grid.Column="3" Text="SEASON"/>
+            <TextBlock Grid.Column="5" Text="EPISODE"/>
+        </Grid>
+        <ListBox x:Name="FilesList" Grid.Row="4" Background="Transparent">
+            <ListBox.ItemTemplate>
+                <DataTemplate DataType="services:SeriesGroupingFile">
+                    <Grid ColumnDefinitions="40,*,12,90,12,90" Margin="0,5">
+                        <CheckBox IsChecked="{Binding IsSelected, Mode=TwoWay}"
+                                  AutomationProperties.Name="{Binding FilePath}"/>
+                        <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                            <TextBlock Text="{Binding Label}" TextTrimming="CharacterEllipsis"/>
+                            <TextBlock Text="{Binding FilePath}" FontSize="11"
+                                       Foreground="{StaticResource DimBrush}"
+                                       TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding FilePath}"/>
+                        </StackPanel>
+                        <TextBox Grid.Column="3" Text="{Binding SeasonText, Mode=TwoWay}"
+                                 Watermark="Optional" AutomationProperties.Name="Season number"/>
+                        <TextBox Grid.Column="5" Text="{Binding EpisodeText, Mode=TwoWay}"
+                                 Watermark="Required" AutomationProperties.Name="Episode number"/>
+                    </Grid>
+                </DataTemplate>
+            </ListBox.ItemTemplate>
+        </ListBox>
+        <StackPanel Grid.Row="5" Margin="0,10,0,0" Spacing="6">
+            <TextBlock FontSize="12" Foreground="{StaticResource DimBrush}" TextWrapping="Wrap"
+                       Text="Season 0 is Specials; an empty season means absolute numbering. Files with the same season and episode become alternate copies of one episode."/>
+            <TextBlock x:Name="StatusText" TextWrapping="Wrap" AutomationProperties.LiveSetting="Polite"/>
+        </StackPanel>
+        <StackPanel Grid.Row="6" Orientation="Horizontal" HorizontalAlignment="Right" Spacing="10" Margin="0,16,0,0">
+            <Button Content="Cancel" Click="Cancel_Click"/>
+            <Button x:Name="SaveButton" Content="Group selected files" Click="Save_Click"/>
+        </StackPanel>
+    </Grid>
+</Window>

@@ -22,7 +22,7 @@ public class RemoveFromLibraryWiringTests
     }
 
     [Fact]
-    public void The_button_sits_in_the_no_file_banner_and_starts_hidden()
+    public void The_button_is_available_outside_the_no_file_banner()
     {
         var doc = XDocument.Load(Path.Combine(Root(), "src/UrDatabase.App/Views/MovieDetailsView.axaml"));
         var x = "http://schemas.microsoft.com/winfx/2006/xaml";
@@ -31,8 +31,8 @@ public class RemoveFromLibraryWiringTests
             && (string?)e.Attribute("Click") == "RemoveFromLibrary_Click");
         Assert.Equal("Remove from library", (string?)button.Attribute("Content"));
 
-        var banner = Assert.Single(button.Ancestors(), e => (string?)e.Attribute(XName.Get("Name", x)) == "OrphanBanner");
-        Assert.Equal("False", (string?)banner.Attribute("IsVisible"));
+        Assert.DoesNotContain(button.Ancestors(),
+            e => (string?)e.Attribute(XName.Get("Name", x)) == "OrphanBanner");
     }
 
     [Fact]
@@ -43,7 +43,7 @@ public class RemoveFromLibraryWiringTests
         click = click[..click.IndexOf("\n        }\n", StringComparison.Ordinal)];
 
         var ask = click.IndexOf("MessageBoxWindow.ConfirmAsync(", StringComparison.Ordinal);
-        var remove = click.IndexOf("OrphanFilms.Remove(", StringComparison.Ordinal);
+        var remove = click.IndexOf("CatalogueRemoval.Remove(", StringComparison.Ordinal);
         Assert.True(ask >= 0 && remove > ask, "The film must be removed only after the question is answered.");
         Assert.Contains("DatabaseWriteLane.RunAsync(", click);
         Assert.Contains("RemovedSomething = true;", click);

@@ -97,8 +97,9 @@ It runs on Windows and macOS from one codebase, built with
   (`Services/LibraryFilter`).
 - **Filter by length, rating and who is in it.** A row under the genres narrows
   whatever is on screen by running time (**Under 90 min**, **90–120 min**,
-  **Over 2 hours**), by a rating floor out of ten (**6+**, **7+**, **8+**), and
-  by an **Actor or director** field that ignores case and accents and needs
+  **Over 2 hours**) and by a rating floor out of ten (**6+**, **7+**, **8+**).
+  Beside the title search, **Actor or director (optional)** narrows those same
+  results by name; leave the title empty to browse a person's films. It ignores case and accents and needs
   every word you type to be in the same person's name — `chris nolan` finds
   Christopher Nolan, `almodovar` finds Almodóvar. The genre row is the genre
   filter: its counts describe what the filters leave, so "dramas over two hours
@@ -229,6 +230,19 @@ It runs on Windows and macOS from one codebase, built with
   a number — is still catalogued as a film rather than guessed at
   (`Services/EpisodeParser`, `Services/ScanService`,
   `Services/EpisodeCatalogue`, `Services/LocalSeriesLoader`).
+- **Group local episodes by hand.** **Organise series** opens a searchable list
+  of catalogued local files, including episodes split between programmes and
+  files mistaken for films. Tick the files, choose an existing series or name a
+  new one, and check their season and episode numbers. Recognised numbers are
+  filled in; otherwise enter them yourself. Season zero means Specials, and
+  leaving the season empty supports absolute episode numbering. Files assigned
+  the same season and episode are alternate copies of that episode, as the
+  confirmation explains. The assignment survives rescanning and detected file
+  moves, without renaming files or changing Jellyfin. Descriptions from an old
+  series are not copied onto the new one's episodes. Empty film entries are
+  cleared unless your rating, viewings, Watchlist, problem report or chosen
+  match keeps them; those stay separately rather than losing your work
+  (`Services/LocalSeriesGrouping`, `Views/SeriesGroupingWindow`).
 - **Programmes on this computer are looked up, once each.** With a TMDB key, the
   same background pass that finds films' posters identifies each local programme
   against TMDB's *television* catalogue — never the film one, which would answer
@@ -390,7 +404,10 @@ It runs on Windows and macOS from one codebase, built with
   away; the review saves when you leave the box, or the page. **Viewings** lists
   every time you logged the film, newest first: **+ I watched this** asks for the
   day (today unless you change it, and never a day that has not happened yet),
-  who with, and a note. The names are typed as one line, `Ana, Luis`, and
+  who with, and a note. Tick **I don't remember the date**, or clear the date,
+  to save **Watched (date unknown)** instead of inventing a day. Undated viewings
+  appear after dated ones; existing dates, notes and companions survive the
+  upgrade. The names are typed as one line, `Ana, Luis`, and
   everybody you have logged before is offered underneath as a chip, most frequent
   first, that adds or removes them in one click. A film can be logged as many
   times as it was watched, and each viewing has its own ✕.
@@ -1155,11 +1172,15 @@ those are the app's guesses, and the rows they used to keep were mostly the
 episodes it had misread.
 
 A row kept that way says so: its page shows a **NO FILE** banner naming what is
-keeping it, and **Remove from library** takes it out after asking. That removes
-the row, its Watchlist place and its reported problem; your rating and viewings
-are kept, because they belong to the film rather than to the copy, and come back
-if the film is catalogued again. **Link File…** is the other way out — give it a
-file and it is an ordinary film again (`Services/OrphanFilms`).
+keeping it. **Remove from library**, at the top of every film page, takes a film
+out after asking, whether it has local files, a cached server entry, both or
+neither. It removes the catalogue/file links and cached server entry, its
+Watchlist places and reported problems, but never deletes a video or changes
+Jellyfin. Your rating, review and viewings stay, because they belong to the film
+rather than to the copy. A later folder scan or server sync can add the film
+again. Finish any running scan or sync before removing a film. **Link File…** is
+the other way out for a file-less row — give it a file and it is an ordinary
+film again (`Services/OrphanFilms`, `Services/CatalogueRemoval`).
 
 A scan that was cancelled, or that failed to record a file, removes nothing, for
 the reason the next section gives.
@@ -2094,7 +2115,8 @@ Stated plainly, so nobody has to find out by using it:
   nothing is looked up at all, and **Wrong series?** says it needs one.
   The parser declines what it cannot read with confidence: absolute numbering
   (`Show - 137.mkv`, ordinary for anime), date-named daily shows and three-digit
-  `102` numbering all stay films, and so does a `1x02` pair written after a year
+  `102` numbering all stay films unless assigned through **Organise series**,
+  and so does a `1x02` pair written after a year
   (`Doctor Who (2005) 1x01.mkv` has to be `S01E01` to be read) or a numbered file
   in a season folder whose number runs straight into its title. A file holding
   two episodes (`S01E02E03`) is
