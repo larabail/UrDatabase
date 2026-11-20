@@ -241,6 +241,32 @@ namespace UrDatabase.Services
             AddColumnIfMissing(conn, "episodes", "still_path", "TEXT");
             AddColumnIfMissing(conn, "episodes", "tmdb_fetched_at", "TEXT");
 
+            if (ColumnIsRequired(conn, "film_viewings", "watched_on"))
+            {
+                ApplyOnce(conn, "optional-viewing-date", @"
+CREATE TABLE film_viewings_optional_date (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    film_key TEXT NOT NULL,
+    tmdb_id INTEGER,
+    title TEXT NOT NULL,
+    year INTEGER,
+    watched_on TEXT,
+    companions TEXT,
+    note TEXT,
+    created_at TEXT NOT NULL
+);
+INSERT INTO film_viewings_optional_date
+    (id, film_key, tmdb_id, title, year, watched_on, companions, note, created_at)
+SELECT id, film_key, tmdb_id, title, year, watched_on, companions, note, created_at
+FROM film_viewings;
+UPDATE sqlite_sequence
+SET seq = MAX(seq, COALESCE((SELECT seq FROM sqlite_sequence WHERE name = 'film_viewings'), 0))
+WHERE name = 'film_viewings_optional_date';
+DROP TABLE film_viewings;
+ALTER TABLE film_viewings_optional_date RENAME TO film_viewings;
+CREATE INDEX ix_film_viewings_key ON film_viewings(film_key);");
+            }
+
             // Every "no rating" an older build cached. It cached one for any OMDb failure — a spent
             // quota, a refused key, a 503, a timeout — and a cached answer is never asked again,
             // so a title caught by that bug would never get its star. Those rows look exactly
@@ -387,6 +413,17 @@ namespace UrDatabase.Services
                     return true;
             }
 
+            return false;
+        }
+
+        private static bool ColumnIsRequired(SqliteConnection conn, string table, string column)
+        {
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = $"PRAGMA table_info({table})";
+            using var reader = cmd.ExecuteReader();
+            while (reader.Read())
+                if (string.Equals(reader.GetString(1), column, StringComparison.OrdinalIgnoreCase))
+                    return reader.GetInt64(3) != 0;
             return false;
         }
 
@@ -623,7 +660,7 @@ CREATE TABLE IF NOT EXISTS film_viewings (
     tmdb_id    INTEGER,
     title      TEXT NOT NULL,
     year       INTEGER,
-    watched_on TEXT NOT NULL,
+    watched_on TEXT,
     companions TEXT,
     note       TEXT,
     created_at TEXT NOT NULL

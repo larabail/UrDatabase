@@ -261,6 +261,16 @@ class PrepareTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "HTTPS"):
             HttpsRedirects().redirect_request(None, None, 302, "", {}, "http://example.invalid/probe")
 
+    def test_windows_zlib_source_uses_the_versioned_upstream_release_asset(self):
+        source = next(archive for archive in read_bundle("win-x64")["archives"]
+                      if archive.get("save_as") == "sources/zlib-1.3.2.tar.xz")
+        self.assertEqual(
+            "https://github.com/madler/zlib/releases/download/v1.3.2/zlib-1.3.2.tar.xz",
+            source["url"])
+        self.assertEqual("d7a0654783a4da529d1bb793b7ad9c3318020af77667bcae35f95d0e42a792f3",
+                         source["sha256"])
+        self.assertEqual(1320064, source["size"])
+
     def test_native_smoke_uses_runtime_flags_and_cleans_its_synthetic_file(self):
         response = json.dumps({"streams": [{"codec_type": "audio", "channels": 1}],
                                "format": {"format_name": "wav"}})

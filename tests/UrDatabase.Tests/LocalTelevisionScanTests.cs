@@ -41,6 +41,26 @@ namespace UrDatabase.Tests
         }
 
         [Fact]
+        public async Task Rescanning_preserves_a_manual_episode_assignment_over_the_filename()
+        {
+            Write("Wrong.Show.S01E01.mkv");
+            await ScanAsync();
+            using var conn = Database.Open(_dbPath);
+            var target = conn.ExecuteScalar<long>(
+                "INSERT INTO series (title) VALUES ('The Simpsons') RETURNING id");
+            var episode = conn.ExecuteScalar<long>(@"
+INSERT INTO episodes (series_id, season_number, episode_number) VALUES (@target, 2, 3) RETURNING id",
+                new { target });
+            conn.Execute("UPDATE files SET episode_id = @episode, movie_id = NULL, linked_by_hand = 1",
+                new { episode });
+
+            var result = await ScanAsync();
+
+            Assert.Equal(0, result.Failed);
+            Assert.Equal(episode, conn.ExecuteScalar<long>("SELECT episode_id FROM files"));
+        }
+
+        [Fact]
         public async Task Episodes_in_season_folders_become_one_series_and_no_films()
         {
             Write("The Sopranos", "Season 01", "01 - The Sopranos.mkv");

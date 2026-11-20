@@ -206,7 +206,7 @@ WHERE id = @id
         ///
         /// <b>A caller other than the migration must already hold <see cref="DatabaseWriteLane"/>.</b>
         /// </remarks>
-        public static int Sweep(SqliteConnection conn, SqliteTransaction tx)
+        public static int Sweep(SqliteConnection conn, SqliteTransaction tx, ISet<long>? onlyMovies = null)
         {
             if (conn is null) throw new ArgumentNullException(nameof(conn));
             if (tx is null) throw new ArgumentNullException(nameof(tx));
@@ -214,7 +214,7 @@ WHERE id = @id
             var rows = conn.Query<OrphanCandidate>(RowsSql, transaction: tx).ToList();
             if (rows.All(r => r.HasFiles)) return 0;
 
-            var doomed = Find(rows, LoadMarks(conn, tx));
+            var doomed = Find(rows, LoadMarks(conn, tx)).Where(id => onlyMovies is null || onlyMovies.Contains(id)).ToList();
             if (doomed.Count == 0) return 0;
 
             // One savepoint per row, so a row that cannot be deleted costs that row and nothing

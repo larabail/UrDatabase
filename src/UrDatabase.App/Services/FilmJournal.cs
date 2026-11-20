@@ -49,7 +49,7 @@ namespace UrDatabase.Services
 
         public Task<long> AddViewingAsync(
             FilmIdentity film,
-            DateOnly watchedOn,
+            DateOnly? watchedOn,
             IEnumerable<string?>? companions,
             string? note,
             CancellationToken ct = default) =>

@@ -139,7 +139,12 @@ ORDER BY watched_on DESC, id DESC";
             {
                 // A row whose day cannot be read is skipped rather than thrown: it is somebody's
                 // hand edit, and the rest of the list is still worth showing.
-                if (!TryParseDay(reader.GetString(2), out var day)) continue;
+                DateOnly? day = null;
+                if (!reader.IsDBNull(2))
+                {
+                    if (!TryParseDay(reader.GetString(2), out var parsed)) continue;
+                    day = parsed;
+                }
 
                 viewings.Add(new FilmViewing
                 {
@@ -158,7 +163,7 @@ ORDER BY watched_on DESC, id DESC";
         public static long AddViewing(
             SqliteConnection conn,
             FilmIdentity film,
-            DateOnly watchedOn,
+            DateOnly? watchedOn,
             IEnumerable<string?>? companions,
             string? note,
             DateTime nowUtc)
@@ -181,7 +186,7 @@ SELECT last_insert_rowid();";
             cmd.Parameters.AddWithValue("@tmdb", (object?)film.TmdbId ?? DBNull.Value);
             cmd.Parameters.AddWithValue("@title", film.Title);
             cmd.Parameters.AddWithValue("@year", (object?)film.Year ?? DBNull.Value);
-            cmd.Parameters.AddWithValue("@day", FormatDay(watchedOn));
+            cmd.Parameters.AddWithValue("@day", watchedOn is DateOnly day ? FormatDay(day) : DBNull.Value);
             cmd.Parameters.AddWithValue("@companions", (object?)Companions.ToJson(companions) ?? DBNull.Value);
             cmd.Parameters.AddWithValue("@note", (object?)text ?? DBNull.Value);
             cmd.Parameters.AddWithValue("@at", FormatInstant(nowUtc));

@@ -66,8 +66,8 @@ CREATE TABLE IF NOT EXISTS files (
     -- never both: when this is set, movie_id is NULL. Its index is created by Database.Migrate,
     -- because an older library gains this column there, after this script has run.
     episode_id        INTEGER REFERENCES episodes(id) ON DELETE SET NULL,
-    -- 1 when a person linked this file to a film by hand. A scan re-files an episode-shaped
-    -- file it once catalogued as a film, and must not undo a person's say-so the same way.
+    -- 1 when a person linked this file to a film or episode by hand. A scan must not undo
+    -- that assignment even if the filename suggests a different film or programme.
     linked_by_hand    INTEGER NOT NULL DEFAULT 0
 );
 
@@ -467,14 +467,14 @@ CREATE TABLE IF NOT EXISTS film_ratings (
 -- watched_on is a local calendar date as yyyy-MM-dd, the same shape UrActor's Calendar uses, not
 -- a timestamp: "the evening of the 3rd" is the fact a person remembers, and a UTC instant would
 -- move it to the 4th for anyone east of Greenwich who watched late. companions is a JSON array of
--- names as typed — plain people, not accounts.
+-- names as typed — plain people, not accounts. NULL watched_on means the viewing date is unknown.
 CREATE TABLE IF NOT EXISTS film_viewings (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
     film_key   TEXT NOT NULL,
     tmdb_id    INTEGER,
     title      TEXT NOT NULL,
     year       INTEGER,
-    watched_on TEXT NOT NULL,
+    watched_on TEXT,
     companions TEXT,
     note       TEXT,
     created_at TEXT NOT NULL

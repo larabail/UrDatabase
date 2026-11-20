@@ -344,6 +344,7 @@ namespace UrDatabase.Views
             var today = DateTime.Today;
             WatchedOnPicker.DisplayDateEnd = today;
             WatchedOnPicker.SelectedDate = today;
+            UnknownViewingDate.IsChecked = false;
             CompanionsBox.Text = "";
             ViewingNoteBox.Text = "";
 
@@ -369,9 +370,10 @@ namespace UrDatabase.Views
             if (_journal is null || _journalFilm is not FilmIdentity film) return;
 
             var today = DateOnly.FromDateTime(DateTime.Today);
-            var day = WatchedOnPicker.SelectedDate is DateTime picked ? DateOnly.FromDateTime(picked) : today;
+            DateOnly? day = UnknownViewingDate.IsChecked == true ? null
+                : WatchedOnPicker.SelectedDate is DateTime picked ? DateOnly.FromDateTime(picked) : null;
 
-            if (!FilmJournalStore.IsPlausibleDay(day, today))
+            if (day is DateOnly knownDay && !FilmJournalStore.IsPlausibleDay(knownDay, today))
             {
                 SetJournalStatus("Pick a day that has already happened.");
                 return;

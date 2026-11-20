@@ -40,6 +40,25 @@ namespace UrDatabase.Tests
         }
 
         [Fact]
+        public void A_title_search_can_be_narrowed_by_actor_and_cleared_without_losing_the_title()
+        {
+            using var conn = Database.Open(_dbPath);
+            conn.Execute(@"
+INSERT INTO movies (title, year, cast_list) VALUES ('Hermanos', 2009, 'Tobey Maguire (Sam)');
+INSERT INTO files (movie_id, file_path) VALUES (last_insert_rowid(), @first);
+INSERT INTO movies (title, year, cast_list) VALUES ('Hermanos', 2015, 'Javier Bardem (Juan)');
+INSERT INTO files (movie_id, file_path) VALUES (last_insert_rowid(), @second);",
+                new { first = Path.Combine(_root, "first.mkv"), second = Path.Combine(_root, "second.mkv") });
+            var results = new LibraryLoader(new MovieRepository(_dbPath)).Load("Hermanos");
+
+            var filtered = new LibraryRefinement { Person = "tobey maguire" }.Apply(results.All);
+
+            Assert.Equal(2009, Assert.Single(filtered).Year);
+            Assert.Equal("Hermanos", results.Query);
+            Assert.Equal(2, LibraryRefinement.None.Apply(results.All).Count);
+        }
+
+        [Fact]
         public async Task The_library_settles_on_the_last_word_typed_not_the_last_query_to_finish()
         {
             var loader = new LibraryLoader(new MovieRepository(_dbPath));

@@ -349,6 +349,10 @@ WHERE id = @id;
                 moved = existing is not null;
             }
 
+            if (existing is { LinkedByHand: true, EpisodeId: long chosenEpisode })
+                return await RecordEpisodeFileAsync(
+                    conn, tx, files, counts, scanId, path, existing, moved, chosenEpisode);
+
             // An episode first, because the film parser has no idea what one is: handed
             // "Show.S01E02.mkv" it produces a film called something like "Show", and every episode
             // of the programme lands on that one oddly named film. EpisodeParser is conservative —
@@ -484,9 +488,8 @@ RETURNING id;
 
         /// <summary>
         /// Updates the row for a file read as an episode, whether it was already one, was a film
-        /// until now, or has moved. Assigned rather than coalesced: nobody links an episode by
-        /// hand, so the path is the only evidence there is, and a file moved from one programme's
-        /// folder into another's belongs to the second.
+        /// until now, or has moved. The caller preserves a manual assignment before asking the
+        /// parser, so only automatically filed episodes follow a different programme's folder.
         /// </summary>
         private const string UpdateEpisodeFileSql = @"
 UPDATE files SET
