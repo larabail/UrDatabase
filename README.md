@@ -735,7 +735,10 @@ python3 tool/prepare_ffprobe.py --runtime osx-arm64 --verify artifacts/publish/o
 Keep the entire `tools/ffprobe/` directory with a distributed build, including
 its licenses, corresponding source archives and rebuild instructions. The
 LGPL helper runs as a separate process; it is not linked into the application.
-Pins and provenance are in `packaging/ffprobe/manifest.json`. The current helper
+Pins and provenance are in `packaging/ffprobe/manifest.json`. The Windows
+bundle's matching zlib source comes from its versioned upstream GitHub release,
+not the zlib.net current-release directory, which removes older versions.
+The source archive's SHA-256 and size remain pinned. The current helper
 payload is about 68 MB on macOS and 24 MB on Windows before outer archive
 compression; no ffmpeg transcoder is shipped. The macOS helper supports Intel
 and Apple silicon on macOS 11 or later.
