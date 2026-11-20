@@ -743,6 +743,12 @@ payload is about 68 MB on macOS and 24 MB on Windows before outer archive
 compression; no ffmpeg transcoder is shipped. The macOS helper supports Intel
 and Apple silicon on macOS 11 or later.
 
+macOS disk-image packaging retries `hdiutil`'s `Resource busy` failure up to
+five attempts, with increasing waits, because background inspection on runners
+can temporarily hold the image. Partial images are removed between attempts.
+Other errors, or contention that persists through all attempts, still fail the
+job; signing and notarization requirements are unchanged.
+
 ## Configuration
 
 **You do not have to read this section.** The first launch opens a setup screen

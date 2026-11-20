@@ -193,14 +193,35 @@ make_dmg() {
   # than a folder somebody has to work out what to do with.
   ln -s /Applications "$staging/Applications"
 
-  rm -f "$DMG"
   mkdir -p "$(dirname "$DMG")"
   # UDZO: compressed, and read-only. Read-only matters beyond the size -- a
   # writable image cannot carry a stable signature, because mounting one can
   # change it.
-  hdiutil create -volname 'UrDatabase' -srcfolder "$staging" \
-    -ov -format UDZO "$DMG" > /dev/null
-  rm -rf "$staging"
+  # Background inspection on macOS runners can briefly hold the temporary image.
+  # Retry only that contention; a bad image or a permissions error is still fatal.
+  local attempt status
+  local errors="$WORK/hdiutil.stderr"
+  for attempt in 1 2 3 4 5; do
+    rm -f "$DMG"
+    if LC_ALL=C hdiutil create -volname 'UrDatabase' -srcfolder "$staging" \
+        -ov -format UDZO "$DMG" > /dev/null 2>"$errors"; then
+      cat "$errors" >&2
+      rm -rf "$staging"
+      return 0
+    else
+      status=$?
+    fi
+
+    cat "$errors" >&2
+    if [ "$attempt" -eq 5 ] || ! grep -Fq 'Resource busy' "$errors"; then
+      rm -f "$DMG"
+      echo "::error title=Disk image creation failed::hdiutil failed after $attempt attempt(s); no disk image will be published." >&2
+      return "$status"
+    fi
+
+    echo "::warning title=Disk image temporarily busy::hdiutil attempt $attempt failed; retrying in $((attempt * 5)) seconds." >&2
+    sleep "$((attempt * 5))"
+  done
 }
 
 # ---------------------------------------------------------------------------
