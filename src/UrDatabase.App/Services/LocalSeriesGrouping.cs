@@ -1,8 +1,10 @@
 using System;
 using System.Collections.Generic;
+using System.ComponentModel;
 using System.Globalization;
 using System.IO;
 using System.Linq;
+using System.Runtime.CompilerServices;
 using Dapper;
 using Microsoft.Data.Sqlite;
 
@@ -18,8 +20,13 @@ public sealed class LocalSeriesTarget
 
 public sealed record EpisodeAssignment(long FileId, int? Season, int Episode, long? MovieId, long? EpisodeId);
 
-public sealed class SeriesGroupingFile
+public sealed class SeriesGroupingFile : INotifyPropertyChanged
 {
+    public event PropertyChangedEventHandler? PropertyChanged;
+    private bool _isSelected;
+    private string _seasonText = "";
+    private string _episodeText = "";
+
     public long Id { get; set; }
     public long? MovieId { get; set; }
     public long? EpisodeId { get; set; }
@@ -29,10 +36,29 @@ public sealed class SeriesGroupingFile
     public string? EpisodeTitle { get; set; }
     public int? SeasonNumber { get; set; }
     public int? EpisodeNumber { get; set; }
-    public bool IsSelected { get; set; }
-    public string SeasonText { get; set; } = "";
-    public string EpisodeText { get; set; } = "";
+    public bool IsSelected
+    {
+        get => _isSelected;
+        set => SetField(ref _isSelected, value);
+    }
+    public string SeasonText
+    {
+        get => _seasonText;
+        set => SetField(ref _seasonText, value);
+    }
+    public string EpisodeText
+    {
+        get => _episodeText;
+        set => SetField(ref _episodeText, value);
+    }
     public string Label => SeriesTitle ?? MovieTitle ?? Path.GetFileNameWithoutExtension(FilePath);
+
+    private void SetField<T>(ref T field, T value, [CallerMemberName] string? name = null)
+    {
+        if (EqualityComparer<T>.Default.Equals(field, value)) return;
+        field = value;
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
+    }
 
     public EpisodeAssignment Assignment()
     {

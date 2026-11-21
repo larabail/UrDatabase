@@ -373,5 +373,65 @@ INSERT INTO movies (title, year) VALUES ('Ran', 1985);");
 
             Assert.False(loader.Load(null).All.Single().HasProblem);
         }
+
+        [Fact]
+        public void Problem_filter_combines_with_search_genre_source_kind_and_survives_reload_and_clear()
+        {
+            using var conn = Database.Open(_dbPath);
+            conn.Execute(@"
+INSERT INTO movies (title, year, genres, runtime_minutes, rating, cast_list, crew_list)
+VALUES ('Shared film', 2000, 'Drama', 150, 8, 'Liv Ullmann (Role)', 'Director: Ingmar Bergman'),
+       ('Clean film', 2001, 'Drama', 150, 8, 'Liv Ullmann (Role)', 'Director: Ingmar Bergman');
+INSERT INTO series (title) VALUES ('Shared series');
+INSERT INTO episodes (series_id, episode_number) VALUES (last_insert_rowid(), 1);
+INSERT INTO files (episode_id, file_path) VALUES (last_insert_rowid(), @path);",
+                new { path = Path.Combine(_root, "series-episode.mkv") });
+            var localId = conn.ExecuteScalar<long>("SELECT id FROM movies WHERE title = 'Shared film'");
+            var localKey = $"local:{localId}";
+            FilmProblemStore.Save(conn, new(localKey, new[] { FilmProblemKind.Audio }, null));
+            FilmProblemStore.Save(conn, new("jellyfin:remote", Array.Empty<FilmProblemKind>(), "Wrong language"));
+            FilmProblemStore.Save(conn, new("jellyfin:twin", new[] { FilmProblemKind.Picture }, "Server copy only"));
+            var remote = new[]
+            {
+                JellyfinLibrary.ToUiMovie(new JellyfinMovie { ItemId = "twin", Title = "Shared film", Year = 2000 }),
+                JellyfinLibrary.ToUiMovie(new JellyfinMovie
+                {
+                    ItemId = "remote", Title = "Remote film", Genres = "Drama",
+                    RuntimeMinutes = 150, CommunityRating = 8, Cast = new() { "Liv Ullmann (Role)" },
+                    Crew = new() { "Director: Ingmar Bergman" }
+                })
+            };
+            var loader = new LibraryLoader(new MovieRepository(_dbPath));
+            Assert.Contains(loader.Load(null, remote).All, m => m.IsSeries);
+            var filter = new LibraryRefinement
+            {
+                ProblemsOnly = true, Runtime = RuntimeRange.Long, MinimumRating = 7, Person = "bergman"
+            };
+            IReadOnlyList<UiMovie> Filter(LibraryView view, LibrarySource source) =>
+                LibraryGrouping.ItemsForGenre(filter.Apply(
+                    LibraryFilter.Apply(LibraryFilter.Apply(view.All, source), LibraryKind.Films)), "Drama");
+
+            var view = loader.Load("film", remote);
+            var shown = Filter(view, LibrarySource.Server);
+            Assert.Equal(new[] { "jellyfin:remote", localKey }, shown.Select(m => m.Key).OrderBy(k => k));
+            Assert.Equal(localKey, Assert.Single(Filter(view, LibrarySource.ThisComputer)).Key);
+            Assert.Equal(2, LibraryGrouping.BuildGenreChips(shown).Single(c => c.Name == "Drama").Count);
+            Assert.Equal("2 FILMS", LibraryGrouping.CountLabel(shown));
+            Assert.Empty(LibraryFilter.Apply(shown, LibraryKind.Television));
+            Assert.Empty(LibraryGrouping.ItemsForGenre(shown, "Comedy"));
+            Assert.Single(Filter(loader.Load("shared", remote), LibrarySource.Server));
+
+            FilmProblemStore.Clear(conn, localKey);
+            var reloaded = loader.Load("film", remote);
+            Assert.Equal("jellyfin:remote", Assert.Single(Filter(reloaded, LibrarySource.Server)).Key);
+            Assert.False(reloaded.All.Single(m => m.Key == localKey).HasProblem);
+            Assert.Empty(Filter(reloaded, LibrarySource.ThisComputer));
+            Assert.True(filter.IsActive);
+            Assert.Equal(3, LibraryRefinement.None.Apply(reloaded.All).Count);
+            FilmProblemStore.Clear(conn, "jellyfin:remote");
+            var cleared = loader.Load("film", remote);
+            Assert.Empty(Filter(cleared, LibrarySource.Server));
+            Assert.True(LibraryRegroup.EmptiedByFilters(filter, cleared.All));
+        }
     }
 }

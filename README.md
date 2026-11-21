@@ -108,8 +108,19 @@ It runs on Windows and macOS from one codebase, built with
   server's community rating for a server film. A film whose length, rating or
   cast is not known yet is left out of a filter on it rather than guessed into
   one, and the row says how many that is; **Clear filters** puts the row back
-  without touching the genre, source or kind rows. Searching while filtered
-  searches within the filter (`Services/LibraryRefinement`).
+  without touching the title search, genre, source or kind rows. Searching while
+  filtered searches within all of those filters. A selected genre, source or
+  kind stays selected when a search or reload leaves it empty, with a zero count
+  and a way back rather than silently widening the results
+  (`Services/LibraryRefinement`, `Services/LibraryFilter`).
+- **Find copies to replace.** **With problems** in the filter row shows only
+  films you marked with **Report problem…**, including note-only reports about
+  language. It combines with title, actor/director, genre, source, kind, length
+  and rating filters, and stays on across library refreshes. Genre and result
+  counts describe the filtered films; **Clear filters** also switches it off.
+  Clearing a film's report takes it out of this view when you return from its
+  details. Nothing is detected or downloaded automatically
+  (`Services/LibraryRefinement`, `Services/FilmProblems`).
 - **It looks like a screening room.** Warm near-black rather than blue-black,
   because a blue surround makes every poster look faintly green; one brass
   accent, spent only on the focus ring, the primary action and progress that is
@@ -232,13 +243,18 @@ It runs on Windows and macOS from one codebase, built with
   `Services/EpisodeCatalogue`, `Services/LocalSeriesLoader`).
 - **Group local episodes by hand.** **Organise series** opens a searchable list
   of catalogued local files, including episodes split between programmes and
-  files mistaken for films. Tick the files, choose an existing series or name a
-  new one, and check their season and episode numbers. Recognised numbers are
-  filled in; otherwise enter them yourself. Season zero means Specials, and
+  files mistaken for films. Tick the files, or use **Select all** above the
+  results to select or deselect every file matching the current search,
+  including rows outside the visible part of a long list. Selections outside
+  that search are kept; the control shows a partial selection and the counts
+  distinguish shown files from the total selected. Choose an existing series or
+  name a new one, and check their season and episode numbers. Recognised numbers
+  are filled in; otherwise enter them yourself. Season zero means Specials, and
   leaving the season empty supports absolute episode numbering. Files assigned
   the same season and episode are alternate copies of that episode, as the
-  confirmation explains. The assignment survives rescanning and detected file
-  moves, without renaming files or changing Jellyfin. Descriptions from an old
+  confirmation explains, and the success message names the destination series.
+  The assignment survives rescanning and detected file moves, without renaming
+  files or changing Jellyfin. Descriptions from an old
   series are not copied onto the new one's episodes. Empty film entries are
   cleared unless your rating, viewings, Watchlist, problem report or chosen
   match keeps them; those stay separately rather than losing your work
@@ -2237,8 +2253,7 @@ Stated plainly, so nobody has to find out by using it:
   the same identity the library deduplicates on: a film on this disk by its
   catalogue row, a server-only film by its Jellyfin id. So a problem reported on a
   server-only film does not follow it once it is downloaded and becomes a local
-  card, and there is no filter yet for "films with a problem" — the badge is the
-  only way to find them.
+  card. **With problems** uses those same card identities, not a separate list.
 - **A disk is remembered by what the operating system can tell about it.**
   Windows gives every volume a serial number and macOS a volume UUID, and that is
   what a disk is known by. A volume with neither — when `diskutil` cannot answer,

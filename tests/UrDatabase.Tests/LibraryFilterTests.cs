@@ -126,6 +126,20 @@ namespace UrDatabase.Tests
         }
 
         [Fact]
+        public void Selected_source_and_kind_keep_a_way_back_when_search_or_reload_empties_them()
+        {
+            var results = new[] { Remote("a", "Only server film") };
+            Assert.Equal(new[] { LibrarySource.Everywhere, LibrarySource.ThisComputer },
+                LibraryFilter.Available(results, LibrarySource.ThisComputer));
+            Assert.Empty(LibraryFilter.Apply(results, LibrarySource.ThisComputer));
+            Assert.Equal(new[] { LibrarySource.Everywhere, LibrarySource.Server },
+                LibraryFilter.Available(Array.Empty<UiMovie>(), LibrarySource.Server));
+            Assert.Equal(new[] { LibraryKind.Everything, LibraryKind.Television },
+                LibraryFilter.AvailableKinds(results, LibraryKind.Television));
+            Assert.Empty(LibraryFilter.Apply(results, LibraryKind.Television));
+        }
+
+        [Fact]
         public void A_missing_library_filters_to_nothing_rather_than_throwing()
         {
             Assert.Empty(LibraryFilter.Apply(null, LibrarySource.ThisComputer));
