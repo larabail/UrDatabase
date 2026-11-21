@@ -723,7 +723,7 @@
                         BorderThickness="0,0,0,1">
                     <Grid Margin="24,0"
                           Height="44"
-                          ColumnDefinitions="Auto,Auto,Auto,Auto,Auto,Auto,*">
+                          ColumnDefinitions="Auto,Auto,Auto,Auto,Auto,Auto,Auto,*">
 
                         <TextBlock Grid.Column="0"
                                    Classes="label"
@@ -788,8 +788,18 @@
                             </ItemsControl.ItemTemplate>
                         </ItemsControl>
 
-                        <Button x:Name="ClearFiltersButton"
+                        <ToggleButton x:Name="ProblemsOnlyButton"
                                 Grid.Column="5"
+                                Classes="genre"
+                                Margin="4,0,0,0"
+                                VerticalAlignment="Center"
+                                ToolTip.Tip="Only films with a problem you reported, including audio, language or picture issues."
+                                Click="ProblemsOnly_Click">
+                            <TextBlock Classes="genreLabel" Text="With problems" FontSize="12.5"/>
+                        </ToggleButton>
+
+                        <Button x:Name="ClearFiltersButton"
+                                Grid.Column="6"
                                 Classes="ghost"
                                 Margin="12,0,0,0"
                                 Content="Clear filters"
@@ -797,7 +807,7 @@
                                 Click="ClearFilters_Click"/>
 
                         <TextBlock x:Name="RefinementNoteText"
-                                   Grid.Column="6"
+                                   Grid.Column="7"
                                    Classes="dim"
                                    Margin="16,0,0,0"
                                    TextWrapping="NoWrap"
@@ -995,6 +1005,9 @@
                                        Classes="label"
                                        VerticalAlignment="Center"/>
                         </Grid>
+                        <TextBlock x:Name="NoGenreResultsText" Classes="body"
+                                   IsVisible="False" Margin="0,4,24,16" TextWrapping="Wrap"
+                                   Text="Nothing in this genre matches these filters. Widen the filters or choose All genres."/>
                         <ItemsControl ItemsSource="{Binding SingleGenreRows}"
                                       ItemTemplate="{StaticResource PosterRowTemplate}">
                             <ItemsControl.ItemsPanel>
@@ -1053,7 +1066,8 @@
                     <TextBlock Classes="body"
                                TextAlignment="Center"
                                Margin="0,12,0,24"
-                               Text="Widen the length or rating, check the spelling of the name, or clear the filters to see the whole library again."/>
+                               TextWrapping="Wrap"
+                               Text="Widen the length or rating, check the name, turn off With problems, or clear the filters. Genre, source and kind stay as selected."/>
                     <Button Classes="ghost"
                             HorizontalAlignment="Center"
                             Content="Clear filters"

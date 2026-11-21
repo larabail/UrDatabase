@@ -64,7 +64,9 @@ namespace UrDatabase.Services
         {
             if (movies is null || string.IsNullOrWhiteSpace(genre)) return Array.Empty<UiMovie>();
 
-            var matches = string.Equals(genre, Uncategorised, StringComparison.OrdinalIgnoreCase)
+            var matches = string.Equals(genre, AllGenres, StringComparison.OrdinalIgnoreCase)
+                ? movies
+                : string.Equals(genre, Uncategorised, StringComparison.OrdinalIgnoreCase)
                 ? movies.Where(HasNoGenre)
                 : movies.Where(m => m.HasGenre(genre));
 
@@ -84,12 +86,9 @@ namespace UrDatabase.Services
         /// buckets: a film with three genres appears on three shelves, so adding the buckets up
         /// reports a library several times larger than it is.
         /// </remarks>
-        public static IReadOnlyList<GenreChip> BuildGenreChips(IEnumerable<UiMovie>? movies)
+        public static IReadOnlyList<GenreChip> BuildGenreChips(IEnumerable<UiMovie>? movies, string? selectedGenre = null)
         {
-            var materialised = movies as IReadOnlyCollection<UiMovie> ?? movies?.ToList();
-
-            if (materialised is null || materialised.Count == 0)
-                return new List<GenreChip> { new() { Name = AllGenres, Count = 0 } };
+            var materialised = movies as IReadOnlyCollection<UiMovie> ?? movies?.ToArray() ?? Array.Empty<UiMovie>();
 
             var chips = new List<GenreChip>
             {
@@ -112,6 +111,11 @@ namespace UrDatabase.Services
                     Count = ItemsForGenre(materialised, genre).Count
                 });
             }
+
+            // A refinement can empty the selected genre without changing the question.
+            if (!string.IsNullOrWhiteSpace(selectedGenre) &&
+                !chips.Any(c => string.Equals(c.Name, selectedGenre, StringComparison.OrdinalIgnoreCase)))
+                chips.Add(new GenreChip { Name = selectedGenre, Count = 0 });
 
             return chips;
         }
