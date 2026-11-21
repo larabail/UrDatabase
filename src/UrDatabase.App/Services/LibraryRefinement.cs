@@ -23,7 +23,7 @@ namespace UrDatabase.Services
 
     /// <summary>
     /// The library narrowed by what a film is like rather than what it is filed under: how long it
-    /// runs, how well it is rated, and who is in it or directed it.
+    /// runs, how well it is rated, who is in it or directed it, and reported problems.
     /// </summary>
     /// <remarks>
     /// Kept apart from the genre, source and kind rows because those divide the library into
@@ -60,13 +60,15 @@ namespace UrDatabase.Services
         /// </summary>
         public string Person { get; init; } = "";
 
+        public bool ProblemsOnly { get; init; }
+
         /// <summary>The words of <see cref="Person"/>, without the spacing somebody typed around them.</summary>
         public IReadOnlyList<string> PersonWords =>
             (Person ?? "").Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
 
         /// <summary>Whether anything is being narrowed at all.</summary>
         public bool IsActive =>
-            Runtime != RuntimeRange.Any || MinimumRating is not null || PersonWords.Count > 0;
+            ProblemsOnly || Runtime != RuntimeRange.Any || MinimumRating is not null || PersonWords.Count > 0;
 
         /// <summary>Whether a card passes every filter that is set.</summary>
         public bool Matches(UiMovie? movie) => Matches(movie, unknownPasses: false);
@@ -78,6 +80,7 @@ namespace UrDatabase.Services
         internal bool Matches(UiMovie? movie, bool unknownPasses)
         {
             if (movie is null) return false;
+            if (ProblemsOnly && !movie.HasProblem) return false;
 
             if (Runtime != RuntimeRange.Any)
             {

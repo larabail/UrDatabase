@@ -12,12 +12,15 @@ public partial class SeriesGroupingWindow : Window
 {
     private readonly string _dbPath = "";
     private readonly IReadOnlyList<SeriesGroupingFile> _files = Array.Empty<SeriesGroupingFile>();
+    private readonly SeriesGroupingSelection _selection = new(Array.Empty<SeriesGroupingFile>());
     private bool _saving;
 
     public SeriesGroupingWindow()
     {
         InitializeComponent();
+        DataContext = _selection;
         Closing += (_, e) => e.Cancel = _saving;
+        Closed += (_, _) => _selection.Dispose();
     }
 
     private SeriesGroupingWindow(string dbPath, IReadOnlyList<SeriesGroupingFile> files,
@@ -25,21 +28,22 @@ public partial class SeriesGroupingWindow : Window
     {
         _dbPath = dbPath;
         _files = files;
+        _selection = new SeriesGroupingSelection(files);
+        DataContext = _selection;
         TargetBox.ItemsSource = new[] { new LocalSeriesTarget { Title = "Create a new series" } }.Concat(targets);
         TargetBox.SelectedIndex = 0;
-        FilesList.ItemsSource = files;
         SaveButton.IsEnabled = files.Count > 0;
         StatusText.Text = files.Count == 0 ? "No local files are catalogued. Scan your folders first." : "";
     }
 
-    public static async Task<bool> ShowAsync(Window owner, string dbPath)
+    public static async Task<string?> ShowAsync(Window owner, string dbPath)
     {
         var data = await Task.Run(() =>
         {
             using var conn = Database.Open(dbPath);
             return (Files: LocalSeriesGrouping.Files(conn), Targets: LocalSeriesGrouping.Targets(conn));
         });
-        return await new SeriesGroupingWindow(dbPath, data.Files, data.Targets).ShowDialog<bool>(owner);
+        return await new SeriesGroupingWindow(dbPath, data.Files, data.Targets).ShowDialog<string?>(owner);
     }
 
     private void Target_SelectionChanged(object? sender, SelectionChangedEventArgs e)
@@ -49,12 +53,10 @@ public partial class SeriesGroupingWindow : Window
     }
 
     private void Filter_Changed(object? sender, TextChangedEventArgs e)
-    {
-        var query = (FilterBox.Text ?? "").Trim();
-        FilesList.ItemsSource = _files.Where(file =>
-            file.Label.Contains(query, StringComparison.CurrentCultureIgnoreCase)
-            || file.FilePath.Contains(query, StringComparison.CurrentCultureIgnoreCase)).ToList();
-    }
+        => _selection.Filter(FilterBox.Text);
+
+    private void SelectAll_Click(object? sender, RoutedEventArgs e)
+        => _selection.SelectAllResults(_selection.AllSelected != true);
 
     private async void Save_Click(object? sender, RoutedEventArgs e)
     {
@@ -98,7 +100,7 @@ public partial class SeriesGroupingWindow : Window
                 }, default);
             });
             _saving = false;
-            Close(true);
+            Close($"Grouped {assignments.Length} file(s) in \"{(target.Id > 0 ? target.Label : title)}\". Open its series card in the library to see the episodes.");
         }
         catch (ArgumentException ex)
         {
@@ -118,6 +120,6 @@ public partial class SeriesGroupingWindow : Window
 
     private void Cancel_Click(object? sender, RoutedEventArgs e)
     {
-        if (!_saving) Close(false);
+        if (!_saving) Close();
     }
 }

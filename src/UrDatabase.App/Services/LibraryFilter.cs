@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using UrDatabase.Models;
@@ -109,19 +110,23 @@ namespace UrDatabase.Services
         /// Nor is it offered when every film is in both places, which is what a fully synced
         /// library looks like now that those are one card. Three controls that each select the
         /// same films are worse than no row at all: they invite a click that appears to do
-        /// nothing.
+        /// nothing. An explicit selection stays visible with a way back even if a later search
+        /// or reload empties it.
         /// </summary>
-        public static IReadOnlyList<LibrarySource> Available(IEnumerable<UiMovie>? movies)
+        public static IReadOnlyList<LibrarySource> Available(IEnumerable<UiMovie>? movies,
+            LibrarySource selected = LibrarySource.Everywhere)
         {
             var materialised = movies as IReadOnlyCollection<UiMovie> ?? movies?.ToList();
-            if (materialised is null || materialised.Count == 0) return new List<LibrarySource>();
+            var selectedOptions = selected == LibrarySource.Everywhere
+                ? Array.Empty<LibrarySource>() : new[] { LibrarySource.Everywhere, selected };
+            if (materialised is null || materialised.Count == 0) return selectedOptions;
 
             var everywhere = Count(materialised, LibrarySource.Everywhere);
             var local = Count(materialised, LibrarySource.ThisComputer);
             var server = Count(materialised, LibrarySource.Server);
 
-            if (local == 0 || server == 0) return new List<LibrarySource>();
-            if (local == everywhere && server == everywhere) return new List<LibrarySource>();
+            if (local == 0 || server == 0) return selectedOptions;
+            if (local == everywhere && server == everywhere) return selectedOptions;
 
             return new List<LibrarySource>
             {
@@ -176,17 +181,21 @@ namespace UrDatabase.Services
         ///
         /// The rule is not an optimisation. A permanent "Television 0" beside "Films 412" is a
         /// control whose only possible use is to empty the window, and a row of three that all
-        /// select the same cards invites a click that appears to do nothing.
+        /// select the same cards invites a click that appears to do nothing. A current selection
+        /// stays available at zero rather than being silently reset by a search or reload.
         /// </summary>
-        public static IReadOnlyList<LibraryKind> AvailableKinds(IEnumerable<UiMovie>? movies)
+        public static IReadOnlyList<LibraryKind> AvailableKinds(IEnumerable<UiMovie>? movies,
+            LibraryKind selected = LibraryKind.Everything)
         {
             var materialised = movies as IReadOnlyCollection<UiMovie> ?? movies?.ToList();
-            if (materialised is null || materialised.Count == 0) return new List<LibraryKind>();
+            var selectedOptions = selected == LibraryKind.Everything
+                ? Array.Empty<LibraryKind>() : new[] { LibraryKind.Everything, selected };
+            if (materialised is null || materialised.Count == 0) return selectedOptions;
 
             var films = Count(materialised, LibraryKind.Films);
             var television = Count(materialised, LibraryKind.Television);
 
-            if (films == 0 || television == 0) return new List<LibraryKind>();
+            if (films == 0 || television == 0) return selectedOptions;
 
             return new List<LibraryKind>
             {
