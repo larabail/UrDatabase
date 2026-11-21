@@ -45,7 +45,7 @@ namespace UrDatabase.Tests
             var path = WriteFilm("Arrival (2016).mkv");
             using var conn = Database.Open(Path.Combine(_root, "movies.db"));
 
-            var movieId = await ScanService.RecordSingleFileAsync(conn, path);
+            var movieId = await FixtureMedia.RecordSingleFileAsync(conn, path);
 
             var title = conn.QuerySingle<string>("SELECT title FROM movies WHERE id = @id", new { id = movieId });
             var year = conn.QuerySingle<int?>("SELECT year FROM movies WHERE id = @id", new { id = movieId });
@@ -66,7 +66,7 @@ namespace UrDatabase.Tests
             var path = WriteFilm("Arrival (2016).mkv");
             using var conn = Database.Open(Path.Combine(_root, "movies.db"));
 
-            await ScanService.RecordSingleFileAsync(conn, path);
+            await FixtureMedia.RecordSingleFileAsync(conn, path);
 
             var hit = conn.QuerySingle<string>(
                 "SELECT m.title FROM movies_fts f JOIN movies m ON m.id = f.rowid WHERE movies_fts MATCH @q",
@@ -81,8 +81,8 @@ namespace UrDatabase.Tests
             var path = WriteFilm("Arrival (2016).mkv");
             using var conn = Database.Open(Path.Combine(_root, "movies.db"));
 
-            var first = await ScanService.RecordSingleFileAsync(conn, path);
-            var second = await ScanService.RecordSingleFileAsync(conn, path);
+            var first = await FixtureMedia.RecordSingleFileAsync(conn, path);
+            var second = await FixtureMedia.RecordSingleFileAsync(conn, path);
 
             Assert.Equal(first, second);
             Assert.Equal(1, conn.QuerySingle<int>("SELECT COUNT(*) FROM movies"));
@@ -101,13 +101,13 @@ namespace UrDatabase.Tests
             File.WriteAllText(Path.Combine(scanned, "arrival.2016.bluray.x264-GROUP.mkv"), "x");
 
             var dbPath = Path.Combine(_root, "movies.db");
-            await ScanService.ScanLibraryAsync(dbPath, new[] { scanned });
+            await FixtureMedia.ScanLibraryAsync(dbPath, new[] { scanned });
 
             using var conn = Database.Open(dbPath);
             var existing = conn.QuerySingle<long>("SELECT id FROM movies");
 
             var downloaded = WriteFilm("Arrival (2016).mkv");
-            var movieId = await ScanService.RecordSingleFileAsync(conn, downloaded);
+            var movieId = await FixtureMedia.RecordSingleFileAsync(conn, downloaded);
 
             Assert.Equal(existing, movieId);
             Assert.Equal(1, conn.QuerySingle<int>("SELECT COUNT(*) FROM movies"));
@@ -126,10 +126,10 @@ namespace UrDatabase.Tests
 
             using (var conn = Database.Open(dbPath))
             {
-                await ScanService.RecordSingleFileAsync(conn, path);
+                await FixtureMedia.RecordSingleFileAsync(conn, path);
             }
 
-            await ScanService.ScanLibraryAsync(dbPath, new[] { _root });
+            await FixtureMedia.ScanLibraryAsync(dbPath, new[] { _root });
 
             using var after = Database.Open(dbPath);
             Assert.Equal(1, after.QuerySingle<int>("SELECT COUNT(*) FROM movies"));
@@ -143,7 +143,7 @@ namespace UrDatabase.Tests
             var expected = new FileInfo(path).Length;
 
             using var conn = Database.Open(Path.Combine(_root, "movies.db"));
-            await ScanService.RecordSingleFileAsync(conn, path);
+            await FixtureMedia.RecordSingleFileAsync(conn, path);
 
             var size = conn.QuerySingle<long>("SELECT size_bytes FROM files WHERE file_path = @path", new { path });
             Assert.Equal(expected, size);
@@ -155,7 +155,7 @@ namespace UrDatabase.Tests
             var path = WriteFilm("Arrival.mkv");
             using var conn = Database.Open(Path.Combine(_root, "movies.db"));
 
-            var movieId = await ScanService.RecordSingleFileAsync(conn, path);
+            var movieId = await FixtureMedia.RecordSingleFileAsync(conn, path);
 
             Assert.Equal("Arrival", conn.QuerySingle<string>("SELECT title FROM movies WHERE id = @id", new { id = movieId }));
             Assert.Null(conn.QuerySingle<int?>("SELECT year FROM movies WHERE id = @id", new { id = movieId }));
@@ -166,7 +166,7 @@ namespace UrDatabase.Tests
         {
             using var conn = Database.Open(Path.Combine(_root, "movies.db"));
 
-            await Assert.ThrowsAsync<ArgumentException>(() => ScanService.RecordSingleFileAsync(conn, "  "));
+            await Assert.ThrowsAsync<ArgumentException>(() => FixtureMedia.RecordSingleFileAsync(conn, "  "));
         }
     }
 }

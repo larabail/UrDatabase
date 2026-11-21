@@ -104,6 +104,10 @@ namespace UrDatabase.Services
                 return "Streams from your Jellyfin server. Play opens it in VLC or IINA. Download keeps a copy for offline.";
             }
 
+            if (vm.FileLocation is { Available: false } location)
+                return location.Message + " Use Relocate disk/folder to confirm or recover the links.";
+            if (vm.HasFile && !string.IsNullOrEmpty(vm.FileLocation?.Message))
+                return $"{vm.FileLocation.Message} File: {vm.FilePath}";
             return vm.FileMatch switch
             {
                 PlayTargetKind.Linked when vm.HasFile => $"File: {vm.FilePath}",
@@ -141,6 +145,8 @@ namespace UrDatabase.Services
 
             if (vm.IsLoadingFile || (vm.IsConnecting && string.IsNullOrWhiteSpace(vm.DownloadedPath)))
                 return FileNote(vm);
+            if (!vm.IsRemote && vm.FileLocation is { Available: false } location)
+                return location.Message;
 
             if (vm.IsRemote)
             {

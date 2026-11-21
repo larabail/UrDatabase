@@ -216,7 +216,7 @@ INSERT INTO episodes (series_id, season_number, episode_number) VALUES (@target,
             using (var conn = Database.Open(_dbPath))
             {
                 var id = conn.ExecuteScalar<long>("INSERT INTO movies (title, year) VALUES ('Fargo', 1996) RETURNING id");
-                PlayTargetResolver.LinkFile(conn, id, path);
+                FixtureMedia.LinkFile(conn, id, path);
             }
 
             await ScanAsync();
@@ -236,7 +236,7 @@ INSERT INTO episodes (series_id, season_number, episode_number) VALUES (@target,
 
             using var conn = Database.Open(_dbPath);
             var id = conn.ExecuteScalar<long>("INSERT INTO movies (title) VALUES ('Something Else') RETURNING id");
-            PlayTargetResolver.LinkFile(conn, id, path);
+            FixtureMedia.LinkFile(conn, id, path);
 
             var row = conn.QuerySingle<(long? MovieId, long? EpisodeId, long ByHand)>(
                 "SELECT movie_id, episode_id, linked_by_hand FROM files WHERE file_path = @p", new { p = path });
@@ -259,7 +259,7 @@ INSERT INTO episodes (series_id, season_number, episode_number) VALUES (@target,
 
             using var conn = Database.Open(_dbPath);
             var seriesId = conn.ExecuteScalar<long>("SELECT id FROM series");
-            var episodes = new LocalSeriesLoader(_dbPath).Load(seriesId);
+            var episodes = await FixtureMedia.Loader(_dbPath).LoadAsync(seriesId);
 
             Assert.Equal(2, episodes.Count);
             Assert.True(episodes.Single(e => e.EpisodeNumber == 1).IsAvailable);
@@ -277,7 +277,7 @@ INSERT INTO episodes (series_id, season_number, episode_number) VALUES (@target,
             using var conn = Database.Open(_dbPath);
             var film = conn.ExecuteScalar<long>("INSERT INTO movies (title, year) VALUES ('Fargo', 1996) RETURNING id");
 
-            var target = PlayTargetResolver.Resolve(conn, film, "Fargo", 1996);
+            var target = FixtureMedia.Resolve(conn, film, "Fargo", 1996);
 
             Assert.Equal(PlayTargetKind.None, target.Kind);
         }
@@ -298,7 +298,7 @@ INSERT INTO episodes (series_id, season_number, episode_number) VALUES (@target,
         private async Task<ScanResult> ScanAsync()
         {
             using var conn = Database.Open(_dbPath);
-            return await new ScanService().ScanAsync(conn, new[] { _media });
+            return await new FixtureScanner().ScanAsync(conn, new[] { _media });
         }
 
         // ------------------------------------------------- files that moved
@@ -315,7 +315,7 @@ INSERT INTO episodes (series_id, season_number, episode_number) VALUES (@target,
             using (var conn = Database.Open(_dbPath))
             {
                 film = conn.ExecuteScalar<long>("INSERT INTO movies (title, year) VALUES ('Fargo', 1996) RETURNING id");
-                PlayTargetResolver.LinkFile(conn, film, original);
+                FixtureMedia.LinkFile(conn, film, original);
             }
             await ScanAsync();
 

@@ -2,6 +2,8 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
 using Dapper;
 using Microsoft.Data.Sqlite;
 using UrDatabase.Models;
@@ -84,26 +86,44 @@ ORDER BY file_path ASC;
             long movieId,
             string? title,
             int? year,
-            Func<string, bool>? fileExists = null)
+            Func<string, bool>? fileExists = null,
+            VolumeSnapshot? volumes = null)
         {
             if (conn is null) throw new ArgumentNullException(nameof(conn));
 
             var exists = fileExists ?? File.Exists;
 
-            var linked = conn.Query<string>(LinkedFilesSql, new { movie_id = movieId });
-            foreach (var path in linked)
+            var snapshot = volumes ?? VolumeSnapshot.Empty;
+            var linked = conn.Query<LocatedFile>($"SELECT {FileLocations.FileColumns} FROM files WHERE movie_id=@movieId " +
+                "ORDER BY COALESCE(size_bytes,0) DESC, COALESCE(updated_at,'') DESC, file_path", new { movieId }).ToList();
+            PlayTarget? unavailable = null;
+            foreach (var file in linked)
             {
                 // A row can outlive the file it describes — nothing prunes `files` when something
                 // is deleted or a drive is unmounted — and a row restored from another machine, or
                 // written by a build that did not check, can name something that is not a film at
                 // all. Both are filtered here rather than trusted, so the link is necessary but
                 // never sufficient and the next linked file gets its turn.
-                if (DescribeLinkRefusal(path, exists) is null)
-                    return PlayTarget.Linked(path);
+                var location = FileLocations.Resolve(file.Binding, snapshot, fileExists);
+                if (file.MissingSince is not null && location.Available)
+                    location = new(LocationState.Missing, null, "The last scan marked this file missing. Locate it or scan its verified folder again.");
+                if (location.Available && DescribeLinkRefusal(location.Path, exists) is null)
+                    return new(PlayTargetKind.Linked, location.Path, file.Id, location, file.FilePath);
+                unavailable ??= new(PlayTargetKind.None, null, file.Id, location, file.FilePath);
             }
 
-            return Suggest(conn, movieId, title, year, exists);
+            return unavailable ?? Suggest(conn, movieId, title, year, exists, snapshot);
         }
+
+        public static async Task<PlayTarget> ResolveAsync(string dbPath, long movieId, string? title, int? year,
+            IVolumeSnapshotSource? volumes = null, CancellationToken ct = default) =>
+            await Task.Run(async () =>
+            {
+                using var conn = Database.Open(dbPath);
+                var paths = conn.Query<string>("SELECT file_path FROM files WHERE movie_id=@movieId OR movie_id IS NULL", new { movieId });
+                var snapshot = await (volumes ?? VolumeSnapshotSource.Shared).CaptureAsync(paths, ct);
+                return Resolve(conn, movieId, title, year, volumes: snapshot);
+            }, ct).WaitAsync(DriveMonitor.DefaultTimeout + TimeSpan.FromSeconds(2), ct).ConfigureAwait(false);
 
         /// <summary>
         /// The best unclaimed filename for this title, if there is one worth showing. Used for a
@@ -115,18 +135,23 @@ ORDER BY file_path ASC;
             long movieId,
             string? title,
             int? year,
-            Func<string, bool> exists)
+            Func<string, bool> exists,
+            VolumeSnapshot snapshot)
         {
             if (string.IsNullOrWhiteSpace(title)) return PlayTarget.None;
 
-            var unclaimed = conn.Query<string>(UnclaimedFilesSql, new { movie_id = movieId })
-                .Where(path => DescribeLinkRefusal(path, exists) is null)
-                .ToList();
+            var candidates = conn.Query<LocatedFile>($"SELECT {FileLocations.FileColumns} FROM files " +
+                "WHERE movie_id IS NULL AND episode_id IS NULL AND missing_since IS NULL")
+                .Select(file => (File: file, Location: FileLocations.Resolve(file.Binding, snapshot, exists)))
+                .Where(x => x.Location.Available && DescribeLinkRefusal(x.Location.Path, exists) is null).ToList();
+            var unclaimed = candidates.Select(x => x.Location.Path!).ToList();
 
             if (unclaimed.Count == 0) return PlayTarget.None;
 
             var suggestion = MovieFileMatcher.FindBestMatch(unclaimed, title, year);
-            return suggestion is null ? PlayTarget.None : PlayTarget.Suggested(suggestion);
+            if (suggestion is null) return PlayTarget.None;
+            var match = candidates.Single(x => x.Location.Path == suggestion);
+            return new(PlayTargetKind.Suggested, suggestion, match.File.Id, match.Location, match.File.FilePath);
         }
 
         /// <summary>
@@ -182,38 +207,50 @@ ORDER BY file_path ASC;
         /// rather than at the point of playing is what keeps a bad path out of the catalogue in
         /// the first place; see <see cref="DescribeLinkRefusal"/>.
         /// </exception>
-        public static void LinkFile(SqliteConnection conn, long movieId, string filePath, Func<string, bool>? fileExists = null)
+        public static void LinkFile(SqliteConnection conn, long movieId, string filePath, Func<string, bool>? fileExists = null,
+            VolumeSnapshot? volumes = null, CancellationToken ct = default)
         {
             if (conn is null) throw new ArgumentNullException(nameof(conn));
 
             var refusal = DescribeLinkRefusal(filePath, fileExists);
             if (refusal is not null) throw new ArgumentException(refusal, nameof(filePath));
+            var binding = FileLocations.Capture(filePath, volumes ?? VolumeSnapshot.Empty, allowPathOnly: true);
 
             var info = new FileInfo(filePath);
             var size = info.Exists ? info.Length : 0L;
             var created = info.Exists ? info.CreationTimeUtc.ToString("o") : null;
             var modified = info.Exists ? info.LastWriteTimeUtc.ToString("o") : null;
 
-            const string sql = @"
-INSERT INTO files (movie_id, file_path, size_bytes, created_at, updated_at, linked_by_hand)
-VALUES (@movie_id, @file_path, @size_bytes, @created_at, @updated_at, 1)
-ON CONFLICT(file_path) DO UPDATE SET
-    movie_id       = excluded.movie_id,
-    episode_id     = NULL,
-    linked_by_hand = 1,
-    size_bytes     = excluded.size_bytes,
-    updated_at     = excluded.updated_at,
-    missing_since  = NULL;
-";
-
-            conn.Execute(sql, new
+            ct.ThrowIfCancellationRequested();
+            using var tx = conn.BeginTransaction();
+            var existing = FileLocations.Match(conn, binding, tx)
+                ?? conn.QuerySingleOrDefault<LocatedFile>($"SELECT {FileLocations.FileColumns} FROM files WHERE location_mode='legacy' AND file_path=@filePath",
+                    new { filePath }, tx);
+            var parameters = new
             {
+                id = existing?.Id,
                 movie_id = movieId,
                 file_path = filePath,
                 size_bytes = size,
                 created_at = created,
                 updated_at = modified
-            });
+            };
+            var id = existing?.Id ?? conn.ExecuteScalar<long>(@"INSERT INTO files
+(movie_id, file_path, size_bytes, created_at, updated_at, linked_by_hand)
+VALUES (@movie_id,@file_path,@size_bytes,@created_at,@updated_at,1) RETURNING id", parameters, tx);
+            if (existing is not null)
+                conn.Execute(@"UPDATE files SET movie_id=@movie_id, episode_id=NULL, linked_by_hand=1,
+size_bytes=@size_bytes, updated_at=@updated_at WHERE id=@id", parameters, tx);
+            FileLocations.WriteFile(conn, tx, id, existing?.Revision ?? 0, binding, found: true);
+            ct.ThrowIfCancellationRequested();
+            tx.Commit();
         }
+
+        public static Task LinkFileAsync(SqliteConnection conn, long movieId, string path, VolumeSnapshot snapshot,
+            CancellationToken ct = default) => DatabaseWriteLane.RunAsync(conn, token =>
+            {
+                LinkFile(conn, movieId, path, volumes: snapshot, ct: token);
+                return Task.CompletedTask;
+            }, ct);
     }
 }

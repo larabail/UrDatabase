@@ -65,7 +65,7 @@ namespace UrDatabase.Tests
             var spiritedAway = AddMovie(conn, "Spirited Away", 2001);
             AddFile(conn, spiritedAway, WriteFile("Spirited Away.mkv"));
 
-            var target = PlayTargetResolver.Resolve(conn, it, "It", 2017);
+            var target = FixtureMedia.Resolve(conn, it, "It", 2017);
 
             Assert.Equal(PlayTargetKind.None, target.Kind);
             Assert.Null(target.FilePath);
@@ -80,7 +80,7 @@ namespace UrDatabase.Tests
             var linked = WriteFile("It (2017) 1080p.mkv");
             AddFile(conn, movieId, linked);
 
-            var target = PlayTargetResolver.Resolve(conn, movieId, "It", 2017);
+            var target = FixtureMedia.Resolve(conn, movieId, "It", 2017);
 
             Assert.Equal(PlayTargetKind.Linked, target.Kind);
             Assert.Equal(linked, target.FilePath);
@@ -99,7 +99,7 @@ namespace UrDatabase.Tests
             var linked = WriteFile("disc02-final-cut.mkv");
             AddFile(conn, movieId, linked);
 
-            var target = PlayTargetResolver.Resolve(conn, movieId, "Amélie", 2001);
+            var target = FixtureMedia.Resolve(conn, movieId, "Amélie", 2001);
 
             Assert.Equal(PlayTargetKind.Linked, target.Kind);
             Assert.Equal(linked, target.FilePath);
@@ -113,7 +113,7 @@ namespace UrDatabase.Tests
             var movieId = AddMovie(conn, "Heat", 1995);
             AddFile(conn, movieId, Path.Combine(_root, "Heat (1995).mkv"));
 
-            var target = PlayTargetResolver.Resolve(conn, movieId, "Heat", 1995);
+            var target = FixtureMedia.Resolve(conn, movieId, "Heat", 1995);
 
             Assert.Equal(PlayTargetKind.None, target.Kind);
         }
@@ -128,7 +128,7 @@ namespace UrDatabase.Tests
             var present = WriteFile("Heat (1995).mkv", size: 10);
             AddFile(conn, movieId, present, size: 10);
 
-            var target = PlayTargetResolver.Resolve(conn, movieId, "Heat", 1995);
+            var target = FixtureMedia.Resolve(conn, movieId, "Heat", 1995);
 
             Assert.Equal(PlayTargetKind.Linked, target.Kind);
             Assert.Equal(present, target.FilePath);
@@ -150,7 +150,7 @@ namespace UrDatabase.Tests
             AddFile(conn, movieId, small, size: 16);
             AddFile(conn, movieId, large, size: 64);
 
-            Assert.Equal(large, PlayTargetResolver.Resolve(conn, movieId, "Heat", 1995).FilePath);
+            Assert.Equal(large, FixtureMedia.Resolve(conn, movieId, "Heat", 1995).FilePath);
         }
 
         [Fact]
@@ -164,7 +164,7 @@ namespace UrDatabase.Tests
             AddFile(conn, movieId, older, size: 16, updatedAt: "2024-01-01T00:00:00.0000000Z");
             AddFile(conn, movieId, newer, size: 16, updatedAt: "2025-06-01T00:00:00.0000000Z");
 
-            Assert.Equal(newer, PlayTargetResolver.Resolve(conn, movieId, "Heat", 1995).FilePath);
+            Assert.Equal(newer, FixtureMedia.Resolve(conn, movieId, "Heat", 1995).FilePath);
         }
 
         [Fact]
@@ -178,7 +178,7 @@ namespace UrDatabase.Tests
             AddFile(conn, movieId, b, size: 16);
             AddFile(conn, movieId, a, size: 16);
 
-            Assert.Equal(a, PlayTargetResolver.Resolve(conn, movieId, "Heat", 1995).FilePath);
+            Assert.Equal(a, FixtureMedia.Resolve(conn, movieId, "Heat", 1995).FilePath);
         }
 
         /// <summary>
@@ -194,7 +194,7 @@ namespace UrDatabase.Tests
             var remake = AddMovie(conn, "Dune", 2021);
             AddFile(conn, original, WriteFile("Dune (1984).mkv"));
 
-            var target = PlayTargetResolver.Resolve(conn, remake, "Dune", 2021);
+            var target = FixtureMedia.Resolve(conn, remake, "Dune", 2021);
 
             Assert.Equal(PlayTargetKind.None, target.Kind);
             Assert.Null(target.FilePath);
@@ -213,7 +213,7 @@ namespace UrDatabase.Tests
             var candidate = WriteFile("Blade Runner 2049 (2017) 2160p.mkv");
             AddFile(conn, null, candidate);
 
-            var target = PlayTargetResolver.Resolve(conn, movieId, "Blade Runner 2049", 2017);
+            var target = FixtureMedia.Resolve(conn, movieId, "Blade Runner 2049", 2017);
 
             Assert.Equal(PlayTargetKind.Suggested, target.Kind);
             Assert.Equal(candidate, target.FilePath);
@@ -233,7 +233,7 @@ namespace UrDatabase.Tests
             var other = AddMovie(conn, "The Movie", 2010);
             AddFile(conn, owner, WriteFile("The Movie.mkv"));
 
-            Assert.Equal(PlayTargetKind.None, PlayTargetResolver.Resolve(conn, other, "The Movie", 2010).Kind);
+            Assert.Equal(PlayTargetKind.None, FixtureMedia.Resolve(conn, other, "The Movie", 2010).Kind);
         }
 
         [Fact]
@@ -244,7 +244,7 @@ namespace UrDatabase.Tests
             var movieId = AddMovie(conn, "Blade Runner 2049", 2017);
             AddFile(conn, null, Path.Combine(_root, "Blade Runner 2049 (2017).mkv"));
 
-            Assert.Equal(PlayTargetKind.None, PlayTargetResolver.Resolve(conn, movieId, "Blade Runner 2049", 2017).Kind);
+            Assert.Equal(PlayTargetKind.None, FixtureMedia.Resolve(conn, movieId, "Blade Runner 2049", 2017).Kind);
         }
 
         [Fact]
@@ -255,9 +255,9 @@ namespace UrDatabase.Tests
             var movieId = AddMovie(conn, "It", 2017);
             var chosen = WriteFile("disc01.mkv");
 
-            PlayTargetResolver.LinkFile(conn, movieId, chosen);
+            FixtureMedia.LinkFile(conn, movieId, chosen);
 
-            var target = PlayTargetResolver.Resolve(conn, movieId, "It", 2017);
+            var target = FixtureMedia.Resolve(conn, movieId, "It", 2017);
 
             Assert.Equal(PlayTargetKind.Linked, target.Kind);
             Assert.Equal(chosen, target.FilePath);
@@ -277,10 +277,10 @@ namespace UrDatabase.Tests
             var path = WriteFile("It Follows (2014).mkv");
             AddFile(conn, wrong, path);
 
-            PlayTargetResolver.LinkFile(conn, right, path);
+            FixtureMedia.LinkFile(conn, right, path);
 
-            Assert.Equal(PlayTargetKind.Linked, PlayTargetResolver.Resolve(conn, right, "It Follows", 2014).Kind);
-            Assert.Equal(PlayTargetKind.None, PlayTargetResolver.Resolve(conn, wrong, "It", 2017).Kind);
+            Assert.Equal(PlayTargetKind.Linked, FixtureMedia.Resolve(conn, right, "It Follows", 2014).Kind);
+            Assert.Equal(PlayTargetKind.None, FixtureMedia.Resolve(conn, wrong, "It", 2017).Kind);
             Assert.Equal(1L, conn.QuerySingle<long>("SELECT COUNT(*) FROM files"));
         }
 
@@ -292,7 +292,7 @@ namespace UrDatabase.Tests
             var movieId = AddMovie(conn, "Heat", 1995);
             var path = WriteFile("Heat.mkv", size: 128);
 
-            PlayTargetResolver.LinkFile(conn, movieId, path);
+            FixtureMedia.LinkFile(conn, movieId, path);
 
             Assert.Equal(128L, conn.QuerySingle<long>("SELECT size_bytes FROM files WHERE file_path = @path", new { path }));
         }
@@ -311,7 +311,7 @@ namespace UrDatabase.Tests
             var movieId = AddMovie(conn, "It", 2017);
             var script = WriteFile("evil.command");
 
-            var ex = Assert.Throws<ArgumentException>(() => PlayTargetResolver.LinkFile(conn, movieId, script));
+            var ex = Assert.Throws<ArgumentException>(() => FixtureMedia.LinkFile(conn, movieId, script));
 
             Assert.Contains("not a video file", ex.Message);
             Assert.Equal(0L, conn.QuerySingle<long>("SELECT COUNT(*) FROM files"));
@@ -330,7 +330,7 @@ namespace UrDatabase.Tests
 
             var movieId = AddMovie(conn, "It", 2017);
 
-            Assert.Throws<ArgumentException>(() => PlayTargetResolver.LinkFile(conn, movieId, WriteFile(name)));
+            Assert.Throws<ArgumentException>(() => FixtureMedia.LinkFile(conn, movieId, WriteFile(name)));
             Assert.Equal(0L, conn.QuerySingle<long>("SELECT COUNT(*) FROM files"));
         }
 
@@ -342,7 +342,7 @@ namespace UrDatabase.Tests
             var movieId = AddMovie(conn, "It", 2017);
 
             var ex = Assert.Throws<ArgumentException>(
-                () => PlayTargetResolver.LinkFile(conn, movieId, Path.Combine(_root, "absent.mkv")));
+                () => FixtureMedia.LinkFile(conn, movieId, Path.Combine(_root, "absent.mkv")));
 
             Assert.Contains("no longer there", ex.Message);
             Assert.Equal(0L, conn.QuerySingle<long>("SELECT COUNT(*) FROM files"));
@@ -355,7 +355,7 @@ namespace UrDatabase.Tests
 
             var movieId = AddMovie(conn, "It", 2017);
 
-            Assert.Throws<ArgumentException>(() => PlayTargetResolver.LinkFile(conn, movieId, "   "));
+            Assert.Throws<ArgumentException>(() => FixtureMedia.LinkFile(conn, movieId, "   "));
         }
 
         /// <summary>
@@ -371,7 +371,7 @@ namespace UrDatabase.Tests
             var movieId = AddMovie(conn, "It", 2017);
             AddFile(conn, movieId, WriteFile("evil.command"));
 
-            Assert.Equal(PlayTargetKind.None, PlayTargetResolver.Resolve(conn, movieId, "It", 2017).Kind);
+            Assert.Equal(PlayTargetKind.None, FixtureMedia.Resolve(conn, movieId, "It", 2017).Kind);
         }
 
         [Fact]
@@ -384,7 +384,7 @@ namespace UrDatabase.Tests
             var film = WriteFile("It (2017).mkv", size: 10);
             AddFile(conn, movieId, film, size: 10);
 
-            var target = PlayTargetResolver.Resolve(conn, movieId, "It", 2017);
+            var target = FixtureMedia.Resolve(conn, movieId, "It", 2017);
 
             Assert.Equal(PlayTargetKind.Linked, target.Kind);
             Assert.Equal(film, target.FilePath);
@@ -398,7 +398,7 @@ namespace UrDatabase.Tests
             var movieId = AddMovie(conn, "Orphan Print", null);
             AddFile(conn, null, WriteFile("Orphan Print.command"));
 
-            Assert.Equal(PlayTargetKind.None, PlayTargetResolver.Resolve(conn, movieId, "Orphan Print", null).Kind);
+            Assert.Equal(PlayTargetKind.None, FixtureMedia.Resolve(conn, movieId, "Orphan Print", null).Kind);
         }
 
         [Fact]
@@ -411,9 +411,9 @@ namespace UrDatabase.Tests
                 var movieId = AddMovie(conn, "Film" + extension.Trim('.'), 2020);
                 var path = WriteFile("film" + extension);
 
-                PlayTargetResolver.LinkFile(conn, movieId, path);
+                FixtureMedia.LinkFile(conn, movieId, path);
 
-                Assert.Equal(PlayTargetKind.Linked, PlayTargetResolver.Resolve(conn, movieId, "ignored", null).Kind);
+                Assert.Equal(PlayTargetKind.Linked, FixtureMedia.Resolve(conn, movieId, "ignored", null).Kind);
             }
         }
 
@@ -424,7 +424,7 @@ namespace UrDatabase.Tests
 
             var movieId = AddMovie(conn, "It", 2017);
 
-            var target = PlayTargetResolver.Resolve(conn, movieId, "It", 2017);
+            var target = FixtureMedia.Resolve(conn, movieId, "It", 2017);
 
             Assert.Equal(PlayTargetKind.None, target.Kind);
             Assert.False(target.NeedsConfirmation);
@@ -442,7 +442,7 @@ namespace UrDatabase.Tests
             File.WriteAllText(Path.Combine(films, "Spirited Away.mkv"), "x");
 
             var dbPath = Path.Combine(_root, "scanned.db");
-            await ScanService.ScanLibraryAsync(dbPath, new[] { films });
+            await FixtureMedia.ScanLibraryAsync(dbPath, new[] { films });
 
             using var conn = Database.Open(dbPath);
 
@@ -451,11 +451,11 @@ namespace UrDatabase.Tests
 
             Assert.Equal(
                 Path.Combine(films, "It (2017) 1080p.mkv"),
-                PlayTargetResolver.Resolve(conn, it, "It", 2017).FilePath);
+                FixtureMedia.Resolve(conn, it, "It", 2017).FilePath);
 
             Assert.Equal(
                 Path.Combine(films, "Spirited Away.mkv"),
-                PlayTargetResolver.Resolve(conn, spirited, "Spirited Away", null).FilePath);
+                FixtureMedia.Resolve(conn, spirited, "Spirited Away", null).FilePath);
         }
     }
 }

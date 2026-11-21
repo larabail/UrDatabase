@@ -52,7 +52,7 @@ namespace UrDatabase.Tests
             }
 
             var dbPath = Path.Combine(_root, "movies.db");
-            var result = await ScanService.ScanLibraryAsync(dbPath, new[] { films });
+            var result = await FixtureMedia.ScanLibraryAsync(dbPath, new[] { films });
 
             using var conn = Database.Open(dbPath);
             var movies = conn.Query<UiMovie>(LoadMoviesSql).ToList();
@@ -87,8 +87,8 @@ namespace UrDatabase.Tests
             File.WriteAllText(Path.Combine(films, "The Matrix (1999) 4K.mp4"), "x");
 
             var dbPath = Path.Combine(_root, "movies.db");
-            await ScanService.ScanLibraryAsync(dbPath, new[] { films });
-            await ScanService.ScanLibraryAsync(dbPath, new[] { films });
+            await FixtureMedia.ScanLibraryAsync(dbPath, new[] { films });
+            await FixtureMedia.ScanLibraryAsync(dbPath, new[] { films });
 
             using var conn = Database.Open(dbPath);
             var movies = conn.Query<UiMovie>(LoadMoviesSql).ToList();

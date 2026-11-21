@@ -24,6 +24,7 @@ public sealed class SeriesGroupingFile
     public long? MovieId { get; set; }
     public long? EpisodeId { get; set; }
     public string FilePath { get; set; } = "";
+    public string LocationNotice { get; set; } = "";
     public string? MovieTitle { get; set; }
     public string? SeriesTitle { get; set; }
     public string? EpisodeTitle { get; set; }
@@ -54,7 +55,7 @@ public static class LocalSeriesGrouping
     public static IReadOnlyList<LocalSeriesTarget> Targets(SqliteConnection conn) =>
         conn.Query<LocalSeriesTarget>("SELECT id AS Id, title AS Title, year AS Year FROM series ORDER BY title, year").ToList();
 
-    public static IReadOnlyList<SeriesGroupingFile> Files(SqliteConnection conn)
+    public static IReadOnlyList<SeriesGroupingFile> Files(SqliteConnection conn, VolumeSnapshot? volumes = null)
     {
         var files = conn.Query<SeriesGroupingFile>(@"
 SELECT f.id AS Id, f.movie_id AS MovieId, f.episode_id AS EpisodeId, f.file_path AS FilePath,
@@ -65,8 +66,12 @@ LEFT JOIN movies m ON m.id = f.movie_id
 LEFT JOIN episodes e ON e.id = f.episode_id
 LEFT JOIN series s ON s.id = e.series_id
 ORDER BY COALESCE(s.title, m.title, f.file_path), e.season_number, e.episode_number, f.file_path").ToList();
+        var locations = FileLocations.Files(conn).ToDictionary(f => f.Id);
         foreach (var file in files)
         {
+            var location = FileLocations.Project(locations[file.Id].Binding, volumes ?? VolumeSnapshot.Empty);
+            file.LocationNotice = location.Available ? "Availability is checked when opened." : location.Message;
+            file.FilePath = location.Path ?? file.FilePath;
             var season = file.SeasonNumber;
             var episode = file.EpisodeNumber;
             if (episode is null && EpisodeParser.TryParse(file.FilePath, out var parsed))

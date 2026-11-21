@@ -351,7 +351,7 @@ namespace UrDatabase.Tests
                 }
             });
 
-            var scanned = await ScanService.ScanLibraryAsync(DbPath, new[] { folder });
+            var scanned = await FixtureMedia.ScanLibraryAsync(DbPath, new[] { folder });
 
             cts.Cancel();
             await alongside;

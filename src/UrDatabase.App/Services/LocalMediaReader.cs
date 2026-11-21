@@ -29,7 +29,7 @@ internal sealed class LocalMediaReader
         _cacheCapacity = cacheCapacity > 0 ? cacheCapacity : throw new ArgumentOutOfRangeException(nameof(cacheCapacity));
     }
 
-    public async Task<LocalMediaResult> ReadAsync(string? path, bool refresh = false, CancellationToken ct = default)
+    public async Task<LocalMediaResult> ReadAsync(string? path, bool refresh = false, CancellationToken ct = default, string? identity = null)
     {
         ct.ThrowIfCancellationRequested();
         if (string.IsNullOrWhiteSpace(path)) return new LocalMediaResult(null, false, null);
@@ -42,7 +42,7 @@ internal sealed class LocalMediaReader
         {
             // Even stat and Process.Start can stall on disconnected volumes. Neither belongs on
             // the UI thread, and a late stat/probe result must not enter the cache after timeout.
-            snapshot = await Task.Run(() => FileSnapshot.Read(path), token)
+            snapshot = await Task.Run(() => FileSnapshot.Read(path, identity), token)
                 .WaitAsync(token).ConfigureAwait(false);
             var file = snapshot;
             return await Task.Run(async () =>
@@ -61,7 +61,7 @@ internal sealed class LocalMediaReader
                     throw new InvalidDataException($"ffprobe exited with code {output.ExitCode}: {Diagnostic(output.StandardError)}");
                 var info = FfprobeMediaInfo.Parse(output.StandardOutput);
                 info.SizeBytes = file.Size > 0 ? file.Size : null;
-                if (FileSnapshot.Read(file.Path) != file)
+                if (FileSnapshot.Read(file.Path, identity) != file)
                     throw new IOException("The local file changed while ffprobe was reading it.");
                 token.ThrowIfCancellationRequested();
                 if (!string.IsNullOrWhiteSpace(output.StandardError))
@@ -116,14 +116,14 @@ internal sealed class LocalMediaReader
         AudioLanguages = new(info.AudioLanguages), SubtitleLanguages = new(info.SubtitleLanguages)
     };
 
-    private sealed record FileSnapshot(string Path, long Size, DateTime Modified)
+    private sealed record FileSnapshot(string Path, long Size, DateTime Modified, string? Identity)
     {
-        public static FileSnapshot Read(string path)
+        public static FileSnapshot Read(string path, string? identity)
         {
             var file = new FileInfo(System.IO.Path.GetFullPath(path));
             file.Refresh();
             if (!file.Exists) throw new FileNotFoundException("The local media file is unavailable.");
-            return new FileSnapshot(file.FullName, file.Length, file.LastWriteTimeUtc);
+            return new FileSnapshot(file.FullName, file.Length, file.LastWriteTimeUtc, identity);
         }
     }
 }

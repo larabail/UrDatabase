@@ -16,6 +16,7 @@ namespace UrDatabase.Views
     {
         private readonly Func<Task<IReadOnlyList<DriveReport>?>>? _recheck;
         private readonly Func<DriveReport, Task<bool>>? _forget;
+        private readonly Func<Task<bool>>? _relocate;
 
         public DrivesWindow()
         {
@@ -25,11 +26,13 @@ namespace UrDatabase.Views
         private DrivesWindow(
             IReadOnlyList<DriveReport> reports,
             Func<Task<IReadOnlyList<DriveReport>?>> recheck,
-            Func<DriveReport, Task<bool>> forget)
+            Func<DriveReport, Task<bool>> forget,
+            Func<Task<bool>>? relocate)
             : this()
         {
             _recheck = recheck;
             _forget = forget;
+            _relocate = relocate;
             Show(reports);
         }
 
@@ -41,9 +44,10 @@ namespace UrDatabase.Views
             Window owner,
             IReadOnlyList<DriveReport> reports,
             Func<Task<IReadOnlyList<DriveReport>?>> recheck,
-            Func<DriveReport, Task<bool>> forget)
+            Func<DriveReport, Task<bool>> forget,
+            Func<Task<bool>>? relocate = null)
         {
-            var dialog = new DrivesWindow(reports, recheck, forget);
+            var dialog = new DrivesWindow(reports, recheck, forget, relocate);
             return dialog.ShowDialog(owner);
         }
 
@@ -79,6 +83,10 @@ namespace UrDatabase.Views
         }
 
         private async void Recheck_Click(object? sender, RoutedEventArgs e) => await RecheckAsync();
+        private async void Relocate_Click(object? sender, RoutedEventArgs e)
+        {
+            if (_relocate is not null && await _relocate()) await RecheckAsync();
+        }
 
         private async void Forget_Click(object? sender, RoutedEventArgs e)
         {

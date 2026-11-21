@@ -13,16 +13,19 @@ internal sealed class MovieMediaLoad : IDisposable
     private readonly CancellationTokenSource _cancellation;
     private readonly CancellationToken _token;
     private readonly bool _refresh;
+    private readonly Func<CancellationToken, Task<LocationResult>>? _resolve;
     private bool _disposed;
     public string? Path { get; }
     public LocalMediaResult? Result { get; private set; }
 
     public MovieMediaLoad(MovieDetailsVm movie, LocalMediaReader reader, CancellationToken ct = default,
-        bool refresh = false, LocalMediaResult? previous = null)
+        bool refresh = false, LocalMediaResult? previous = null,
+        Func<CancellationToken, Task<LocationResult>>? resolve = null)
     {
         _movie = movie;
         _reader = reader;
         _refresh = refresh;
+        _resolve = resolve;
         Path = PathFor(movie);
         _cancellation = CancellationTokenSource.CreateLinkedTokenSource(ct);
         _token = _cancellation.Token;
@@ -36,7 +39,20 @@ internal sealed class MovieMediaLoad : IDisposable
 
     public async Task LoadAsync()
     {
-        var result = await _reader.ReadAsync(Path, _refresh, _token).ConfigureAwait(false);
+        var location = _resolve is null ? null : await _resolve(_token).ConfigureAwait(false);
+        if (location is { Available: false })
+        {
+            Result = new(null, false, location.Message);
+            return;
+        }
+        var path = location?.Path ?? Path;
+        var result = await _reader.ReadAsync(path, _refresh, _token, location?.Identity).ConfigureAwait(false);
+        if (_resolve is not null)
+        {
+            var after = await _resolve(_token).ConfigureAwait(false);
+            if (!after.Available || after.Path != path || after.Identity != location?.Identity)
+                throw new System.IO.IOException("The selected disk or file changed while media information was loading.");
+        }
         _token.ThrowIfCancellationRequested();
         Result = result;
     }

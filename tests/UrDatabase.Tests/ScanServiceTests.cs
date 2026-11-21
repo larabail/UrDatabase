@@ -137,7 +137,7 @@ namespace UrDatabase.Tests
             File.WriteAllText(Path.Combine(moviesDir, "poster.jpg"), "x");
 
             using var conn = Database.Open(Path.Combine(_root, "test.db"));
-            var scanner = new ScanService();
+            var scanner = new FixtureScanner();
 
             var result = await scanner.ScanAsync(conn, new[] { moviesDir });
 
@@ -156,7 +156,7 @@ namespace UrDatabase.Tests
             File.WriteAllText(Path.Combine(moviesDir, "The Movie.mkv"), "x");
 
             using var conn = Database.Open(Path.Combine(_root, "test.db"));
-            var scanner = new ScanService();
+            var scanner = new FixtureScanner();
 
             await scanner.ScanAsync(conn, new[] { moviesDir });
             await scanner.ScanAsync(conn, new[] { moviesDir });
@@ -170,7 +170,7 @@ namespace UrDatabase.Tests
         public async Task Missing_watch_folders_are_skipped_silently()
         {
             using var conn = Database.Open(Path.Combine(_root, "test.db"));
-            var scanner = new ScanService();
+            var scanner = new FixtureScanner();
 
             var result = await scanner.ScanAsync(conn, new[] { Path.Combine(_root, "gone"), @"D:\Movies" });
 
@@ -185,7 +185,7 @@ namespace UrDatabase.Tests
             var moviesDir = MakeFiles("The Matrix (1999) 1080p.mkv", "Heat.1995.BluRay.x264.mkv");
 
             using var conn = Database.Open(DbPath);
-            await new ScanService().ScanAsync(conn, new[] { moviesDir });
+            await new FixtureScanner().ScanAsync(conn, new[] { moviesDir });
 
             var movies = conn.Query<string>(
                 "SELECT title || ' (' || COALESCE(year, '?') || ')' FROM movies ORDER BY title").ToList();
@@ -199,7 +199,7 @@ namespace UrDatabase.Tests
             var moviesDir = MakeFiles("The Matrix (1999).mkv");
 
             using var conn = Database.Open(DbPath);
-            await new ScanService().ScanAsync(conn, new[] { moviesDir });
+            await new FixtureScanner().ScanAsync(conn, new[] { moviesDir });
 
             var linked = conn.QuerySingle<long>(
                 "SELECT COUNT(*) FROM files f JOIN movies m ON m.id = f.movie_id WHERE m.title = 'The Matrix'");
@@ -217,7 +217,7 @@ namespace UrDatabase.Tests
                 "The Matrix.mp4");
 
             using var conn = Database.Open(DbPath);
-            await new ScanService().ScanAsync(conn, new[] { moviesDir });
+            await new FixtureScanner().ScanAsync(conn, new[] { moviesDir });
 
             Assert.Equal(1L, conn.QuerySingle<long>("SELECT COUNT(*) FROM movies"));
             Assert.Equal(3L, conn.QuerySingle<long>("SELECT COUNT(DISTINCT file_path) FROM files WHERE movie_id IS NOT NULL"));
@@ -229,7 +229,7 @@ namespace UrDatabase.Tests
             var moviesDir = MakeFiles("The Matrix (1999).mkv", "Heat.1995.mkv", "Alien.mkv");
 
             using var conn = Database.Open(DbPath);
-            var scanner = new ScanService();
+            var scanner = new FixtureScanner();
 
             const string links = "SELECT file_path || ' -> ' || COALESCE(movie_id, 'none') FROM files ORDER BY file_path";
 
@@ -253,7 +253,7 @@ namespace UrDatabase.Tests
             using var conn = Database.Open(DbPath);
             conn.Execute("INSERT INTO movies (title, year, genres) VALUES ('The Matrix', 1999, 'Action')");
 
-            await new ScanService().ScanAsync(conn, new[] { moviesDir });
+            await new FixtureScanner().ScanAsync(conn, new[] { moviesDir });
 
             Assert.Equal(1L, conn.QuerySingle<long>("SELECT COUNT(*) FROM movies"));
             Assert.Equal("Action", conn.QuerySingle<string>("SELECT genres FROM movies"));
@@ -268,7 +268,7 @@ namespace UrDatabase.Tests
             using var conn = Database.Open(DbPath);
             conn.Execute("INSERT INTO movies (title, year) VALUES ('The Matrix', NULL)");
 
-            await new ScanService().ScanAsync(conn, new[] { moviesDir });
+            await new FixtureScanner().ScanAsync(conn, new[] { moviesDir });
 
             Assert.Equal(1L, conn.QuerySingle<long>("SELECT COUNT(*) FROM movies"));
             Assert.Equal(1999, conn.QuerySingle<int?>("SELECT year FROM movies"));
@@ -285,7 +285,7 @@ namespace UrDatabase.Tests
             var chosen = conn.QuerySingle<long>("SELECT id FROM movies");
             conn.Execute("INSERT INTO files (movie_id, file_path) VALUES (@id, @path)", new { id = chosen, path });
 
-            await new ScanService().ScanAsync(conn, new[] { moviesDir });
+            await new FixtureScanner().ScanAsync(conn, new[] { moviesDir });
 
             Assert.Equal(chosen, conn.QuerySingle<long>("SELECT movie_id FROM files WHERE file_path = @path", new { path }));
             Assert.Equal(1L, conn.QuerySingle<long>("SELECT COUNT(*) FROM movies"));
@@ -314,7 +314,7 @@ namespace UrDatabase.Tests
             var id = conn.QuerySingle<long>("SELECT id FROM movies");
             conn.Execute("INSERT INTO files (movie_id, file_path) VALUES (@id, @path)", new { id, path });
 
-            await new ScanService().ScanAsync(conn, new[] { moviesDir });
+            await new FixtureScanner().ScanAsync(conn, new[] { moviesDir });
 
             Assert.Equal(1L, conn.QuerySingle<long>("SELECT COUNT(*) FROM movies"));
             Assert.Equal("Origen", conn.QuerySingle<string>("SELECT title FROM movies WHERE id = @id", new { id }));
@@ -342,7 +342,7 @@ namespace UrDatabase.Tests
             var id = conn.QuerySingle<long>("SELECT id FROM movies");
             conn.Execute("INSERT INTO files (movie_id, file_path) VALUES (@id, @path)", new { id, path });
 
-            await new ScanService().ScanAsync(conn, new[] { moviesDir });
+            await new FixtureScanner().ScanAsync(conn, new[] { moviesDir });
 
             Assert.Equal(1L, conn.QuerySingle<long>("SELECT COUNT(*) FROM movies"));
             Assert.Equal(title, conn.QuerySingle<string>("SELECT title FROM movies WHERE id = @id", new { id }));
@@ -360,7 +360,7 @@ namespace UrDatabase.Tests
             var id = conn.QuerySingle<long>("SELECT id FROM movies");
             conn.Execute("INSERT INTO files (movie_id, file_path) VALUES (@id, @path)", new { id, path });
 
-            await new ScanService().ScanAsync(conn, new[] { moviesDir });
+            await new FixtureScanner().ScanAsync(conn, new[] { moviesDir });
 
             Assert.Equal(1L, conn.QuerySingle<long>("SELECT COUNT(*) FROM movies"));
             Assert.Equal("Origen MicroHD", conn.QuerySingle<string>("SELECT title FROM movies WHERE id = @id", new { id }));
@@ -385,7 +385,7 @@ namespace UrDatabase.Tests
             conn.Execute("INSERT INTO files (movie_id, file_path, linked_by_hand) VALUES (@id, @path, @linkedByHand)",
                 new { id, path, linkedByHand });
 
-            var scanner = new ScanService();
+            var scanner = new FixtureScanner();
             await scanner.ScanAsync(conn, new[] { folder });
             await scanner.ScanAsync(conn, new[] { folder });
 
@@ -416,7 +416,7 @@ INSERT INTO film_viewings (film_key, title, watched_on, created_at)
 VALUES (@key, @title, '2026-01-01', '2026-01-01');
 """, new { key, title });
 
-            await new ScanService().ScanAsync(conn, new[] { folder });
+            await new FixtureScanner().ScanAsync(conn, new[] { folder });
 
             var cleanTitle = conn.ExecuteScalar<string>("SELECT title FROM movies WHERE id = @id", new { id });
             Assert.Equal("Casi imposible", cleanTitle);
@@ -434,7 +434,7 @@ VALUES (@key, @title, '2026-01-01', '2026-01-01');
             var moviesDir = MakeFiles("Blade Runner 2049 (2017).mkv");
 
             using var conn = Database.Open(DbPath);
-            await new ScanService().ScanAsync(conn, new[] { moviesDir });
+            await new FixtureScanner().ScanAsync(conn, new[] { moviesDir });
 
             var found = conn.Query<string>(
                 "SELECT m.title FROM movies_fts f JOIN movies m ON m.id = f.rowid WHERE movies_fts MATCH 'blade'").ToList();
@@ -449,7 +449,7 @@ VALUES (@key, @title, '2026-01-01', '2026-01-01');
             var messages = new List<string>();
 
             using var conn = Database.Open(DbPath);
-            await new ScanService().ScanAsync(conn, new[] { moviesDir }, new Progress<string>(messages.Add));
+            await new FixtureScanner().ScanAsync(conn, new[] { moviesDir }, new Progress<string>(messages.Add));
 
             // Progress<T> posts through the captured context, so give it a moment to drain.
             for (var i = 0; i < 50 && messages.Count < 2; i++) await Task.Delay(10);
@@ -468,7 +468,7 @@ VALUES (@key, @title, '2026-01-01', '2026-01-01');
             // moment the task completes.
             var moviesDir = MakeFiles("The Matrix (1999).mkv", "Heat.1995.mkv");
 
-            var result = await ScanService.ScanLibraryAsync(DbPath, new[] { moviesDir });
+            var result = await FixtureMedia.ScanLibraryAsync(DbPath, new[] { moviesDir });
 
             using var verify = Database.Open(DbPath);
             Assert.Equal(2, result.Inserted);
@@ -486,7 +486,7 @@ VALUES (@key, @title, '2026-01-01', '2026-01-01');
             conn.Dispose();
 
             await Assert.ThrowsAnyAsync<InvalidOperationException>(
-                () => new ScanService().ScanAsync(conn, new[] { moviesDir }));
+                () => new FixtureScanner().ScanAsync(conn, new[] { moviesDir }));
         }
 
         [Fact]
@@ -497,7 +497,7 @@ VALUES (@key, @title, '2026-01-01', '2026-01-01');
             cts.Cancel();
 
             using var conn = Database.Open(DbPath);
-            await new ScanService().ScanAsync(conn, new[] { moviesDir }, null, cts.Token);
+            await new FixtureScanner().ScanAsync(conn, new[] { moviesDir }, null, cts.Token);
 
             // Nothing was written, but the transaction was closed cleanly rather than left open.
             Assert.Equal(0L, conn.QuerySingle<long>("SELECT COUNT(*) FROM movies"));
@@ -512,7 +512,7 @@ VALUES (@key, @title, '2026-01-01', '2026-01-01');
             var moviesDir = MakeFiles("+++.mkv", "The Matrix (1999).mkv");
 
             using var conn = Database.Open(DbPath);
-            var scanner = new ScanService();
+            var scanner = new FixtureScanner();
 
             await scanner.ScanAsync(conn, new[] { moviesDir });
             await scanner.ScanAsync(conn, new[] { moviesDir });
@@ -530,7 +530,7 @@ VALUES (@key, @title, '2026-01-01', '2026-01-01');
             var moviesDir = MakeFiles(names);
 
             using var conn = Database.Open(DbPath);
-            var result = await new ScanService().ScanAsync(conn, new[] { moviesDir });
+            var result = await new FixtureScanner().ScanAsync(conn, new[] { moviesDir });
 
             Assert.Equal(250, result.Inserted);
             Assert.Equal(250L, conn.QuerySingle<long>("SELECT COUNT(*) FROM movies"));
@@ -588,7 +588,7 @@ VALUES (@key, @title, '2026-01-01', '2026-01-01');
             File.WriteAllText(Path.Combine(moviesDir, "El Drama (2026).mkv"), "x");
 
             using var conn = Database.Open(Path.Combine(_root, "test.db"));
-            var scanner = new ScanService();
+            var scanner = new FixtureScanner();
 
             await scanner.ScanAsync(conn, new[] { moviesDir });
             Assert.Equal(1L, CountMovies(conn));
@@ -616,7 +616,7 @@ VALUES (@key, @title, '2026-01-01', '2026-01-01');
             File.WriteAllText(Path.Combine(moviesDir, "El Drama (2026).mkv"), "x");
 
             using var conn = Database.Open(Path.Combine(_root, "test.db"));
-            var scanner = new ScanService();
+            var scanner = new FixtureScanner();
 
             await scanner.ScanAsync(conn, new[] { moviesDir });
             var id = conn.ExecuteScalar<long>("SELECT id FROM movies");

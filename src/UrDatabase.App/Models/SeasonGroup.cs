@@ -16,6 +16,8 @@ namespace UrDatabase.Models
         /// found. Null for a server episode, and for a local one whose every copy has gone.
         /// </summary>
         public string? FilePath { get; set; }
+        public long? FileId { get; set; }
+        public string? LocationNotice { get; set; }
 
         /// <summary>
         /// False for a local episode the last scan could not find. It stays listed — a gap in a

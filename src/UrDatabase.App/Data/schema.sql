@@ -68,12 +68,32 @@ CREATE TABLE IF NOT EXISTS files (
     episode_id        INTEGER REFERENCES episodes(id) ON DELETE SET NULL,
     -- 1 when a person linked this file to a film or episode by hand. A scan must not undo
     -- that assignment even if the filename suggests a different film or programme.
-    linked_by_hand    INTEGER NOT NULL DEFAULT 0
+    linked_by_hand    INTEGER NOT NULL DEFAULT 0,
+    location_mode     TEXT NOT NULL DEFAULT 'legacy',
+    volume_id         TEXT,
+    relative_path     TEXT,
+    relative_key      TEXT,
+    path_style        TEXT,
+    location_revision INTEGER NOT NULL DEFAULT 0
 );
 
--- Required for the scanner's ON CONFLICT(file_path) upsert.
-CREATE UNIQUE INDEX IF NOT EXISTS ux_files_path ON files(file_path);
+-- Location uniqueness is installed after older catalogues gain the columns in Migrate.
 CREATE INDEX IF NOT EXISTS ix_files_movie ON files(movie_id);
+
+CREATE TABLE IF NOT EXISTS library_roots (
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    kind              TEXT NOT NULL,
+    config_token      TEXT NOT NULL,
+    scope_path        TEXT NOT NULL DEFAULT '',
+    file_path         TEXT NOT NULL,
+    location_mode     TEXT NOT NULL DEFAULT 'legacy',
+    volume_id         TEXT,
+    relative_path     TEXT,
+    relative_key      TEXT,
+    path_style        TEXT,
+    location_revision INTEGER NOT NULL DEFAULT 0,
+    UNIQUE(kind, config_token, scope_path)
+);
 
 -- A programme on this disk, made of the episodes a scan found for it. Named by the scan, from
 -- the folder or the filename, exactly as a film is: the identity a re-scan resolves against, so

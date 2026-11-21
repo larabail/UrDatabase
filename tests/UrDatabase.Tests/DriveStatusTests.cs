@@ -176,7 +176,7 @@ namespace UrDatabase.Tests
         }
 
         [Fact]
-        public async Task The_catalogue_supplies_drives_and_ignores_files_a_scan_found_gone()
+        public async Task Legacy_locations_include_missing_files_so_they_can_be_recovered()
         {
             var db = Path.Combine(_root, "movies.db");
             using (var conn = Database.Open(db))
@@ -194,10 +194,10 @@ namespace UrDatabase.Tests
 
             var reports = await Monitor(probe).CheckDrivesAsync(new[] { @"S:\Series" }, db);
 
-            Assert.Equal(new[] { @"Q:\", @"S:\" }, reports.Select(r => r.Root));
-            Assert.Equal(DriveState.Disconnected, reports[0].State);
+            Assert.Equal(new[] { @"Q:\", @"R:\", @"S:\" }, reports.Select(r => r.Root));
+            Assert.Equal(DriveState.NeedsConfirmation, reports[0].State);
             Assert.Equal(2, reports[0].FilmCount);
-            Assert.Equal(DriveState.Connected, reports[1].State);
+            Assert.Equal(DriveState.NeedsConfirmation, reports[2].State);
         }
 
         [Fact]
@@ -208,7 +208,7 @@ namespace UrDatabase.Tests
 
             var reports = await Monitor(probe).CheckDrivesAsync(new[] { @"S:\Films" }, db);
 
-            Assert.Equal(DriveState.Disconnected, reports.Single().State);
+            Assert.Equal(DriveState.NeedsConfirmation, reports.Single().State);
             Assert.False(File.Exists(db));
             Assert.False(Directory.Exists(Path.GetDirectoryName(db)));
         }
@@ -306,15 +306,15 @@ namespace UrDatabase.Tests
             var reports = await Monitor(probe).CheckDrivesAsync(new[] { @"S:\Films" }, db);
 
             var retired = reports.Single(r => r.Root == @"R:\");
-            Assert.Equal(DriveState.Disconnected, retired.State);
+            Assert.Equal(DriveState.NeedsConfirmation, retired.State);
             Assert.False(retired.RaisesAlarm);
 
-            Assert.Null(DriveStatusText.Headline(reports));
-            Assert.Equal("", DriveStatusText.Detail(reports));
+            Assert.Equal(@"S:\ needs confirmation", DriveStatusText.Headline(reports));
+            Assert.Contains("Relocate disk/folder", DriveStatusText.Detail(reports));
 
             // Still visible to somebody who goes looking.
             var dialog = DriveStatusText.Describe(reports);
-            Assert.Contains(@"R:\ — NOT CONNECTED", dialog);
+            Assert.Contains(@"R:\ — CONFIRM DISK / FOLDER", dialog);
             Assert.Contains("No library folder", dialog);
         }
 

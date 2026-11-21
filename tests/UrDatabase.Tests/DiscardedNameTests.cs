@@ -150,7 +150,7 @@ namespace UrDatabase.Tests
             Write(films, "El Drama (2026).mkv");
 
             using var conn = Database.Open(DbPath);
-            await new ScanService().ScanAsync(conn, new[] { films });
+            await new FixtureScanner().ScanAsync(conn, new[] { films });
 
             var real = conn.QuerySingle<long>("SELECT id FROM movies");
             Correct(conn, real, "The Drama", tmdbId: 1325734);
@@ -161,7 +161,7 @@ namespace UrDatabase.Tests
             var debris = LeaveDebris(conn, "El Drama", 2026);
             Assert.Equal(2L, conn.QuerySingle<long>("SELECT COUNT(*) FROM movies"));
 
-            await new ScanService().ScanAsync(conn, new[] { films });
+            await new FixtureScanner().ScanAsync(conn, new[] { films });
 
             Assert.Equal(new[] { real }, conn.Query<long>("SELECT id FROM movies").ToList());
             Assert.Equal(0L, conn.QuerySingle<long>("SELECT COUNT(*) FROM movies WHERE id = @id", new { id = debris }));
@@ -181,7 +181,7 @@ namespace UrDatabase.Tests
             Write(films, "El Drama (2026).mkv");
 
             using var conn = Database.Open(DbPath);
-            await new ScanService().ScanAsync(conn, new[] { films });
+            await new FixtureScanner().ScanAsync(conn, new[] { films });
 
             var real = conn.QuerySingle<long>("SELECT id FROM movies");
             var debris = LeaveDebris(conn, "El Drama", 2026);
@@ -202,7 +202,7 @@ namespace UrDatabase.Tests
             Write(films, "El Drama (2026).mkv");
 
             using var conn = Database.Open(DbPath);
-            await new ScanService().ScanAsync(conn, new[] { films });
+            await new FixtureScanner().ScanAsync(conn, new[] { films });
 
             var real = conn.QuerySingle<long>("SELECT id FROM movies");
             Correct(conn, real, "The Drama", tmdbId: 1325734);
@@ -210,7 +210,7 @@ namespace UrDatabase.Tests
 
             Assert.Equal(2, Search(conn, "drama*").Count);
 
-            await new ScanService().ScanAsync(conn, new[] { films });
+            await new FixtureScanner().ScanAsync(conn, new[] { films });
 
             Assert.Equal(new[] { "The Drama" }, Search(conn, "drama*"));
 
@@ -231,7 +231,7 @@ namespace UrDatabase.Tests
             Write(films, "El Drama (2026).mkv");
 
             using var conn = Database.Open(DbPath);
-            await new ScanService().ScanAsync(conn, new[] { films });
+            await new FixtureScanner().ScanAsync(conn, new[] { films });
 
             var real = conn.QuerySingle<long>("SELECT id FROM movies");
             Correct(conn, real, "The Drama", tmdbId: 1325734);
@@ -241,7 +241,7 @@ namespace UrDatabase.Tests
                 "INSERT INTO imdb_ratings (imdb_id, movie_id, rating, fetched_at) VALUES ('tt1', @id, 7.5, 'now')",
                 new { id = debris });
 
-            await new ScanService().ScanAsync(conn, new[] { films });
+            await new FixtureScanner().ScanAsync(conn, new[] { films });
 
             Assert.Equal(7.5, conn.QuerySingle<double>("SELECT rating FROM imdb_ratings WHERE imdb_id = 'tt1'"));
             Assert.Null(conn.QuerySingleOrDefault<long?>("SELECT movie_id FROM imdb_ratings WHERE imdb_id = 'tt1'"));
@@ -254,7 +254,7 @@ namespace UrDatabase.Tests
             Write(films, "El Drama (2026).mkv");
 
             using var conn = Database.Open(DbPath);
-            await new ScanService().ScanAsync(conn, new[] { films });
+            await new FixtureScanner().ScanAsync(conn, new[] { films });
 
             var real = conn.QuerySingle<long>("SELECT id FROM movies");
             Correct(conn, real, "The Drama", tmdbId: 1325734);
@@ -262,7 +262,7 @@ namespace UrDatabase.Tests
 
             using var cancelled = new System.Threading.CancellationTokenSource();
             cancelled.Cancel();
-            var result = await new ScanService().ScanAsync(conn, new[] { films }, null, cancelled.Token);
+            var result = await new FixtureScanner().ScanAsync(conn, new[] { films }, null, cancelled.Token);
 
             Assert.Equal(ScanStatus.Cancelled, result.Status);
             Assert.Equal(2L, conn.QuerySingle<long>("SELECT COUNT(*) FROM movies"));
@@ -278,13 +278,13 @@ namespace UrDatabase.Tests
             Write(films, "Heat (1995).mkv");
 
             using var conn = Database.Open(DbPath);
-            await new ScanService().ScanAsync(conn, new[] { films });
+            await new FixtureScanner().ScanAsync(conn, new[] { films });
 
             var drama = conn.QuerySingle<long>("SELECT id FROM movies WHERE title = 'El Drama'");
             Correct(conn, drama, "The Drama", tmdbId: 1325734);
 
             var before = conn.Query<(long Id, string Title)>("SELECT id AS Id, title AS Title FROM movies ORDER BY id").ToList();
-            await new ScanService().ScanAsync(conn, new[] { films });
+            await new FixtureScanner().ScanAsync(conn, new[] { films });
 
             Assert.Equal(before, conn.Query<(long Id, string Title)>("SELECT id AS Id, title AS Title FROM movies ORDER BY id").ToList());
             Assert.Equal(2L, conn.QuerySingle<long>("SELECT COUNT(*) FROM files"));
@@ -300,14 +300,14 @@ namespace UrDatabase.Tests
             Write(films, "El Drama (2026).mkv");
 
             using var conn = Database.Open(DbPath);
-            await new ScanService().ScanAsync(conn, new[] { films });
+            await new FixtureScanner().ScanAsync(conn, new[] { films });
 
             var real = conn.QuerySingle<long>("SELECT id FROM movies");
             Correct(conn, real, "The Drama", tmdbId: 1325734);
             LeaveDebris(conn, "El Drama", 2026);
 
-            await new ScanService().ScanAsync(conn, new[] { films });
-            await new ScanService().ScanAsync(conn, new[] { films });
+            await new FixtureScanner().ScanAsync(conn, new[] { films });
+            await new FixtureScanner().ScanAsync(conn, new[] { films });
 
             Assert.Equal(new[] { real }, conn.Query<long>("SELECT id FROM movies").ToList());
         }
@@ -322,7 +322,7 @@ namespace UrDatabase.Tests
             Write(films, "El Drama (2026).mkv");
 
             using var conn = Database.Open(DbPath);
-            await new ScanService().ScanAsync(conn, new[] { films });
+            await new FixtureScanner().ScanAsync(conn, new[] { films });
 
             var real = conn.QuerySingle<long>("SELECT id FROM movies");
             Correct(conn, real, "The Drama", tmdbId: 1325734);
@@ -345,7 +345,7 @@ namespace UrDatabase.Tests
             var path = Write(films, "El Drama (2026).mkv");
 
             using var conn = Database.Open(DbPath);
-            await new ScanService().ScanAsync(conn, new[] { films });
+            await new FixtureScanner().ScanAsync(conn, new[] { films });
 
             var real = conn.QuerySingle<long>("SELECT id FROM movies");
             Correct(conn, real, "The Drama", tmdbId: 1325734);
@@ -354,7 +354,7 @@ namespace UrDatabase.Tests
             var debris = LeaveDebris(conn, "El Drama", 2026);
 
             File.Delete(path);
-            var second = await new ScanService().ScanAsync(conn, new[] { films });
+            var second = await new FixtureScanner().ScanAsync(conn, new[] { films });
             Assert.Equal(1, second.Missing);
 
             // The real row survives with its file row, its mark and its correction; only the
@@ -456,10 +456,8 @@ namespace UrDatabase.Tests
         [Fact]
         public async Task A_scan_that_could_not_record_a_file_sweeps_nothing()
         {
-            // The failure that makes an ordinary row look like debris: EnsureMovieAsync commits
-            // the movie row and the file that belonged on it never lands, so a perfectly real film
-            // is momentarily indistinguishable from a duplicate. A scan that hit one has no
-            // business concluding anything about an empty row.
+            // A failed file now rolls back its own movie insert too. Previously existing debris
+            // must still survive a scan that could not record every file.
             //
             // Forced with a trigger because no filename can do it: the parser is written never to
             // return an empty title. What is being simulated is any error while recording a file,
@@ -468,7 +466,7 @@ namespace UrDatabase.Tests
             Write(films, "El Drama (2026).mkv");
 
             using var conn = Database.Open(DbPath);
-            await new ScanService().ScanAsync(conn, new[] { films });
+            await new FixtureScanner().ScanAsync(conn, new[] { films });
 
             var real = conn.QuerySingle<long>("SELECT id FROM movies WHERE title = 'El Drama'");
             Correct(conn, real, "The Drama", tmdbId: 1325734);
@@ -480,17 +478,18 @@ namespace UrDatabase.Tests
                   BEGIN SELECT RAISE(ABORT, 'refused'); END;");
 
             Write(films, "Unrecordable Film (2019).mkv");
-            var failed = await new ScanService().ScanAsync(conn, new[] { films });
+            var failed = await new FixtureScanner().ScanAsync(conn, new[] { films });
 
             Assert.Equal(ScanStatus.Completed, failed.Status);
             Assert.Equal(1, failed.Failed);
-            Assert.Equal(3L, conn.QuerySingle<long>("SELECT COUNT(*) FROM movies"));
+            Assert.Equal(2L, conn.QuerySingle<long>("SELECT COUNT(*) FROM movies"));
+            Assert.DoesNotContain("Unrecordable Film", conn.Query<string>("SELECT title FROM movies"));
 
             // Once the scan is clean again, the sweep happens as usual.
             conn.Execute("DROP TRIGGER refuse_the_file");
             File.Delete(Path.Combine(films, "Unrecordable Film (2019).mkv"));
 
-            var clean = await new ScanService().ScanAsync(conn, new[] { films });
+            var clean = await new FixtureScanner().ScanAsync(conn, new[] { films });
 
             Assert.Equal(0, clean.Failed);
             Assert.DoesNotContain("El Drama", conn.Query<string>("SELECT title FROM movies").ToList());
@@ -508,7 +507,7 @@ namespace UrDatabase.Tests
             var other = Write(films, "Heat (1995).mkv");
 
             using var conn = Database.Open(DbPath);
-            await new ScanService().ScanAsync(conn, new[] { films });
+            await new FixtureScanner().ScanAsync(conn, new[] { films });
 
             var real = conn.QuerySingle<long>("SELECT id FROM movies WHERE title = 'El Drama'");
             Correct(conn, real, "The Drama", tmdbId: 1325734);
@@ -517,7 +516,7 @@ namespace UrDatabase.Tests
             // Find still says the row is debris, because that is what the catalogue said when it
             // was read. The guard on the delete is the only thing standing between that answer
             // and a file attached to nothing.
-            PlayTargetResolver.LinkFile(conn, debris, other);
+            FixtureMedia.LinkFile(conn, debris, other);
 
             using var tx = conn.BeginTransaction();
             var swept = await conn.ExecuteAsync(
@@ -534,7 +533,7 @@ namespace UrDatabase.Tests
             Assert.Equal(1L, conn.QuerySingle<long>("SELECT COUNT(*) FROM movies WHERE id = @id", new { id = debris }));
 
             // And the real sweep agrees, through its own path.
-            await new ScanService().ScanAsync(conn, new[] { films });
+            await new FixtureScanner().ScanAsync(conn, new[] { films });
             Assert.Equal(1L, conn.QuerySingle<long>("SELECT COUNT(*) FROM movies WHERE id = @id", new { id = debris }));
         }
 

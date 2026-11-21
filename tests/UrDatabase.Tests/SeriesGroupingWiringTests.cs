@@ -13,7 +13,7 @@ public class SeriesGroupingWiringTests
         var source = File.ReadAllText(SourcePath("MainWindow.axaml.cs"));
         var start = source.IndexOf("private async void OrganiseSeries_Click(", StringComparison.Ordinal);
         var method = source[start..source.IndexOf("private void PersonBox_TextChanged(", start, StringComparison.Ordinal)];
-        Assert.Contains("SeriesGroupingWindow.ShowAsync(this, _dbPath)", method);
+        Assert.Contains("SeriesGroupingWindow.ShowAsync(this, _dbPath, _volumes)", method);
         Assert.Contains("_searchLoop.RefreshAsync(SearchBox.Text)", method);
         Assert.Contains("_scanning || _syncing", method);
     }

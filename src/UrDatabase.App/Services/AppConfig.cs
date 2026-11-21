@@ -14,6 +14,17 @@ namespace UrDatabase.Services
 
         public string DatabasePath { get; set; } = PlatformPaths.DefaultDatabasePath;
         public string[] WatchFolders { get; set; } = Array.Empty<string>();
+        [JsonIgnore]
+        public string[] WatchFolderTokens { get; private set; } = Array.Empty<string>();
+        [JsonIgnore]
+        public string DownloadFolderToken { get; private set; } = "";
+
+        public IReadOnlyList<ConfiguredRoot> LocationRoots() =>
+            (IsResolved ? WatchFolderTokens : WatchFolders ?? Array.Empty<string>())
+            .Select(token => new ConfiguredRoot("watch", token, PlatformPaths.Expand(token)))
+            .Append(new ConfiguredRoot("download", IsResolved ? DownloadFolderToken : DownloadFolder,
+                string.IsNullOrWhiteSpace(DownloadFolder) ? PlatformPaths.DefaultDownloadFolder : PlatformPaths.Expand(DownloadFolder)))
+            .ToList();
         public string TmdbApiKey { get; set; } = "";
 
         /// <summary>
@@ -323,6 +334,11 @@ namespace UrDatabase.Services
         /// </summary>
         private static void Normalize(AppConfig config)
         {
+            if (!config.IsResolved)
+            {
+                config.WatchFolderTokens = (config.WatchFolders ?? Array.Empty<string>()).Where(f => !string.IsNullOrWhiteSpace(f)).ToArray();
+                config.DownloadFolderToken = config.DownloadFolder;
+            }
             config.DatabasePath = Fallback(PlatformPaths.Expand(config.DatabasePath), PlatformPaths.DefaultDatabasePath);
             config.PosterCacheDir = Fallback(PlatformPaths.Expand(config.PosterCacheDir), PlatformPaths.DefaultPosterCacheDir);
             config.DownloadFolder = Fallback(PlatformPaths.Expand(config.DownloadFolder), PlatformPaths.DefaultDownloadFolder);
@@ -337,7 +353,10 @@ namespace UrDatabase.Services
             // substituting a default there would scan a folder the user had just declined, and a
             // Jellyfin-only library would fill up with films from this disk.
             if (config.WatchFolders.Length == 0 && !config.SetupCompleted)
+            {
                 config.WatchFolders = new[] { PlatformPaths.DefaultWatchFolder };
+                config.WatchFolderTokens = config.WatchFolders;
+            }
 
             config.TmdbImageSize = string.IsNullOrWhiteSpace(config.TmdbImageSize) ? "w342" : config.TmdbImageSize.Trim();
 

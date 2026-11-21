@@ -46,10 +46,10 @@ namespace UrDatabase.Tests
             Write(films, "Heat (1995).mkv");
 
             using var conn = Database.Open(DbPath);
-            await new ScanService().ScanAsync(conn, new[] { films });
+            await new FixtureScanner().ScanAsync(conn, new[] { films });
 
             File.Delete(Path.Combine(films, "Heat (1995).mkv"));
-            var second = await new ScanService().ScanAsync(conn, new[] { films });
+            var second = await new FixtureScanner().ScanAsync(conn, new[] { films });
 
             Assert.Equal(1, second.Missing);
 
@@ -67,14 +67,14 @@ namespace UrDatabase.Tests
             var path = Write(films, "The Matrix (1999).mkv");
 
             using var conn = Database.Open(DbPath);
-            await new ScanService().ScanAsync(conn, new[] { films });
+            await new FixtureScanner().ScanAsync(conn, new[] { films });
 
             File.Delete(path);
-            await new ScanService().ScanAsync(conn, new[] { films });
+            await new FixtureScanner().ScanAsync(conn, new[] { films });
             Assert.NotNull(MissingSince(conn, path));
 
             Write(films, "The Matrix (1999).mkv");
-            var third = await new ScanService().ScanAsync(conn, new[] { films });
+            var third = await new FixtureScanner().ScanAsync(conn, new[] { films });
 
             Assert.Null(MissingSince(conn, path));
             Assert.Equal(0, third.Missing);
@@ -90,14 +90,14 @@ namespace UrDatabase.Tests
             var path = Write(films, "The Matrix (1999).mkv");
 
             using var conn = Database.Open(DbPath);
-            await new ScanService().ScanAsync(conn, new[] { films });
+            await new FixtureScanner().ScanAsync(conn, new[] { films });
 
             File.Delete(path);
-            await new ScanService().ScanAsync(conn, new[] { films });
+            await new FixtureScanner().ScanAsync(conn, new[] { films });
             var first = MissingSince(conn, path);
 
             await Task.Delay(20);
-            var third = await new ScanService().ScanAsync(conn, new[] { films });
+            var third = await new FixtureScanner().ScanAsync(conn, new[] { films });
 
             Assert.Equal(first, MissingSince(conn, path));
             Assert.Equal(0, third.Missing);
@@ -114,13 +114,13 @@ namespace UrDatabase.Tests
             Write(films, "Heat (1995).mkv");
 
             using var conn = Database.Open(DbPath);
-            await new ScanService().ScanAsync(conn, new[] { films });
+            await new FixtureScanner().ScanAsync(conn, new[] { films });
 
             File.Delete(Path.Combine(films, "Heat (1995).mkv"));
 
             using var cts = new CancellationTokenSource();
             cts.Cancel();
-            var cancelled = await new ScanService().ScanAsync(conn, new[] { films }, null, cts.Token);
+            var cancelled = await new FixtureScanner().ScanAsync(conn, new[] { films }, null, cts.Token);
 
             Assert.Equal(ScanStatus.Cancelled, cancelled.Status);
             Assert.Equal(0, cancelled.Missing);
@@ -138,10 +138,10 @@ namespace UrDatabase.Tests
             Write(removable, "Heat (1995).mkv");
 
             using var conn = Database.Open(DbPath);
-            await new ScanService().ScanAsync(conn, new[] { onDisk, removable });
+            await new FixtureScanner().ScanAsync(conn, new[] { onDisk, removable });
 
             Directory.Delete(removable, recursive: true);
-            var second = await new ScanService().ScanAsync(conn, new[] { onDisk, removable });
+            var second = await new FixtureScanner().ScanAsync(conn, new[] { onDisk, removable });
 
             Assert.Equal(ScanStatus.Completed, second.Status);
             Assert.Equal(0, second.Missing);
@@ -158,9 +158,9 @@ namespace UrDatabase.Tests
             Write(others, "Heat (1995).mkv");
 
             using var conn = Database.Open(DbPath);
-            await new ScanService().ScanAsync(conn, new[] { films, others });
+            await new FixtureScanner().ScanAsync(conn, new[] { films, others });
 
-            var narrower = await new ScanService().ScanAsync(conn, new[] { films });
+            var narrower = await new FixtureScanner().ScanAsync(conn, new[] { films });
 
             Assert.Equal(0, narrower.Missing);
             Assert.Null(MissingSince(conn, Path.Combine(others, "Heat (1995).mkv")));
@@ -175,11 +175,11 @@ namespace UrDatabase.Tests
             Write(films, "The Matrix (1999).mkv");
 
             using var conn = Database.Open(DbPath);
-            var first = await new ScanService().ScanAsync(conn, new[] { films });
+            var first = await new FixtureScanner().ScanAsync(conn, new[] { films });
             var firstSeen = conn.QuerySingle<string>("SELECT last_seen_at FROM files");
 
             await Task.Delay(20);
-            var second = await new ScanService().ScanAsync(conn, new[] { films });
+            var second = await new FixtureScanner().ScanAsync(conn, new[] { films });
 
             Assert.Equal(1, second.Unchanged);
             Assert.Equal(0, second.Inserted);
@@ -202,7 +202,7 @@ namespace UrDatabase.Tests
             var from = Write(films, "The Matrix (1999).mkv", "a longer body so the size is distinctive");
 
             using var conn = Database.Open(DbPath);
-            await new ScanService().ScanAsync(conn, new[] { films });
+            await new FixtureScanner().ScanAsync(conn, new[] { films });
 
             var movieId = conn.QuerySingle<long>("SELECT movie_id FROM files");
             var fileId = conn.QuerySingle<long>("SELECT id FROM files");
@@ -212,7 +212,7 @@ namespace UrDatabase.Tests
             var to = Path.Combine(deeper, "The Matrix (1999).mkv");
             File.Move(from, to);
 
-            var second = await new ScanService().ScanAsync(conn, new[] { films });
+            var second = await new FixtureScanner().ScanAsync(conn, new[] { films });
 
             Assert.Equal(1, second.Moved);
             Assert.Equal(0, second.Inserted);
@@ -233,7 +233,7 @@ namespace UrDatabase.Tests
             var from = Write(films, "The Matrix (1999).mkv", "a longer body so the size is distinctive");
 
             using var conn = Database.Open(DbPath);
-            await new ScanService().ScanAsync(conn, new[] { films });
+            await new FixtureScanner().ScanAsync(conn, new[] { films });
 
             // Somebody corrects the scan's guess. That correction has to survive the film moving.
             conn.Execute("INSERT INTO movies (title, year) VALUES ('Something Else', 2020)");
@@ -244,7 +244,7 @@ namespace UrDatabase.Tests
             Directory.CreateDirectory(deeper);
             File.Move(from, Path.Combine(deeper, "The Matrix (1999).mkv"));
 
-            await new ScanService().ScanAsync(conn, new[] { films });
+            await new FixtureScanner().ScanAsync(conn, new[] { films });
 
             Assert.Equal(chosen, conn.QuerySingle<long>("SELECT movie_id FROM files"));
         }
@@ -258,13 +258,13 @@ namespace UrDatabase.Tests
             var original = Write(films, "The Matrix (1999).mkv", "a longer body so the size is distinctive");
 
             using var conn = Database.Open(DbPath);
-            await new ScanService().ScanAsync(conn, new[] { films });
+            await new FixtureScanner().ScanAsync(conn, new[] { films });
 
             var deeper = Path.Combine(films, "4K");
             Directory.CreateDirectory(deeper);
             File.Copy(original, Path.Combine(deeper, "The Matrix (1999).mkv"));
 
-            var second = await new ScanService().ScanAsync(conn, new[] { films });
+            var second = await new FixtureScanner().ScanAsync(conn, new[] { films });
 
             Assert.Equal(1, second.Inserted);
             Assert.Equal(0, second.Moved);
@@ -284,14 +284,14 @@ namespace UrDatabase.Tests
             Write(b, "The Matrix (1999).mkv", "identical bodies, identical sizes");
 
             using var conn = Database.Open(DbPath);
-            await new ScanService().ScanAsync(conn, new[] { films });
+            await new FixtureScanner().ScanAsync(conn, new[] { films });
 
             Directory.Delete(a, recursive: true);
             Directory.Delete(b, recursive: true);
             var c = MakeFolder(Path.Combine("Films", "c"));
             Write(c, "The Matrix (1999).mkv", "identical bodies, identical sizes");
 
-            var second = await new ScanService().ScanAsync(conn, new[] { films });
+            var second = await new FixtureScanner().ScanAsync(conn, new[] { films });
 
             Assert.Equal(0, second.Moved);
             Assert.Equal(1, second.Inserted);
@@ -308,10 +308,10 @@ namespace UrDatabase.Tests
             var from = Write(films, "The Matrix (1999).mkv", "a longer body so the size is distinctive");
 
             using var conn = Database.Open(DbPath);
-            await new ScanService().ScanAsync(conn, new[] { films });
+            await new FixtureScanner().ScanAsync(conn, new[] { films });
 
             File.Move(from, Path.Combine(films, "The Matrix (1999) 1080p.mkv"));
-            var second = await new ScanService().ScanAsync(conn, new[] { films });
+            var second = await new FixtureScanner().ScanAsync(conn, new[] { films });
 
             Assert.Equal(0, second.Moved);
             Assert.Equal(1, second.Inserted);
@@ -329,7 +329,7 @@ namespace UrDatabase.Tests
             var changing = Write(films, "Alien (1979).mkv");
 
             using var conn = Database.Open(DbPath);
-            var first = await new ScanService().ScanAsync(conn, new[] { films });
+            var first = await new FixtureScanner().ScanAsync(conn, new[] { films });
 
             Assert.Equal(3, first.Inserted);
             Assert.Equal(0, first.Updated);
@@ -338,7 +338,7 @@ namespace UrDatabase.Tests
             File.WriteAllText(changing, "a re-encode, so the size and the write time both change");
             Write(films, "Blade Runner (1982).mkv");
 
-            var second = await new ScanService().ScanAsync(conn, new[] { films });
+            var second = await new FixtureScanner().ScanAsync(conn, new[] { films });
 
             Assert.Equal(1, second.Inserted);
             Assert.Equal(1, second.Updated);
@@ -363,7 +363,7 @@ namespace UrDatabase.Tests
             using var conn = Database.Open(DbPath);
             conn.Execute("CREATE TRIGGER no_more_films BEFORE INSERT ON movies BEGIN SELECT RAISE(FAIL, 'no'); END;");
 
-            var result = await new ScanService().ScanAsync(conn, new[] { films });
+            var result = await new FixtureScanner().ScanAsync(conn, new[] { films });
 
             Assert.Equal(2, result.Failed);
             Assert.Equal(0, result.Inserted);
@@ -379,7 +379,7 @@ namespace UrDatabase.Tests
             Write(inner, "The Matrix (1999).mkv");
 
             using var conn = Database.Open(DbPath);
-            var result = await new ScanService().ScanAsync(conn, new[] { films, inner });
+            var result = await new FixtureScanner().ScanAsync(conn, new[] { films, inner });
 
             Assert.Equal(1, result.FilesSeen);
             Assert.Equal(1, result.Inserted);
@@ -396,7 +396,7 @@ namespace UrDatabase.Tests
             Write(films, "The Matrix (1999).mkv");
 
             using var conn = Database.Open(DbPath);
-            var result = await new ScanService().ScanAsync(conn, new[] { films, gone });
+            var result = await new FixtureScanner().ScanAsync(conn, new[] { films, gone });
 
             var row = conn.QuerySingle(
                 "SELECT status, started_at, finished_at, roots, skipped_roots, inserted, missing FROM scans WHERE id = @id",
@@ -423,7 +423,7 @@ namespace UrDatabase.Tests
             cts.Cancel();
 
             using var conn = Database.Open(DbPath);
-            var result = await new ScanService().ScanAsync(conn, new[] { films }, null, cts.Token);
+            var result = await new FixtureScanner().ScanAsync(conn, new[] { films }, null, cts.Token);
 
             Assert.Equal(ScanStatus.Cancelled, await ScanSessions.StatusOfAsync(conn, result.ScanId));
             Assert.Contains("Nothing was marked missing", result.Summary, StringComparison.Ordinal);
@@ -436,8 +436,8 @@ namespace UrDatabase.Tests
             Write(films, "The Matrix (1999).mkv");
 
             using var conn = Database.Open(DbPath);
-            var first = await new ScanService().ScanAsync(conn, new[] { films });
-            var second = await new ScanService().ScanAsync(conn, new[] { films });
+            var first = await new FixtureScanner().ScanAsync(conn, new[] { films });
+            var second = await new FixtureScanner().ScanAsync(conn, new[] { films });
 
             Assert.NotEqual(first.ScanId, second.ScanId);
             Assert.Equal(2L, conn.QuerySingle<long>("SELECT COUNT(*) FROM scans"));
@@ -455,10 +455,12 @@ namespace UrDatabase.Tests
             // A connection somebody disposed underneath the scan: it gets far enough to open its
             // own row and then cannot begin a transaction.
             var conn = Database.Open(DbPath);
+            var volumes = FixtureMedia.Volumes(DbPath);
+            await volumes.ConfirmAsync(conn, films);
             conn.Dispose();
 
             await Assert.ThrowsAnyAsync<InvalidOperationException>(
-                () => new ScanService().ScanAsync(conn, new[] { films }));
+                () => new ScanService(volumes).ScanAsync(conn, new[] { films }));
 
             using var verify = Database.Open(DbPath);
             Assert.Equal(
@@ -481,7 +483,7 @@ namespace UrDatabase.Tests
             conn.Dispose();
 
             await Assert.ThrowsAnyAsync<InvalidOperationException>(
-                () => new ScanService().ScanAsync(conn, new[] { films }));
+                () => new FixtureScanner().ScanAsync(conn, new[] { films }));
 
             // Asserted with a deadline rather than by awaiting, because the failure being guarded
             // against is a wait that never ends, and a hung test says far less than a failed one.
@@ -508,13 +510,13 @@ namespace UrDatabase.Tests
             var hidden = Write(locked, "Heat (1995).mkv");
 
             using var conn = Database.Open(DbPath);
-            await new ScanService().ScanAsync(conn, new[] { films });
+            await new FixtureScanner().ScanAsync(conn, new[] { films });
             Assert.Equal(2L, conn.QuerySingle<long>("SELECT COUNT(*) FROM files"));
 
             File.SetUnixFileMode(locked, UnixFileMode.None);
             try
             {
-                var second = await new ScanService().ScanAsync(conn, new[] { films });
+                var second = await new FixtureScanner().ScanAsync(conn, new[] { films });
 
                 Assert.Equal(0, second.Missing);
                 Assert.Null(MissingSince(conn, hidden));

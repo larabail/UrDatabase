@@ -40,6 +40,8 @@ namespace UrDatabase.Models
         /// Null when every copy is one a scan could not find.
         /// </summary>
         public string? FilePath { get; set; }
+        public long? FileId { get; set; }
+        public Services.LocationResult? Location { get; set; }
 
         /// <summary>Any path the catalogue has for it, found or not. Named on a missing row.</summary>
         public string? AnyPath { get; set; }

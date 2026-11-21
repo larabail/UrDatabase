@@ -339,7 +339,7 @@ namespace UrDatabase.Tests
 
             // And Play opens the print that is still there, not the one that went.
             using var conn = Database.Connect(DbPath);
-            var target = PlayTargetResolver.Resolve(conn, after.Id, after.Title, after.Year);
+            var target = FixtureMedia.Resolve(conn, after.Id, after.Title, after.Year);
             Assert.Equal(PlayTargetKind.Linked, target.Kind);
             Assert.Equal(Path.Combine(films, "Heat (1995) 2160p.mkv"), target.FilePath);
         }
@@ -473,7 +473,7 @@ namespace UrDatabase.Tests
 
             var elsewhere = Write(MakeFolder("Elsewhere"), "Heat (1995).mkv");
             using (var conn = Database.Open(DbPath))
-                PlayTargetResolver.LinkFile(conn, movieId, elsewhere);
+                FixtureMedia.LinkFile(conn, movieId, elsewhere);
 
             var back = Assert.Single(Load().All);
             Assert.True(back.IsOnThisComputer);
@@ -491,14 +491,14 @@ namespace UrDatabase.Tests
 
             using var conn = Database.Open(DbPath);
             var movieId = conn.QuerySingle<long>("SELECT id FROM movies");
-            Assert.Equal(PlayTargetKind.Linked, PlayTargetResolver.Resolve(conn, movieId, "Heat", 1995).Kind);
+            Assert.Equal(PlayTargetKind.Linked, FixtureMedia.Resolve(conn, movieId, "Heat", 1995).Kind);
 
             File.Delete(path);
-            await new ScanService().ScanAsync(conn, new[] { films });
+            await new FixtureScanner().ScanAsync(conn, new[] { films });
 
             // Refused on the catalogue's own account, before the filesystem is consulted: the
             // resolver is handed a filesystem that still claims the file is there.
-            var target = PlayTargetResolver.Resolve(conn, movieId, "Heat", 1995, _ => true);
+            var target = FixtureMedia.Resolve(conn, movieId, "Heat", 1995, _ => true);
             Assert.Equal(PlayTargetKind.None, target.Kind);
             Assert.Null(target.FilePath);
         }
@@ -518,14 +518,14 @@ namespace UrDatabase.Tests
             var orphan = conn.ExecuteScalar<long>(
                 "INSERT INTO movies (title, year) VALUES ('Heat', 1995) RETURNING id");
 
-            Assert.Equal(PlayTargetKind.Suggested, PlayTargetResolver.Resolve(conn, orphan, "Heat", 1995).Kind);
+            Assert.Equal(PlayTargetKind.Suggested, FixtureMedia.Resolve(conn, orphan, "Heat", 1995).Kind);
 
             File.Delete(path);
-            await new ScanService().ScanAsync(conn, new[] { films });
+            await new FixtureScanner().ScanAsync(conn, new[] { films });
 
             Assert.Equal(
                 PlayTargetKind.None,
-                PlayTargetResolver.Resolve(conn, orphan, "Heat", 1995, _ => true).Kind);
+                FixtureMedia.Resolve(conn, orphan, "Heat", 1995, _ => true).Kind);
         }
 
         // ---- helpers ---------------------------------------------------------------------------------
@@ -537,7 +537,7 @@ namespace UrDatabase.Tests
         private async Task<ScanResult> Scan(string[] folders, CancellationToken ct)
         {
             using var conn = Database.Open(DbPath);
-            return await new ScanService().ScanAsync(conn, folders, null, ct);
+            return await new FixtureScanner().ScanAsync(conn, folders, null, ct);
         }
 
         private Task<ScanResult> Scan(string folder, CancellationToken ct) => Scan(new[] { folder }, ct);

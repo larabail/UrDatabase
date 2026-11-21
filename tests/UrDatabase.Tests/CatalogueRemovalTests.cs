@@ -28,7 +28,7 @@ public class CatalogueRemovalTests : IDisposable
         Directory.CreateDirectory(media);
         var file = Path.Combine(media, "The Matrix (1999).mkv");
         File.WriteAllText(file, "unchanged video");
-        await new ScanService().ScanAsync(_conn, new[] { media });
+        await new FixtureScanner().ScanAsync(_conn, new[] { media });
         var id = _conn.ExecuteScalar<long>("SELECT id FROM movies");
         var identity = new FilmIdentity(null, "The Matrix", 1999);
         FilmJournalStore.SaveRating(_conn, identity, 9, "Keep this review", DateTime.UtcNow);
@@ -44,7 +44,7 @@ public class CatalogueRemovalTests : IDisposable
         Assert.Equal("Keep this review", FilmJournalStore.GetRating(_conn, identity)!.Review);
         Assert.Single(FilmJournalStore.LoadViewings(_conn, identity));
 
-        await new ScanService().ScanAsync(_conn, new[] { media });
+        await new FixtureScanner().ScanAsync(_conn, new[] { media });
         Assert.Equal(1, _conn.ExecuteScalar<long>("SELECT COUNT(*) FROM movies"));
     }
 

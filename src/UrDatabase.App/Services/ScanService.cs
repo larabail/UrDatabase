@@ -12,6 +12,9 @@ namespace UrDatabase.Services
 {
     public class ScanService
     {
+        private readonly IVolumeSnapshotSource _volumes;
+        public ScanService(IVolumeSnapshotSource? volumes = null) =>
+            _volumes = volumes ?? VolumeSnapshotSource.Shared;
         private static readonly HashSet<string> VideoExtensions = new(StringComparer.OrdinalIgnoreCase)
         {
             ".mkv", ".mp4", ".avi", ".mov", ".wmv", ".m4v", ".mpg", ".mpeg", ".ts", ".webm"
@@ -58,10 +61,11 @@ namespace UrDatabase.Services
         /// Owning the connection here means there is no shape in which a caller can dispose it
         /// early, and the returned Task completes only once every row is committed.
         /// </summary>
-        public static async Task<ScanResult> ScanLibraryAsync(string dbPath, IEnumerable<string> folders, IProgress<string>? progress = null, CancellationToken ct = default)
+        public static async Task<ScanResult> ScanLibraryAsync(string dbPath, IEnumerable<string> folders, IProgress<string>? progress = null, CancellationToken ct = default,
+            IVolumeSnapshotSource? volumes = null)
         {
             using var conn = Database.Open(dbPath);
-            return await new ScanService().ScanAsync(conn, folders, progress, ct);
+            return await new ScanService(volumes).ScanAsync(conn, folders, progress, ct);
         }
 
         /// <summary>
@@ -92,23 +96,87 @@ namespace UrDatabase.Services
         {
             if (conn is null) throw new ArgumentNullException(nameof(conn));
             if (folders is null) throw new ArgumentNullException(nameof(folders));
-
             var requested = folders.Where(f => !string.IsNullOrWhiteSpace(f)).ToList();
+            if (ct.IsCancellationRequested)
+            {
+                var cancelledId = await ScanSessions.BeginAsync(conn, Array.Empty<string>(), requested, DateTimeOffset.UtcNow);
+                var cancelled = ScanResult.Nothing with { ScanId = cancelledId, Status = ScanStatus.Cancelled, SkippedRoots = requested };
+                await ScanSessions.FinishAsync(conn, cancelled, DateTimeOffset.UtcNow);
+                return cancelled;
+            }
 
             // Split before anything is written, because the difference decides what this scan is
             // allowed to conclude. A folder that is not there was not searched, so nothing under
             // it may be called missing — which is the whole reason unplugging an external drive
             // does not cost somebody their catalogue.
-            var walked = requested.Where(Directory.Exists).ToList();
-            var skipped = requested.Where(f => !Directory.Exists(f)).ToList();
+            var storedRoots = FileLocations.Roots(conn);
+            var roots = requested.SelectMany(token =>
+                new[] { (Token: token, Root: FileLocations.Root(conn, "watch", token)) }
+                    .Concat(storedRoots.Where(r => r.Kind == "watch" && r.Token == token && r.ScopePath.Length > 0)
+                        .Select(r => (Token: token, Root: (LibraryRoot?)r)))).ToArray();
+            var probePaths = requested.Select(PlatformPaths.Expand).Concat(roots.Where(r => r.Root is not null).Select(r => r.Root!.FilePath)).ToArray();
+            var snapshot = await _volumes.CaptureAsync(probePaths, ct);
+            var walked = new List<string>();
+            var verifiedRoots = new Dictionary<(string Token, string Scope), string>();
+            var skipped = new List<string>();
+            var issues = new List<string>();
+            foreach (var (token, root) in roots)
+            {
+                var location = FileLocations.Resolve(root?.Binding ?? LocationBinding.Legacy(PlatformPaths.Expand(token)),
+                    snapshot, Directory.Exists);
+                if (location.Available)
+                {
+                    walked.Add(location.Path!);
+                    verifiedRoots[(token, root!.ScopePath)] = location.Path!;
+                }
+                else
+                {
+                    skipped.Add(token);
+                    issues.Add($"{token}: {location.Message}");
+                    progress?.Report(issues[^1]);
+                }
+            }
+
+            async Task VerifyRootsAsync()
+            {
+                var current = await _volumes.CaptureAsync(probePaths, ct);
+                foreach (var nested in snapshot.Mounts.Where(m => m.Id is not null
+                             && walked.Any(root => VolumePaths.TryRelative(root, m.Root, out _, m.PathStyle))))
+                {
+                    var candidates = current.WithIdentity(nested.Id!);
+                    if (!current.Complete || candidates.Count != 1 || candidates[0].Root != nested.Root)
+                        throw new IOException("A disk mounted inside a scan folder changed. Scan again; no further files will be marked missing.");
+                }
+                foreach (var (token, original) in roots.Where(r => r.Root is not null))
+                {
+                    if (!verifiedRoots.TryGetValue((token, original!.ScopePath), out var walkedPath)) continue;
+                    var stored = FileLocations.Root(conn, "watch", token, original.ScopePath);
+                    var resolved = FileLocations.Resolve(original!.Binding, current, Directory.Exists);
+                    if (stored?.Revision != original.Revision || stored.Binding != original.Binding
+                        || !resolved.Available || resolved.Path != walkedPath)
+                        throw new IOException("A scan disk or configured folder changed. Nothing further will be marked missing; scan again.");
+                }
+            }
 
             var scanId = await ScanSessions.BeginAsync(conn, walked, skipped, DateTimeOffset.UtcNow);
 
-            var movies = await LoadMovieIndexAsync(conn);
+            MovieIndex movies;
+            EpisodeCatalogue episodes;
+            ScanFileIndex files;
+            try
+            {
+                movies = await LoadMovieIndexAsync(conn);
+                episodes = await EpisodeCatalogue.LoadAsync(conn);
+                files = await ScanFileIndex.LoadAsync(conn, snapshot, walked);
+            }
+            catch
+            {
+                await CloseQuietlyAsync(conn, ScanResult.Nothing with
+                { ScanId = scanId, Status = ScanStatus.Failed, Roots = walked, SkippedRoots = skipped });
+                throw;
+            }
             var knownMovies = movies.Count;
-            var episodes = await EpisodeCatalogue.LoadAsync(conn);
             var knownSeries = episodes.SeriesCount;
-            var files = await ScanFileIndex.LoadAsync(conn);
 
             var counts = new ScanCounts();
             var unreadable = new List<string>();
@@ -121,8 +189,12 @@ namespace UrDatabase.Services
                 {
                     if (status == ScanStatus.Cancelled) break;
                     progress?.Report($"Scanning: {folder}");
+                    var source = roots.First(r => r.Root is not null &&
+                        verifiedRoots.TryGetValue((r.Token, r.Root.ScopePath), out var resolved) && resolved == folder);
+                    var parsingRoot = source.Root!.ScopePath.Length > 0
+                        ? source.Root.ScopePath : PlatformPaths.Expand(source.Token);
 
-                    if (!await ScanFolderAsync(conn, folder, scanId, catalogue, files, counts, unreadable, progress, ct))
+                    if (!await ScanFolderAsync(conn, folder, parsingRoot, scanId, catalogue, files, counts, unreadable, progress, ct, VerifyRootsAsync))
                         status = ScanStatus.Cancelled;
                 }
 
@@ -131,7 +203,8 @@ namespace UrDatabase.Services
                 // that is gone, and it has no way to tell those apart.
                 if (status == ScanStatus.Completed)
                 {
-                    counts.Missing = await MarkMissingAsync(conn, files, walked, unreadable, DateTimeOffset.UtcNow);
+                    await VerifyRootsAsync();
+                    counts.Missing = await MarkMissingAsync(conn, files, walked, unreadable, DateTimeOffset.UtcNow, VerifyRootsAsync);
 
                     // A rename sweeps as it happens, and this is the safety net for the debris a
                     // rename never saw: a row left by an older build, or by one on a branch,
@@ -168,8 +241,8 @@ namespace UrDatabase.Services
                 throw;
             }
 
-            var result = ScanResult.From(scanId, status, counts, movies.Count - knownMovies, walked, skipped,
-                episodes.SeriesCount - knownSeries);
+            var result = ScanResult.From(scanId, status, counts, catalogue.Movies.Count - knownMovies, walked, skipped,
+                catalogue.Episodes.SeriesCount - knownSeries) with { RootIssues = issues };
             await ScanSessions.FinishAsync(conn, result, DateTimeOffset.UtcNow);
 
             progress?.Report(result.Summary);
@@ -186,13 +259,15 @@ namespace UrDatabase.Services
         private static async Task<bool> ScanFolderAsync(
             SqliteConnection conn,
             string folder,
+            string parsingRoot,
             long scanId,
             Catalogue catalogue,
             ScanFileIndex files,
             ScanCounts counts,
             ICollection<string> unreadable,
             IProgress<string>? progress,
-            CancellationToken ct)
+            CancellationToken ct,
+            Func<Task> verifyRoots)
         {
             IDisposable? lease = null;
             SqliteTransaction? tx = null;
@@ -218,6 +293,7 @@ namespace UrDatabase.Services
                 // again, including the code trying to record that the scan had failed, so a
                 // reported failure became a silent hang instead.
                 lease = await DatabaseWriteLane.EnterAsync(conn, CancellationToken.None);
+                await verifyRoots();
                 tx = conn.BeginTransaction();
 
                 var sinceCommit = 0;
@@ -229,12 +305,23 @@ namespace UrDatabase.Services
 
                     try
                     {
-                        Tally(counts, await RecordFileAsync(conn, tx, catalogue, files, counts, scanId, path));
+                        await conn.ExecuteAsync("SAVEPOINT record_file", transaction: tx);
+                        if (!VolumePaths.TryRelative(folder, path, out var withinFolder))
+                            throw new LocationChangedException("The scan returned a file outside its selected folder.");
+                        var parsingPath = VolumePaths.Join(parsingRoot, withinFolder).Replace('\\', Path.DirectorySeparatorChar);
+                        Tally(counts, await RecordFileAsync(conn, tx, catalogue, files, counts, scanId, path, parsingPath));
+                        await conn.ExecuteAsync("RELEASE record_file", transaction: tx);
                     }
                     catch (Exception ex)
                     {
+                        await conn.ExecuteAsync("ROLLBACK TO record_file; RELEASE record_file", transaction: tx);
                         counts.Failed++;
                         progress?.Report($"Error: {ex.Message} ({path})");
+                        if (ex is LocationChangedException or SqliteException { SqliteExtendedErrorCode: 2067 })
+                            throw new IOException("The file binding changed or collided during the scan. Resolve the conflict before retrying.", ex);
+                        unreadable.Add(path);
+                        catalogue.Movies = await LoadMovieIndexAsync(conn);
+                        catalogue.Episodes = await EpisodeCatalogue.LoadAsync(conn);
                     }
 
                     if (++sinceCommit < FilesPerTransaction) continue;
@@ -246,6 +333,7 @@ namespace UrDatabase.Services
                     lease = null;
 
                     lease = await DatabaseWriteLane.EnterAsync(conn, CancellationToken.None);
+                    await verifyRoots();
                     tx = conn.BeginTransaction();
                     sinceCommit = 0;
                 }
@@ -280,20 +368,14 @@ namespace UrDatabase.Services
         }
 
         /// <summary>
-        /// Writes a file the catalogue has never seen. Still an upsert: the in-memory index is a
-        /// snapshot, and a second copy of the app writing the same path between the snapshot and
-        /// here would otherwise turn a scan into a constraint violation.
+        /// Writes a genuinely new binding. A concurrent identity collision is a visible failure,
+        /// not permission to overwrite another file's association through its old mount path.
         /// </summary>
         private const string InsertFileSql = @"
-INSERT INTO files (movie_id, file_path, size_bytes, created_at, updated_at, last_seen_at, last_seen_scan_id)
-VALUES (@movie_id, @file_path, @size_bytes, @created_at, @updated_at, @last_seen_at, @scan_id)
-ON CONFLICT(file_path) DO UPDATE SET
-    movie_id          = COALESCE(files.movie_id, excluded.movie_id),
-    size_bytes        = excluded.size_bytes,
-    updated_at        = excluded.updated_at,
-    last_seen_at      = excluded.last_seen_at,
-    last_seen_scan_id = excluded.last_seen_scan_id,
-    missing_since     = NULL
+INSERT INTO files (movie_id, file_path, size_bytes, created_at, updated_at, last_seen_at, last_seen_scan_id,
+location_mode, volume_id, relative_path, relative_key, path_style)
+VALUES (@movie_id, @file_path, @size_bytes, @created_at, @updated_at, @last_seen_at, @scan_id,
+@mode, @volume, @relative, @key, @style)
 RETURNING id;
 ";
 
@@ -315,8 +397,11 @@ UPDATE files SET
     updated_at        = @updated_at,
     last_seen_at      = @last_seen_at,
     last_seen_scan_id = @scan_id,
-    missing_since     = NULL
-WHERE id = @id;
+    missing_since     = NULL,
+    location_mode=@mode, volume_id=@volume, relative_path=@relative, relative_key=@key, path_style=@style,
+    location_revision=location_revision+1
+WHERE id = @id AND location_revision=@revision
+AND movie_id IS @original_movie AND episode_id IS @original_episode AND linked_by_hand=@original_hand;
 ";
 
         /// <summary>
@@ -329,7 +414,8 @@ WHERE id = @id;
             ScanFileIndex files,
             ScanCounts counts,
             long scanId,
-            string path)
+            string path,
+            string parsingPath)
         {
             var existing = files.ByPath(path);
 
@@ -352,6 +438,9 @@ WHERE id = @id;
             if (existing is { LinkedByHand: true, EpisodeId: long chosenEpisode })
                 return await RecordEpisodeFileAsync(
                     conn, tx, files, counts, scanId, path, existing, moved, chosenEpisode);
+            if (!moved && existing?.EpisodeId is long sameEpisode)
+                return await RecordEpisodeFileAsync(
+                    conn, tx, files, counts, scanId, path, existing, moved, sameEpisode);
 
             // An episode first, because the film parser has no idea what one is: handed
             // "Show.S01E02.mkv" it produces a film called something like "Show", and every episode
@@ -362,7 +451,7 @@ WHERE id = @id;
             // A file a person linked to a film by hand stays that film. Their say-so is better
             // evidence than a filename, which is the rule the film path already keeps.
             if (existing is not { LinkedByHand: true, MovieId: not null }
-                && EpisodeParser.TryParse(path, out var parsed))
+                && EpisodeParser.TryParse(parsingPath, out var parsed))
             {
                 var episodeId = await EpisodeForFileAsync(conn, tx, catalogue.Episodes, parsed);
                 return await RecordEpisodeFileAsync(
@@ -376,7 +465,7 @@ WHERE id = @id;
                 return await RecordEpisodeFileAsync(
                     conn, tx, files, counts, scanId, path, existing, moved, kept);
 
-            return await RecordFilmFileAsync(conn, tx, catalogue.Movies, files, scanId, path, existing, moved);
+            return await RecordFilmFileAsync(conn, tx, catalogue.Movies, files, scanId, path, existing, moved, parsingPath);
         }
 
         /// <summary>
@@ -395,7 +484,8 @@ WHERE id = @id;
             long scanId,
             string path,
             ScanFileRow? existing,
-            bool moved)
+            bool moved,
+            string? parsingPath = null)
         {
             var info = new FileInfo(path);
             var size = info.Exists ? info.Length : 0L;
@@ -407,7 +497,7 @@ WHERE id = @id;
             // used to be resolved by name alone, and a name that no longer matched the row it was
             // linked to — an old noisy title, a corrected one — inserted a new row for it while the
             // update below kept the file on the old one, so every such move left an empty film.
-            var movieId = await MovieForFileAsync(conn, tx, movies, existing, FilenameParser.Parse(path));
+            var movieId = await MovieForFileAsync(conn, tx, movies, existing, FilenameParser.Parse(parsingPath ?? path));
 
             var outcome = FileOutcome.Unchanged;
             if (moved)
@@ -419,6 +509,7 @@ WHERE id = @id;
                 outcome = FileOutcome.Updated;
             }
 
+            var binding = files.BindingFor(path);
             var parameters = new
             {
                 id = existing?.Id ?? 0L,
@@ -429,6 +520,9 @@ WHERE id = @id;
                 updated_at = modified,
                 last_seen_at = seenAt,
                 scan_id = scanId,
+                mode = binding.Mode, volume = binding.VolumeId, relative = binding.RelativePath,
+                key = binding.RelativeKey, style = binding.PathStyle, revision = existing?.Revision ?? 0,
+                original_movie = existing?.MovieId, original_episode = existing?.EpisodeId, original_hand = existing?.LinkedByHand ?? false,
             };
 
             if (existing is null)
@@ -442,14 +536,18 @@ WHERE id = @id;
                     FilePath = path,
                     SizeBytes = size,
                     UpdatedAt = modified,
+                    Mode = binding.Mode, VolumeId = binding.VolumeId, RelativePath = binding.RelativePath,
+                    RelativeKey = binding.RelativeKey, PathStyle = binding.PathStyle, Resolved = true,
                 });
 
                 return FileOutcome.Inserted;
             }
 
-            await conn.ExecuteAsync(UpdateFileSql, parameters, tx);
+            if (await conn.ExecuteAsync(UpdateFileSql, parameters, tx) != 1)
+                throw new LocationChangedException("The file binding changed during the scan.");
+            existing.Revision++;
 
-            if (outcome == FileOutcome.Moved) files.Repath(existing, path);
+            files.SetBinding(existing, binding);
 
             existing.MovieId ??= movieId;
             existing.SizeBytes = size;
@@ -461,11 +559,14 @@ WHERE id = @id;
         }
 
         /// <summary>The two in-memory indexes a scan files against, carried as one.</summary>
-        private sealed record Catalogue(MovieIndex Movies, EpisodeCatalogue Episodes);
+        private sealed class Catalogue(MovieIndex movies, EpisodeCatalogue episodes)
+        {
+            public MovieIndex Movies { get; set; } = movies;
+            public EpisodeCatalogue Episodes { get; set; } = episodes;
+        }
 
         /// <summary>
-        /// Writes a file read as an episode. Like <see cref="InsertFileSql"/>, an upsert, and for
-        /// the same reason.
+        /// Writes a new episode file with the same identity constraints as a film file.
         /// </summary>
         /// <remarks>
         /// <c>movie_id</c> is cleared rather than coalesced, because a file is a film or an episode
@@ -473,16 +574,10 @@ WHERE id = @id;
         /// is one a person made, and the caller does not come here for one of those.
         /// </remarks>
         private const string InsertEpisodeFileSql = @"
-INSERT INTO files (movie_id, episode_id, file_path, size_bytes, created_at, updated_at, last_seen_at, last_seen_scan_id)
-VALUES (NULL, @episode_id, @file_path, @size_bytes, @created_at, @updated_at, @last_seen_at, @scan_id)
-ON CONFLICT(file_path) DO UPDATE SET
-    movie_id          = NULL,
-    episode_id        = excluded.episode_id,
-    size_bytes        = excluded.size_bytes,
-    updated_at        = excluded.updated_at,
-    last_seen_at      = excluded.last_seen_at,
-    last_seen_scan_id = excluded.last_seen_scan_id,
-    missing_since     = NULL
+INSERT INTO files (movie_id, episode_id, file_path, size_bytes, created_at, updated_at, last_seen_at, last_seen_scan_id,
+location_mode, volume_id, relative_path, relative_key, path_style)
+VALUES (NULL, @episode_id, @file_path, @size_bytes, @created_at, @updated_at, @last_seen_at, @scan_id,
+@mode, @volume, @relative, @key, @style)
 RETURNING id;
 ";
 
@@ -501,8 +596,11 @@ UPDATE files SET
     updated_at        = @updated_at,
     last_seen_at      = @last_seen_at,
     last_seen_scan_id = @scan_id,
-    missing_since     = NULL
-WHERE id = @id;
+    missing_since     = NULL,
+    location_mode=@mode, volume_id=@volume, relative_path=@relative, relative_key=@key, path_style=@style,
+    location_revision=location_revision+1
+WHERE id = @id AND location_revision=@revision
+AND movie_id IS @original_movie AND episode_id IS @original_episode AND linked_by_hand=@original_hand;
 ";
 
         /// <summary>
@@ -545,6 +643,7 @@ WHERE id = @id;
                 outcome = FileOutcome.Updated;
             }
 
+            var binding = files.BindingFor(path);
             var parameters = new
             {
                 id = existing?.Id ?? 0L,
@@ -555,6 +654,9 @@ WHERE id = @id;
                 updated_at = modified,
                 last_seen_at = seenAt,
                 scan_id = scanId,
+                mode = binding.Mode, volume = binding.VolumeId, relative = binding.RelativePath,
+                key = binding.RelativeKey, style = binding.PathStyle, revision = existing?.Revision ?? 0,
+                original_movie = existing?.MovieId, original_episode = existing?.EpisodeId, original_hand = existing?.LinkedByHand ?? false,
             };
 
             if (existing is null)
@@ -568,16 +670,20 @@ WHERE id = @id;
                     FilePath = path,
                     SizeBytes = size,
                     UpdatedAt = modified,
+                    Mode = binding.Mode, VolumeId = binding.VolumeId, RelativePath = binding.RelativePath,
+                    RelativeKey = binding.RelativeKey, PathStyle = binding.PathStyle, Resolved = true,
                 });
 
                 return FileOutcome.Inserted;
             }
 
-            await conn.ExecuteAsync(UpdateEpisodeFileSql, parameters, tx);
+            if (await conn.ExecuteAsync(UpdateEpisodeFileSql, parameters, tx) != 1)
+                throw new LocationChangedException("The file binding changed during the scan.");
+            existing.Revision++;
 
             if (existing.MovieId is not null) counts.Refiled++;
 
-            if (outcome == FileOutcome.Moved) files.Repath(existing, path);
+            files.SetBinding(existing, binding);
 
             existing.MovieId = null;
             existing.EpisodeId = episodeId;
@@ -680,12 +786,13 @@ RETURNING id",
             ScanFileIndex files,
             IReadOnlyCollection<string> walked,
             IReadOnlyCollection<string> unreadable,
-            DateTimeOffset markedAt)
+            DateTimeOffset markedAt,
+            Func<Task> verifyRoots)
         {
             var gone = files.Unseen(walked, unreadable);
             if (gone.Count == 0) return 0;
 
-            const string sql = "UPDATE files SET missing_since = @missing_since WHERE id = @id AND missing_since IS NULL;";
+            const string sql = "UPDATE files SET missing_since = @missing_since WHERE id = @id AND missing_since IS NULL AND location_revision=@revision;";
             var stamp = ScanSessions.Timestamp(markedAt);
 
             foreach (var batch in gone.Chunk(FilesPerTransaction))
@@ -694,11 +801,14 @@ RETURNING id",
                     conn,
                     async _ =>
                     {
+                        await verifyRoots();
                         using var tx = conn.BeginTransaction();
-                        await conn.ExecuteAsync(
+                        var changed = await conn.ExecuteAsync(
                             sql,
-                            batch.Select(row => new { id = row.Id, missing_since = stamp }),
+                            batch.Select(row => new { id = row.Id, missing_since = stamp, revision = row.Revision }),
                             tx);
+                        if (changed != batch.Length)
+                            throw new LocationChangedException("File locations changed before missing-file marking. Scan again.");
                         tx.Commit();
                     },
                     CancellationToken.None);
@@ -918,9 +1028,9 @@ RETURNING id",
         /// the Jellyfin server. Returns the id of the movie row it belongs to.
         ///
         /// It exists so a download is playable the instant it finishes rather than after the user
-        /// works out that a scan is what makes a film appear. It writes through the same upsert and
-        /// the same title index a scan uses, so the later scan that also walks the download folder
-        /// agrees with it: the path is the key, so no second file row appears, and the title
+        /// works out that a scan is what makes a film appear. It writes through the same binding
+        /// and title indexes a scan uses, so a later scan of the download folder agrees with it:
+        /// volume-relative identity prevents a second file row, and the title
         /// resolves through <see cref="MovieIndex"/>, so a download of a film already in the
         /// library links to the row that is already there rather than forking it.
         ///
@@ -928,35 +1038,24 @@ RETURNING id",
         /// not a scan, and borrowing an id from one would put this row in a session that never
         /// walked past it. <c>last_seen_at</c> is stamped, because the file is demonstrably there.
         /// </summary>
-        public static async Task<long> RecordSingleFileAsync(SqliteConnection conn, string path)
+        public static async Task<long> RecordSingleFileAsync(SqliteConnection conn, string path,
+            IVolumeSnapshotSource? volumes = null, CancellationToken ct = default)
         {
             if (conn is null) throw new ArgumentNullException(nameof(conn));
             if (string.IsNullOrWhiteSpace(path)) throw new ArgumentException("A path is required.", nameof(path));
 
-            var movies = await LoadMovieIndexAsync(conn);
-
-            var info = new FileInfo(path);
-            var size = info.Exists ? info.Length : 0L;
-            var created = info.Exists ? info.CreationTimeUtc.ToString("o") : null;
-            var modified = info.Exists ? info.LastWriteTimeUtc.ToString("o") : null;
-
-            using var tx = conn.BeginTransaction();
-
-            var movieId = await EnsureMovieAsync(conn, tx, movies, FilenameParser.Parse(path));
-
-            await conn.ExecuteScalarAsync<long>(InsertFileSql, new
+            var snapshot = await (volumes ?? VolumeSnapshotSource.Shared).CaptureAsync(new[] { path }, ct);
+            return await DatabaseWriteLane.RunAsync(conn, async _ =>
             {
-                movie_id = movieId,
-                file_path = path,
-                size_bytes = size,
-                created_at = created,
-                updated_at = modified,
-                last_seen_at = ScanSessions.Timestamp(DateTimeOffset.UtcNow),
-                scan_id = (long?)null,
-            }, tx);
-
-            tx.Commit();
-            return movieId;
+                var movies = await LoadMovieIndexAsync(conn);
+                var files = await ScanFileIndex.LoadAsync(conn, snapshot);
+                using var tx = conn.BeginTransaction();
+                await RecordFilmFileAsync(conn, tx, movies, files, 0, path, files.ByPath(path), false);
+                var file = files.ByPath(path) ?? throw new InvalidOperationException("The downloaded file was not recorded.");
+                await conn.ExecuteAsync("UPDATE files SET last_seen_scan_id=NULL WHERE id=@Id", new { file.Id }, tx);
+                tx.Commit();
+                return file.MovieId ?? throw new InvalidOperationException("The download has no movie association.");
+            }, ct);
         }
 
         /// <summary>
@@ -1019,7 +1118,15 @@ RETURNING id",
 
                 string[] subDirs = Array.Empty<string>();
                 try { subDirs = Directory.GetDirectories(dir); } catch { refused = true; }
-                foreach (var sd in subDirs) stack.Push(sd);
+                foreach (var sd in subDirs)
+                {
+                    if ((File.GetAttributes(sd) & FileAttributes.ReparsePoint) != 0)
+                    {
+                        unreadable?.Add(sd);
+                        continue;
+                    }
+                    stack.Push(sd);
+                }
 
                 string[] files = Array.Empty<string>();
                 try { files = Directory.GetFiles(dir); } catch { refused = true; }

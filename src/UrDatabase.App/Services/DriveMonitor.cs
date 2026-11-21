@@ -31,17 +31,21 @@ namespace UrDatabase.Services
         private readonly IDriveEnumerator _drives;
         private readonly TimeSpan _timeout;
         private readonly Func<DateTime> _clock;
+        private readonly IVolumeSnapshotSource _snapshots;
 
         public DriveMonitor(
             IDriveProbe? probe = null,
             TimeSpan? timeout = null,
             IDriveEnumerator? drives = null,
-            Func<DateTime>? clock = null)
+            Func<DateTime>? clock = null,
+            IVolumeSnapshotSource? volumes = null)
         {
             _probe = probe ?? FileSystemDriveProbe.Instance;
             _drives = drives ?? SystemDriveEnumerator.Instance;
             _timeout = timeout ?? DefaultTimeout;
             _clock = clock ?? (() => DateTime.UtcNow);
+            _snapshots = volumes ?? (probe is null && drives is null && timeout is null
+                ? VolumeSnapshotSource.Shared : new VolumeSnapshotSource(_drives, _probe, _timeout));
         }
 
         /// <summary>
@@ -86,32 +90,20 @@ namespace UrDatabase.Services
 
             return Task.Run(async () =>
             {
-                var usages = DriveVolumes.Collect(folders, ReadCataloguedFiles(databasePath));
                 var known = ReadKnownDrives(databasePath);
-                var (listed, complete) = await EnumerateAsync(ct).ConfigureAwait(false);
-
-                // Without the list, each remembered disk is looked for where it was last seen, as a
-                // disk. Nothing else can be said about it — see DriveInventory.Build.
-                var mounted = complete
-                    ? listed
-                    : known.Select(k => new MountedVolume(k.LastRoot, DriveKind.Fixed))
-                        .GroupBy(v => v.Root, StringComparer.OrdinalIgnoreCase)
-                        .Select(g => g.First())
-                        .ToList();
-
-                var roots = mounted.Select(v => v.Root)
-                    .Concat(usages.Select(u => u.Root))
-                    .Distinct(StringComparer.OrdinalIgnoreCase)
-                    .ToList();
-
-                var outcomes = await Task.WhenAll(roots.Select(r => ProbeAsync(r, ct))).ConfigureAwait(false);
-                ct.ThrowIfCancellationRequested();
-
-                var probes = new Dictionary<string, DriveProbeOutcome>(StringComparer.OrdinalIgnoreCase);
-                for (var i = 0; i < roots.Count; i++) probes[roots[i]] = outcomes[i];
-
                 var canRemember = CatalogueExists(databasePath);
-                var inventory = DriveInventory.Build(mounted, probes, usages, known, canRemember, _clock(), complete);
+                IReadOnlyList<LocatedFile> files = Array.Empty<LocatedFile>();
+                IReadOnlyList<LibraryRoot> roots = folders.Select(f => new LibraryRoot { Token = f, FilePath = PlatformPaths.Expand(f) }).ToList();
+                if (canRemember)
+                {
+                    using var conn = Database.Open(databasePath!);
+                    files = FileLocations.Files(conn);
+                    var stored = FileLocations.Roots(conn);
+                    roots = roots.SelectMany(r => new[] { FileLocations.Root(conn, "watch", r.Token) ?? r }
+                        .Concat(stored.Where(s => s.Kind == "watch" && s.Token == r.Token && s.ScopePath.Length > 0))).ToList();
+                }
+                var snapshot = await _snapshots.CaptureAsync(roots.Select(r => r.FilePath).Concat(files.Select(f => f.FilePath)), ct);
+                var inventory = DriveInventory.BuildBound(snapshot, files, roots, known, canRemember, _clock());
 
                 if (canRemember && inventory.Seen.Count > 0)
                     await RememberAsync(databasePath!, inventory.Seen, ct).ConfigureAwait(false);

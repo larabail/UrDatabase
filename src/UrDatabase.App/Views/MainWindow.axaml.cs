@@ -294,9 +294,15 @@ namespace UrDatabase.Views
         /// </summary>
         private bool _postersDrained;
 
-        public MainWindow()
+        private readonly IVolumeSnapshotSource _volumes;
+        public MainWindow() : this(VolumeSnapshotSource.Shared) { }
+
+        public MainWindow(IVolumeSnapshotSource volumes)
         {
+            _volumes = volumes;
             InitializeComponent();
+            DetailsView.Volumes = volumes;
+            SeriesView.RecoverFile = RecoverFileAsync;
 
             ApplyConfig();
 
@@ -486,7 +492,7 @@ namespace UrDatabase.Views
                 _jellyfin,
                 onFailure: message => Dispatcher.UIThread.Post(() => SetStatus(message)));
 
-            _localSeries = new LocalSeriesLoader(_dbPath, CreateSeriesTmdb);
+            _localSeries = new LocalSeriesLoader(_dbPath, CreateSeriesTmdb, _volumes);
             if (JellyfinButton is not null) JellyfinButton.IsVisible = _jellyfin is not null;
 
             // The catalogue may have just moved.
@@ -1119,7 +1125,7 @@ namespace UrDatabase.Views
             OrganiseSeriesButton.IsEnabled = false;
             try
             {
-                if (await SeriesGroupingWindow.ShowAsync(this, _dbPath))
+                if (await SeriesGroupingWindow.ShowAsync(this, _dbPath, _volumes))
                     await _searchLoop.RefreshAsync(SearchBox.Text);
             }
             catch (Exception ex)
@@ -1516,10 +1522,10 @@ namespace UrDatabase.Views
         /// </summary>
         private Task<ScanResult> RunScanAsync(CancellationToken ct)
         {
-            var folders = _config.WatchFolders ?? Array.Empty<string>();
+            var folders = _config.WatchFolderTokens;
             var progress = new Progress<string>(msg => Dispatcher.UIThread.Post(() => SetStatus(msg)));
 
-            return Task.Run(() => ScanService.ScanLibraryAsync(_dbPath, folders, progress, ct), ct);
+            return Task.Run(() => ScanService.ScanLibraryAsync(_dbPath, folders, progress, ct, _volumes), ct);
         }
 
         private async void JellyfinSyncButton_Click(object? sender, RoutedEventArgs e)
@@ -1739,7 +1745,7 @@ namespace UrDatabase.Views
                 SetStatus("Wait for the refresh to finish before changing settings.");
                 return;
             }
-            var saved = await SetupWindow.ShowDialogAsync(this);
+            var saved = await SetupWindow.ShowDialogAsync(this, _volumes);
             if (saved is null) return;
 
             ApplyConfig();
@@ -1772,8 +1778,8 @@ namespace UrDatabase.Views
         {
             try
             {
-                var reports = await new DriveMonitor()
-                    .CheckDrivesAsync(_config.WatchFolders, _dbPath, _cts.Token);
+                var reports = await new DriveMonitor(volumes: _volumes)
+                    .CheckDrivesAsync(_config.WatchFolderTokens, _dbPath, _cts.Token);
 
                 var headline = DriveStatusText.Headline(reports);
                 if (headline is null)
@@ -1817,13 +1823,27 @@ namespace UrDatabase.Views
                 var reports = await CheckDrivesAsync();
                 if (reports is null) return;
 
-                await DrivesWindow.ShowAsync(this, reports, CheckDrivesAsync, ForgetDriveAsync);
+                await DrivesWindow.ShowAsync(this, reports, CheckDrivesAsync, ForgetDriveAsync, () => RecoverFileAsync(null));
             }
+
             finally
             {
                 DrivesButton.IsEnabled = true;
                 DriveDetailsButton.IsEnabled = true;
             }
+        }
+
+        private async Task<bool> RecoverFileAsync(long? fileId)
+        {
+            if (_scanning || _syncing || _refreshing)
+            {
+                SetStatus("Wait for the catalogue operation to finish before relocating files.");
+                return false;
+            }
+            if (!await DiskRecoveryWindow.ShowAsync(this, _dbPath, _config, _volumes, fileId)) return false;
+            await _searchLoop.RefreshAsync(SearchBox.Text);
+            await CheckDrivesAsync();
+            return true;
         }
 
         /// <summary>
@@ -2291,10 +2311,14 @@ namespace UrDatabase.Views
 
         private async Task LoadLocalFileAsync(MovieDetailsVm vm, UiMovie movie, DetailLoading loading)
         {
-            await loading.RunAsync("Local file", ct => Task.Run(() => FindPlayTargetForMovie(movie), ct), target =>
+            await loading.RunAsync("Local file",
+                ct => PlayTargetResolver.ResolveAsync(_dbPath, movie.Id, movie.Title, movie.Year, _volumes, ct), target =>
             {
                 vm.FilePath = target.FilePath;
                 vm.FileMatch = target.Kind;
+                vm.FileId = target.FileId;
+                vm.FileLocation = target.Location;
+                vm.SavedFilePath = target.SavedPath;
             });
 
             if (loading.IsCancellationRequested) return;
@@ -2509,8 +2533,14 @@ namespace UrDatabase.Views
         private async Task LoadDownloadedFileAsync(MovieDetailsVm vm, DetailLoading loading)
         {
             await loading.RunAsync("Downloaded file",
-                ct => Task.Run(() => JellyfinDownload.FindExisting(vm.DownloadFolder, vm.Title, vm.Year), ct),
-                path => vm.DownloadedPath = path);
+                ct => DownloadedMedia.FindAsync(_dbPath, vm.Title, vm.Year, _volumes, ct),
+                target =>
+                {
+                    vm.DownloadedPath = target.Kind == PlayTargetKind.Linked ? target.FilePath : null;
+                    vm.FileId = target.FileId;
+                    vm.FileLocation = target.Location;
+                    vm.SavedFilePath = target.SavedPath;
+                });
 
             if (loading.IsCancellationRequested) return;
             vm.IsLoadingFile = false;
@@ -3182,28 +3212,5 @@ namespace UrDatabase.Views
             }
         }
 
-        /// <summary>
-        /// What Play will open for a local film, and on what evidence. The catalogue's own
-        /// <c>files.movie_id</c> link decides it; a filename is only ever a suggestion the user
-        /// gets to confirm. This used to load every path in the table and return the first name
-        /// containing the title, which is how a film called <em>It</em> played
-        /// <c>Spirited Away.mkv</c>.
-        ///
-        /// A failure to read the database is not worth a dialog: the details window says the film
-        /// has no file linked, which is the same thing from where the user is standing.
-        /// </summary>
-        private PlayTarget FindPlayTargetForMovie(UiMovie m)
-        {
-            try
-            {
-                using var conn = Database.Open(_dbPath);
-                return PlayTargetResolver.Resolve(conn, m.Id, m.Title, m.Year);
-            }
-            catch (Exception ex)
-            {
-                AppLog.Write("app.log", $"could not resolve a file for movie {m.Id}: {ex.Message}");
-                return PlayTarget.None;
-            }
-        }
     }
 }

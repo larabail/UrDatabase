@@ -94,10 +94,12 @@ namespace UrDatabase.Services
             int? year,
             string? moviesPath,
             IProgress<JellyfinUploadProgress>? progress = null,
-            CancellationToken ct = default)
+            CancellationToken ct = default,
+            Func<CancellationToken, Task>? validateSource = null)
         {
             // Asked before anything opens a connection: a file that was never going to be sent
             // should not cost a handshake, and the answer does not depend on the server.
+            if (validateSource is not null) await validateSource(ct);
             var refusal = JellyfinUpload.DescribeRefusal(localPath);
             if (refusal is not null) throw new JellyfinException(refusal);
 
@@ -134,6 +136,7 @@ namespace UrDatabase.Services
             // person has already waited an hour and is least inclined to go and look.
             try
             {
+                if (validateSource is not null) await validateSource(ct);
                 await using (var source = new FileStream(
                     localPath!,
                     FileMode.Open,

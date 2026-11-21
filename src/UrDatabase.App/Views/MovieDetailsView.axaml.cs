@@ -65,6 +65,7 @@ namespace UrDatabase.Views
         /// is on screen and simply does not outlive it.
         /// </summary>
         private string? _dbPath;
+        public IVolumeSnapshotSource Volumes { get; set; } = VolumeSnapshotSource.Shared;
 
         /// <summary>Completed when the screen is dismissed. Null while nothing is being shown.</summary>
         private TaskCompletionSource? _closed;
@@ -653,6 +654,7 @@ namespace UrDatabase.Views
             ShowMissingCredits(cast, crew, vm);
 
             LinkFileButton.IsVisible = !vm.IsRemote;
+            RelocateButton.IsVisible = !vm.IsRemote || vm.DownloadedPath is not null;
             CorrectMatchButton.IsVisible = !vm.IsRemote;
 
             UpdateWatchlistButton();
@@ -693,7 +695,11 @@ namespace UrDatabase.Views
             FlagsList.ItemsSource = MediaFlags.For(vm.Media);
             _mediaNotice = "Reading local media tracks…";
             UpdateLoadNotice();
-            var load = new MovieMediaLoad(vm, _localMedia, _cts.Token, force, previous);
+            var load = new MovieMediaLoad(vm, _localMedia, _cts.Token, force, previous,
+                token => vm.FileId is long fileId && _dbPath is not null
+                    ? FileLocations.ResolveFileAsync(_dbPath, fileId, Volumes, token)
+                    : Task.FromResult(new LocationResult(LocationState.NeedsConfirmation, null,
+                        "Confirm the disk before reading local tracks.")));
             _mediaLoad = load;
             _mediaTask = CompleteLocalMediaAsync(load);
             return _mediaTask;
@@ -1123,12 +1129,14 @@ namespace UrDatabase.Views
         private async Task PlayAsync(bool fromTheStart)
         {
             if (Vm is null) return;
+            var current = Vm;
+            if (!await RefreshFileLocationAsync(current)) return;
 
             // Re-asked here rather than trusted from when the link was made: the path is ordinary
             // local state, and a catalogue restored from elsewhere or written by an older build
             // can name a file that is missing, or one the operating system would execute rather
             // than play.
-            var refusal = PlayPrompts.DescribeRefusal(Vm);
+            var refusal = PlayPrompts.DescribeRefusal(Vm, _ => true);
             if (refusal is not null)
             {
                 await MessageBoxWindow.ShowAsync(Owner(), "UrDatabase", refusal);
@@ -1149,7 +1157,7 @@ namespace UrDatabase.Views
 
             try
             {
-                FileLauncher.Open(Vm.FilePath!);
+                await Task.Run(() => FileLauncher.Open(current.FilePath!));
             }
             catch (Exception ex)
             {
@@ -1171,7 +1179,7 @@ namespace UrDatabase.Views
 
             if (confirmed)
             {
-                RememberLink(Vm!.FilePath!);
+                if (!await RememberLinkAsync(Vm!.FilePath!)) return false;
                 UpdateFileNote();
             }
 
@@ -1190,11 +1198,11 @@ namespace UrDatabase.Views
 
             // The point of having downloaded it: the local copy plays whether or not the server
             // is there, so it is preferred over a stream that may be about to fail.
-            if (!string.IsNullOrWhiteSpace(Vm.DownloadedPath) && File.Exists(Vm.DownloadedPath))
+            if (Vm.DownloadedPath is string downloaded && !string.IsNullOrWhiteSpace(downloaded))
             {
                 try
                 {
-                    FileLauncher.Open(Vm.DownloadedPath);
+                    await Task.Run(() => FileLauncher.Open(downloaded));
                 }
                 catch (Exception ex)
                 {
@@ -1291,16 +1299,41 @@ namespace UrDatabase.Views
             try
             {
                 // The first point in this screen's life where the network is needed at all.
+                if (_dbPath is null || _config is null) throw new IOException("The download catalogue is unavailable.");
+                var configured = _config.LocationRoots().Single(r => r.Kind == "download");
+                var destination = await FileLocations.ResolveRootAsync(_dbPath, configured, Volumes, true, _downloadCts.Token);
+                if (destination.State == LocationState.NeedsConfirmation)
+                {
+                    if (!await MessageBoxWindow.ConfirmAsync(Owner(), "Confirm the download location",
+                            $"Use {configured.Path} on its currently connected disk for downloads? Existing legacy files require a recovery preview instead.",
+                            "Confirm folder")) return;
+                    await Task.Run(async () =>
+                    {
+                        var snapshot = await Volumes.CaptureAsync(new[] { configured.Path }, _downloadCts.Token);
+                        using var conn = Database.Open(_dbPath);
+                        await FileLocations.ConfirmNewRootAsync(conn, configured.Kind, configured.Token, configured.Path,
+                            snapshot, ct: _downloadCts.Token);
+                    });
+                    destination = await FileLocations.ResolveRootAsync(_dbPath, configured, Volumes, true, _downloadCts.Token);
+                }
+                if (!destination.Available) throw new IOException(destination.Message);
+                async Task ValidateDestination(CancellationToken token)
+                {
+                    var current = await FileLocations.ResolveRootAsync(_dbPath, configured, Volumes, true, token);
+                    if (!current.Available || current.Path != destination.Path || current.Identity != destination.Identity)
+                        throw new IOException("The download disk or folder changed. Reopen the film and retry.");
+                }
                 await _jellyfin.ConnectAsync(_downloadCts.Token);
 
                 var result = await new JellyfinDownloader(_jellyfin).DownloadAsync(
                     vm.RemoteId!,
                     vm.Title,
                     vm.Year,
-                    vm.DownloadFolder,
+                    destination.Path,
                     container: null,
                     progress: progress,
-                    ct: _downloadCts.Token);
+                    ct: _downloadCts.Token,
+                    validateDestination: ValidateDestination);
 
                 vm.DownloadedPath = result.Path;
                 if (!result.AlreadyExisted) DownloadedSomething = true;
@@ -1359,7 +1392,10 @@ namespace UrDatabase.Views
             try
             {
                 using var conn = Database.Open(_dbPath);
-                var movieId = await ScanService.RecordSingleFileAsync(conn, path);
+                var movieId = await ScanService.RecordSingleFileAsync(conn, path, Volumes);
+                var snapshot = await Volumes.CaptureAsync(new[] { path });
+                var file = FileLocations.Match(conn, FileLocations.Capture(path, snapshot, true));
+                if (Vm is not null) Vm.FileId = file?.Id;
 
                 // The film now has a row of its own. Move its Watchlist entry onto that row now,
                 // while the server id is still at hand. See Watchlist.Adoptions.
@@ -1369,6 +1405,7 @@ namespace UrDatabase.Views
             catch (Exception ex)
             {
                 AppLog.Write("jellyfin.log", $"downloaded film not catalogued: {ex.Message}");
+                throw new IOException("The download finished, but its catalogue link could not be saved. " + ex.Message, ex);
             }
         }
 
@@ -1407,10 +1444,11 @@ namespace UrDatabase.Views
             var vm = Vm;
             var settings = SftpSettings;
             if (vm is null || _refreshCts is not null || _changingMovie || settings is null || _jellyfin is null) return;
+            if (!await RefreshFileLocationAsync(vm)) return;
 
             // Asked again here rather than trusted from when the button was drawn: the linked file
             // is ordinary local state and may have been moved or deleted since.
-            var refusal = UploadPrompts.DescribeRefusal(vm);
+            var refusal = UploadPrompts.DescribeRefusal(vm, _ => true);
             if (refusal is not null)
             {
                 await MessageBoxWindow.ShowAsync(Owner(), "UrDatabase", refusal);
@@ -1471,7 +1509,15 @@ namespace UrDatabase.Views
                     vm.Year,
                     settings.MoviesPath,
                     progress,
-                    _uploadCts.Token);
+                    _uploadCts.Token,
+                    validateSource: async token =>
+                    {
+                        if (_dbPath is null || vm.FileId is not long fileId)
+                            throw new IOException("Confirm the file's disk before uploading.");
+                        var current = await FileLocations.ResolveFileAsync(_dbPath, fileId, Volumes, token);
+                        if (!current.Available || current.Path != vm.FilePath)
+                            throw new IOException("The source disk or file changed. Reopen the film and retry.");
+                    });
 
                 // The server has it now, which is what hides the button and what the facts row
                 // above has to agree with. Deliberately not a signal to the library behind this
@@ -1546,20 +1592,27 @@ namespace UrDatabase.Views
                 if (string.IsNullOrWhiteSpace(path)) return;
 
                 // The picker filter is advisory, so check the chosen path before linking it.
-                var refusal = PlayTargetResolver.DescribeLinkRefusal(path);
+                var refusal = await Task.Run(() => PlayTargetResolver.DescribeLinkRefusal(path))
+                    .WaitAsync(DriveMonitor.DefaultTimeout, _cts?.Token ?? default);
+                if (!ReferenceEquals(Vm, vm) || _cts?.IsCancellationRequested != false) return;
                 if (refusal is not null)
                 {
                     await MessageBoxWindow.ShowAsync(Owner(), "UrDatabase", refusal);
                     return;
                 }
 
-                vm.FilePath = path;
-                vm.FileMatch = PlayTargetKind.Linked;
-                RememberLink(path);
+                if (!await RememberLinkAsync(path)) return;
+                if (!await RefreshFileLocationAsync(vm)) return;
                 Bind(vm);
 
                 // A film that had no file has one now, so the banner saying otherwise goes.
                 _ = LoadStandingAsync(vm, _cts?.Token ?? default);
+            }
+            catch (Exception ex)
+            {
+                AppLog.Write("drives.log", $"Could not select a media file: {ex.Message}");
+                if (ReferenceEquals(Vm, vm))
+                    await MessageBoxWindow.ShowAsync(Owner(), "File not linked", ex.Message);
             }
             finally
             {
@@ -1580,20 +1633,86 @@ namespace UrDatabase.Views
         /// already playable on this screen, and interrupting them to say the choice will not be
         /// remembered helps nobody mid-film.
         /// </summary>
-        private void RememberLink(string path)
+        private async Task<bool> RememberLinkAsync(string path)
         {
-            if (Vm is null || string.IsNullOrWhiteSpace(_dbPath) || Vm.LocalId <= 0) return;
+            var vm = Vm;
+            if (vm is null || string.IsNullOrWhiteSpace(_dbPath) || vm.LocalId <= 0) return false;
 
             try
             {
-                using var conn = Database.Open(_dbPath);
-                PlayTargetResolver.LinkFile(conn, Vm.LocalId, path);
-                Vm.FileMatch = PlayTargetKind.Linked;
+                using var deadline = CancellationTokenSource.CreateLinkedTokenSource(_cts?.Token ?? default);
+                deadline.CancelAfter(DriveMonitor.DefaultTimeout + TimeSpan.FromSeconds(2));
+                var token = deadline.Token;
+                await Task.Run(async () =>
+                {
+                    var snapshot = await Volumes.CaptureAsync(new[] { path }, token);
+                    using var conn = Database.Open(_dbPath);
+                    await PlayTargetResolver.LinkFileAsync(conn, vm.LocalId, path, snapshot, token);
+                }, token).WaitAsync(token);
+                if (!ReferenceEquals(Vm, vm)) return false;
+                vm.FileMatch = PlayTargetKind.Linked;
+                return true;
             }
             catch (Exception ex)
             {
-                AppLog.Write("app.log", $"could not link {path} to movie {Vm.LocalId}: {ex.Message}");
+                AppLog.Write("app.log", $"could not link {path} to movie {vm.LocalId}: {ex.Message}");
+                await MessageBoxWindow.ShowAsync(Owner(), "Could not save the file link", ex.Message);
+                return false;
             }
+        }
+
+        private async Task<bool> RefreshFileLocationAsync(MovieDetailsVm vm)
+        {
+            if (string.IsNullOrWhiteSpace(_dbPath)) return false;
+            try
+            {
+                if (vm.IsRemote && vm.DownloadedPath is null) return true;
+                if (vm.IsRemote)
+                {
+                    if (vm.FileId is not long fileId)
+                        throw new IOException("This downloaded copy needs its disk confirmed in Drives before it can be opened.");
+                    var location = await FileLocations.ResolveFileAsync(_dbPath, fileId, Volumes, _cts?.Token ?? default);
+                    if (!ReferenceEquals(Vm, vm)) return false;
+                    vm.DownloadedPath = location.Path;
+                    vm.FileLocation = location;
+                }
+                else
+                {
+                    var target = await PlayTargetResolver.ResolveAsync(_dbPath, vm.LocalId, vm.Title, vm.Year, Volumes, _cts?.Token ?? default);
+                    if (!ReferenceEquals(Vm, vm)) return false;
+                    vm.FilePath = target.FilePath;
+                    vm.FileMatch = target.Kind;
+                    vm.FileId = target.FileId;
+                    vm.FileLocation = target.Location;
+                    vm.SavedFilePath = target.SavedPath;
+                }
+                if (vm.FileLocation is { Available: false } unavailable)
+                {
+                    UpdateFileNote();
+                    await MessageBoxWindow.ShowAsync(Owner(), "File unavailable", unavailable.Message + " Use Relocate disk/folder to recover the links.");
+                    return false;
+                }
+                return true;
+            }
+            catch (Exception ex)
+            {
+                AppLog.Write("drives.log", $"Could not resolve a media file: {ex.Message}");
+                await MessageBoxWindow.ShowAsync(Owner(), "File unavailable", ex.Message);
+                return false;
+            }
+        }
+
+        private async void Relocate_Click(object? sender, RoutedEventArgs e)
+        {
+            var vm = Vm;
+            if (vm is null || _dbPath is null || _config is null || Owner() is not Window owner
+                || _uploadCts is not null || _downloadCts is not null || _catalogueBusy?.Invoke() == true) return;
+            if (!await DiskRecoveryWindow.ShowAsync(owner, _dbPath, _config, Volumes, vm.FileId)) return;
+            DownloadedSomething = true;
+            _mediaLoad?.Dispose();
+            _mediaLoad = null;
+            await RefreshFileLocationAsync(vm);
+            if (ReferenceEquals(Vm, vm)) Bind(vm);
         }
 
         /// <summary>
