@@ -97,6 +97,19 @@ namespace UrDatabase.Tests
             }
         }
 
+        [Fact]
+        public void A_selected_genre_stays_available_at_zero_when_a_problem_filter_empties_it()
+        {
+            var film = new UiMovie { Id = 1, Title = "Clean drama", Genres = "Drama" };
+            var visible = new LibraryRefinement { ProblemsOnly = true }.Apply(new[] { film });
+            var chips = LibraryGrouping.BuildGenreChips(visible, "Drama");
+
+            Assert.Equal(new[] { "All", "Drama" }, chips.Select(c => c.Name));
+            Assert.All(chips, chip => Assert.Equal(0, chip.Count));
+            Assert.Empty(LibraryGrouping.ItemsForGenre(visible, "Drama"));
+            Assert.Single(LibraryGrouping.ItemsForGenre(new[] { film }, LibraryGrouping.AllGenres));
+        }
+
         /// <summary>
         /// "1 films" is the sort of thing that survives review for years, so the singular is
         /// decided once, here, rather than in a format string in the view.

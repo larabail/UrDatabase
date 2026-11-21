@@ -14,7 +14,9 @@ public class SeriesGroupingWiringTests
         var start = source.IndexOf("private async void OrganiseSeries_Click(", StringComparison.Ordinal);
         var method = source[start..source.IndexOf("private void PersonBox_TextChanged(", start, StringComparison.Ordinal)];
         Assert.Contains("SeriesGroupingWindow.ShowAsync(this, _dbPath, _volumes)", method);
+        Assert.Contains("is { } message", method);
         Assert.Contains("_searchLoop.RefreshAsync(SearchBox.Text)", method);
+        Assert.Contains("SetStatus(message)", method);
         Assert.Contains("_scanning || _syncing", method);
     }
 
@@ -29,6 +31,9 @@ public class SeriesGroupingWiringTests
         Assert.True(source.IndexOf("MessageBoxWindow.ConfirmAsync(", StringComparison.Ordinal)
             < source.IndexOf("LocalSeriesGrouping.Assign(", StringComparison.Ordinal));
         Assert.Contains("DatabaseWriteLane.RunAsync(", source);
+        Assert.Contains("Task<string?> ShowAsync(Window owner, string dbPath, IVolumeSnapshotSource? volumes", source);
+        Assert.Contains("LocalSeriesGrouping.Files(conn, snapshot)", source);
+        Assert.Contains("_selection.SelectAllResults(_selection.AllSelected != true)", source);
     }
 
     [Fact]

@@ -437,6 +437,75 @@ WHEN NEW.scope_path<>'' BEGIN SELECT RAISE(ABORT,'scope failure'); END");
         Assert.Equal(1, FileLocations.Root(conn, "watch", parent, child)!.Revision);
     }
 
+    [Fact]
+    public async Task Recovered_files_support_filtered_bulk_grouping_without_losing_problem_reports()
+    {
+        var problemFile = Legacy("Films/Problem.mkv");
+        var keepFile = Legacy("Films/Keep.mkv");
+        var first = Legacy("Group/Source.S01E01.mkv");
+        var second = Legacy("Group/Source.S01E02.mkv");
+        long problemMovie;
+        using (var conn = Database.Open(Db))
+        {
+            problemMovie = FileLocations.File(conn, problemFile)!.MovieId!.Value;
+            conn.Execute("UPDATE movies SET title='Problem film', genres='Drama' WHERE id=@problemMovie", new { problemMovie });
+            FilmProblemStore.Save(conn, new($"local:{problemMovie}", new[] { FilmProblemKind.Audio }, "Preserve this report"));
+        }
+        await Recovery.CommitAsync(await Recovery.PreviewAsync(new(Old, New)));
+        using var reopened = Database.Open(Db);
+        var files = LocalSeriesGrouping.Files(reopened, _volumes.Snapshot);
+        Assert.All(files, f => Assert.StartsWith(New, f.FilePath));
+        using var selection = new SeriesGroupingSelection(files);
+        files.Single(f => f.Id == keepFile).IsSelected = true;
+        selection.Filter("Group");
+        Assert.Equal(2, selection.Results.Count);
+        selection.SelectAllResults(true);
+        Assert.Equal(3, selection.SelectedCount);
+        selection.Results.Single(f => f.Id == first).EpisodeText = "42";
+        selection.SelectAllResults(false);
+        Assert.True(files.Single(f => f.Id == keepFile).IsSelected);
+        Assert.Equal("42", files.Single(f => f.Id == first).EpisodeText);
+        files.Single(f => f.Id == keepFile).IsSelected = false;
+        selection.SelectAllResults(true);
+        var series = LocalSeriesGrouping.Assign(reopened, null, "Grouped after recovery",
+            files.Where(f => f.IsSelected).Select(f => f.Assignment()).ToArray());
+        var episodes = await new LocalSeriesLoader(Db, volumes: _volumes).LoadAsync(series);
+        Assert.Equal(new long?[] { first, second }, episodes.OrderBy(e => e.FileId).Select(e => e.FileId));
+        Assert.All(episodes, e => Assert.True(e.IsAvailable));
+        Assert.All(FileLocations.Files(reopened), f => Assert.Equal("serial:TEST-A", f.VolumeId));
+
+        var loader = new LibraryLoader(new MovieRepository(Db));
+        var filter = new LibraryRefinement { ProblemsOnly = true };
+        var shown = filter.Apply(loader.Load("problem").All);
+        Assert.Equal($"local:{problemMovie}", Assert.Single(shown).Key);
+        Assert.Equal("Preserve this report", shown[0].ProblemReport!.Note);
+        Assert.Equal(0, LibraryGrouping.BuildGenreChips(shown, "Comedy").Single(c => c.Name == "Comedy").Count);
+        Assert.Equal(4, (await new ScanService(_volumes).ScanAsync(reopened, new[] { Old })).FilesSeen);
+        Assert.Equal($"local:{problemMovie}", Assert.Single(filter.Apply(loader.Load(null).All)).Key);
+    }
+
+    [Fact]
+    public async Task Bulk_selection_filters_current_paths_after_another_remount()
+    {
+        var id = Legacy("Source.S01E01.mkv");
+        await Recovery.CommitAsync(await Recovery.PreviewAsync(new(Old, New)));
+        var renamed = Path.Combine(_root, "Remounted again");
+        Directory.Move(New, renamed);
+        _volumes.Snapshot = new(new[] { TestVolumes.Mount(renamed, "TEST-A") }, true);
+        using var conn = Database.Open(Db);
+        using var selection = new SeriesGroupingSelection(LocalSeriesGrouping.Files(conn, _volumes.Snapshot));
+        selection.Filter("Remounted again");
+        Assert.Equal(id, Assert.Single(selection.Results).Id);
+        selection.SelectAllResults(true);
+        Assert.True(selection.AllSelected);
+        Assert.Equal(New, FileLocations.SavedRoot(FileLocations.File(conn, id)!.Binding));
+        var series = LocalSeriesGrouping.Assign(conn, null, "Still the same file",
+            selection.Results.Select(f => f.Assignment()).ToArray());
+        var episode = Assert.Single(await new LocalSeriesLoader(Db, volumes: _volumes).LoadAsync(series));
+        Assert.Equal(id, episode.FileId);
+        Assert.Equal(Path.Combine(renamed, "Source.S01E01.mkv"), episode.FilePath);
+    }
+
     public void Dispose()
     {
         _log.Dispose();

@@ -6,7 +6,7 @@
         Width="940" Height="680" MinWidth="720" MinHeight="480"
         WindowStartupLocation="CenterOwner"
         Background="{StaticResource RoomBrush}">
-    <Grid Margin="20" RowDefinitions="Auto,Auto,Auto,Auto,*,Auto,Auto">
+    <Grid Margin="20" RowDefinitions="Auto,Auto,Auto,Auto,Auto,*,Auto,Auto">
         <TextBlock Text="Select local files to put in one series. Nothing is renamed, moved or changed on Jellyfin."
                    TextWrapping="Wrap" Margin="0,0,0,12"/>
         <Grid Grid.Row="1" ColumnDefinitions="*,12,*" Margin="0,0,0,12">
@@ -25,12 +25,22 @@
         <TextBox x:Name="FilterBox" Grid.Row="2" Margin="0,0,0,12"
                  Watermark="Find files by title, series or path"
                  TextChanged="Filter_Changed"/>
-        <Grid Grid.Row="3" ColumnDefinitions="40,*,12,90,12,90" Margin="8,0,8,6">
+        <StackPanel Grid.Row="3" Orientation="Horizontal" Spacing="16" Margin="8,0,8,8">
+            <CheckBox x:Name="SelectAllBox" Content="Select all"
+                      IsChecked="{Binding AllSelected, Mode=OneWay}"
+                      IsEnabled="{Binding HasResults}"
+                      ToolTip.Tip="Select or deselect every file matching the current filter. Selections outside it are kept."
+                      Click="SelectAll_Click"/>
+            <TextBlock Text="{Binding Summary}" VerticalAlignment="Center"
+                       FontSize="12" Foreground="{StaticResource DimBrush}"
+                       AutomationProperties.LiveSetting="Polite"/>
+        </StackPanel>
+        <Grid Grid.Row="4" ColumnDefinitions="40,*,12,90,12,90" Margin="8,0,8,6">
             <TextBlock Grid.Column="1" Text="LOCAL FILES"/>
             <TextBlock Grid.Column="3" Text="SEASON"/>
             <TextBlock Grid.Column="5" Text="EPISODE"/>
         </Grid>
-        <ListBox x:Name="FilesList" Grid.Row="4" Background="Transparent">
+        <ListBox x:Name="FilesList" Grid.Row="5" Background="Transparent" ItemsSource="{Binding Results}">
             <ListBox.ItemTemplate>
                 <DataTemplate DataType="services:SeriesGroupingFile">
                     <Grid ColumnDefinitions="40,*,12,90,12,90" Margin="0,5">
@@ -51,12 +61,12 @@
                 </DataTemplate>
             </ListBox.ItemTemplate>
         </ListBox>
-        <StackPanel Grid.Row="5" Margin="0,10,0,0" Spacing="6">
+        <StackPanel Grid.Row="6" Margin="0,10,0,0" Spacing="6">
             <TextBlock FontSize="12" Foreground="{StaticResource DimBrush}" TextWrapping="Wrap"
                        Text="Season 0 is Specials; an empty season means absolute numbering. Files with the same season and episode become alternate copies of one episode."/>
             <TextBlock x:Name="StatusText" TextWrapping="Wrap" AutomationProperties.LiveSetting="Polite"/>
         </StackPanel>
-        <StackPanel Grid.Row="6" Orientation="Horizontal" HorizontalAlignment="Right" Spacing="10" Margin="0,16,0,0">
+        <StackPanel Grid.Row="7" Orientation="Horizontal" HorizontalAlignment="Right" Spacing="10" Margin="0,16,0,0">
             <Button Content="Cancel" Click="Cancel_Click"/>
             <Button x:Name="SaveButton" Content="Group selected files" Click="Save_Click"/>
         </StackPanel>

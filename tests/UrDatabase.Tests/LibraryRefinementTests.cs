@@ -163,6 +163,52 @@ namespace UrDatabase.Tests
         // ---------- together ----------
 
         [Fact]
+        public void With_problems_is_an_active_filter_on_existing_reports_including_notes_only()
+        {
+            var audio = Film("Audio");
+            audio.ProblemReport = new(audio.Key, new[] { FilmProblemKind.Audio }, null);
+            var language = Film("Language");
+            language.ProblemReport = new(language.Key, Array.Empty<FilmProblemKind>(), "Spanish audio only");
+            var empty = Film("Empty report");
+            empty.ProblemReport = new(empty.Key, Array.Empty<FilmProblemKind>(), " ");
+            var clean = Film("Unreported");
+            var films = new[] { audio, language, empty, clean };
+            var filter = new LibraryRefinement { ProblemsOnly = true };
+
+            Assert.Equal(new[] { audio, language }, filter.Apply(films));
+            Assert.True(filter.IsActive);
+            Assert.Equal(0, filter.Unknown(films));
+            Assert.Equal(films, LibraryRefinement.None.Apply(films));
+        }
+
+        [Fact]
+        public void With_problems_combines_with_every_refinement_and_does_not_count_clean_unknowns()
+        {
+            var films = new[]
+            {
+                Film("Reported match", 150, 8.1, "Liv Ullmann (Marianne)"),
+                Film("Clean match", 150, 8.1, "Liv Ullmann (Marianne)"),
+                Film("Reported short", 80, 8.1, "Liv Ullmann (Eva)"),
+                Film("Reported poor", 150, 5, "Liv Ullmann (Anna)"),
+                Film("Reported other actor", 150, 8.1, "Someone Else"),
+                Film("Reported unknown"),
+                Film("Clean unknown")
+            };
+            foreach (var film in films.Where(m => m.Title.StartsWith("Reported")))
+                film.ProblemReport = new(film.Key, new[] { FilmProblemKind.LowResolution }, null);
+            var filter = new LibraryRefinement
+            {
+                ProblemsOnly = true, Runtime = RuntimeRange.Long, MinimumRating = 7, Person = "ullmann"
+            };
+
+            Assert.Equal(films.Take(1), filter.Apply(films));
+            Assert.Equal(1, filter.Unknown(films));
+            films[0].ProblemReport = null;
+            Assert.Empty(filter.Apply(films));
+            Assert.True(LibraryRegroup.EmptiedByFilters(filter, films));
+        }
+
+        [Fact]
         public void Every_filter_that_is_set_has_to_pass()
         {
             var films = new[]

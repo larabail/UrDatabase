@@ -49,7 +49,7 @@ namespace UrDatabase.Views
         private LibraryKind _kind = LibraryKind.Everything;
 
         /// <summary>
-        /// What the filter row narrows by: length, rating, and an actor or director. Applied on top
+        /// What the filter row narrows by: length, rating, a person and reported problems. Applied on top
         /// of the source and kind rows, and underneath the genre row, so the genre counts describe
         /// what the filters leave.
         /// </summary>
@@ -631,22 +631,20 @@ namespace UrDatabase.Views
         ///
         /// The source row is rebuilt from the results rather than left describing the whole
         /// library, so the row and the list below it always agree, and a place these results do
-        /// not reach is not offered at all. Offering it would let a click empty the page with
-        /// nothing left on screen to say how to get back.
+        /// not reach is not offered unless it is already selected, in which case it remains
+        /// visible at zero with a way back.
         /// </remarks>
         private void ShowSearchResults()
         {
-            BuildSources();
+            BuildGenres();
 
             FlatResults.Clear();
 
             // Grouped on Key rather than Id: every server film carries id 0, so grouping on
             // the local id would collapse the whole remote half of the results into one card.
-            foreach (var m in VisibleMovies
+            foreach (var m in LibraryGrouping.ItemsForGenre(VisibleMovies, SelectedGenre)
                     .GroupBy(x => x.Key)
-                    .Select(g => g.First())
-                    .OrderByDescending(x => x.Year ?? 0)
-                    .ThenBy(x => x.Title))
+                    .Select(g => g.First()))
             {
                 FlatResults.Add(m);
             }
@@ -656,13 +654,11 @@ namespace UrDatabase.Views
 
             // A search that found nothing has to say so. Silence reads as a broken search box.
             NoResultsText.IsVisible = FlatResults.Count == 0;
-            NoResultsText.Text = _refinement.IsActive
+            NoResultsText.Text = _refinement.IsActive || SelectedGenre != LibraryGrouping.AllGenres ||
+                _source != LibrarySource.Everywhere || _kind != LibraryKind.Everything
                 ? $"Nothing in the library matches \u201c{_view.Query}\u201d with these filters."
                 : $"Nothing in the library matches \u201c{_view.Query}\u201d.";
 
-            // The genre row deliberately keeps describing the whole library rather than the
-            // current results, so it does not rearrange itself under the cursor between one
-            // keystroke and the next.
             ShowSearch();
         }
 
@@ -917,7 +913,7 @@ namespace UrDatabase.Views
             BuildSources();
 
             GenreChips.Clear();
-            foreach (var chip in LibraryGrouping.BuildGenreChips(VisibleMovies))
+            foreach (var chip in LibraryGrouping.BuildGenreChips(VisibleMovies, SelectedGenre))
             {
                 chip.IsSelected = string.Equals(chip.Name, SelectedGenre, StringComparison.OrdinalIgnoreCase);
                 GenreChips.Add(chip);
@@ -946,7 +942,7 @@ namespace UrDatabase.Views
             // count the television. It said "412 Offline" beside an empty page otherwise, because
             // every offline film is a film and none of them is a programme.
             var scope = LibraryFilter.Apply(_allMovies, _kind);
-            var available = LibraryFilter.Available(scope);
+            var available = LibraryFilter.Available(scope, _source);
 
             SourceChips.Clear();
             foreach (var source in available)
@@ -968,10 +964,6 @@ namespace UrDatabase.Views
             // of the three arrangements.
             if (KindChipsList is not null)
                 KindChipsList.Margin = new Avalonia.Thickness(show ? 0 : 24, 0, 0, 0);
-
-            // A source that has just stopped existing — the last local film removed, or a server
-            // switched off — must not leave the window filtered to nothing with no way back.
-            if (!show && _source != LibrarySource.Everywhere) _source = LibrarySource.Everywhere;
         }
 
         /// <summary>
@@ -985,7 +977,7 @@ namespace UrDatabase.Views
         /// </remarks>
         private void BuildKinds()
         {
-            var available = LibraryFilter.AvailableKinds(_allMovies);
+            var available = LibraryFilter.AvailableKinds(_allMovies, _kind);
 
             KindChips.Clear();
             foreach (var kind in available)
@@ -1001,10 +993,6 @@ namespace UrDatabase.Views
             var show = KindChips.Count > 0;
             if (KindChipsList is not null) KindChipsList.IsVisible = show;
             if (KindDivider is not null) KindDivider.IsVisible = show;
-
-            // The last programme leaving the library — a server switched off, or one that has
-            // stopped reporting television — must not leave the window filtered to nothing.
-            if (!show && _kind != LibraryKind.Everything) _kind = LibraryKind.Everything;
         }
 
         /// <summary>
@@ -1035,12 +1023,6 @@ namespace UrDatabase.Views
                 ShowSearchResults();
                 return;
             }
-
-            // A genre that only the other half had would otherwise stay selected and show an
-            // empty page.
-            var stillThere = LibraryGrouping.BuildGenreChips(VisibleMovies)
-                                            .Any(c => string.Equals(c.Name, SelectedGenre, StringComparison.OrdinalIgnoreCase));
-            if (!stillThere) SelectedGenre = LibraryGrouping.AllGenres;
 
             BuildGenres();
             RebuildGroups();
@@ -1090,6 +1072,7 @@ namespace UrDatabase.Views
                 RatingChips.Add(new RatingChip { Minimum = minimum, IsSelected = minimum == _refinement.MinimumRating });
 
             if (ClearFiltersButton is not null) ClearFiltersButton.IsVisible = _refinement.IsActive;
+            if (ProblemsOnlyButton is not null) ProblemsOnlyButton.IsChecked = _refinement.ProblemsOnly;
 
             if (RefinementNoteText is not null)
                 RefinementNoteText.Text = LibraryRefinement.UnknownNote(_refinement.Unknown(UnrefinedMovies));
@@ -1113,6 +1096,12 @@ namespace UrDatabase.Views
             ReapplyFilters();
         }
 
+        private void ProblemsOnly_Click(object? sender, RoutedEventArgs e)
+        {
+            _refinement = _refinement with { ProblemsOnly = ProblemsOnlyButton.IsChecked == true };
+            ReapplyFilters();
+        }
+
         private async void OrganiseSeries_Click(object? sender, RoutedEventArgs e)
         {
             if (!OrganiseSeriesButton.IsEnabled) return;
@@ -1125,8 +1114,11 @@ namespace UrDatabase.Views
             OrganiseSeriesButton.IsEnabled = false;
             try
             {
-                if (await SeriesGroupingWindow.ShowAsync(this, _dbPath, _volumes))
+                if (await SeriesGroupingWindow.ShowAsync(this, _dbPath, _volumes) is { } message)
+                {
                     await _searchLoop.RefreshAsync(SearchBox.Text);
+                    SetStatus(message);
+                }
             }
             catch (Exception ex)
             {
@@ -1184,6 +1176,7 @@ namespace UrDatabase.Views
                 SingleGenreItems.Add(m);
 
             SingleGenreCountText.Text = LibraryGrouping.CountLabel(SingleGenreItems);
+            NoGenreResultsText.IsVisible = SingleGenreItems.Count == 0;
             RebuildGrid(SingleGenreRows, SingleGenreItems);
             WarmPosters(SingleGenreItems);
             ShowSingleGenre();
@@ -1717,19 +1710,7 @@ namespace UrDatabase.Views
             {
                 SelectedGenre = chip.Name;
 
-                // Rebuilt rather than ticked in place: the chips carry their own selected state,
-                // so this is also what makes the right one appear selected on the first render.
-                BuildGenres();
-
-                if (string.Equals(SelectedGenre, LibraryGrouping.AllGenres, StringComparison.OrdinalIgnoreCase))
-                {
-                    RebuildGroups();
-                    ShowAllGenres();
-                }
-                else
-                {
-                    ShowGenre(SelectedGenre);
-                }
+                ReapplyFilters();
             }
         }
 
@@ -2172,7 +2153,8 @@ namespace UrDatabase.Views
             // Empty because of the filter row is a different page from empty because nothing has
             // been scanned: inviting somebody with a library of four hundred films to choose some
             // folders would be telling them their films had gone.
-            var filteredOut = empty && LibraryRegroup.EmptiedByFilters(_refinement, UnrefinedMovies);
+            var filteredOut = empty && (LibraryRegroup.EmptiedByFilters(_refinement, UnrefinedMovies)
+                || _source != LibrarySource.Everywhere || _kind != LibraryKind.Everything);
 
             SearchPanel.IsVisible = false;
             GroupPanel.IsVisible = !empty;
