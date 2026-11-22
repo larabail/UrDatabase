@@ -1,4 +1,6 @@
 using System;
+using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -32,6 +34,10 @@ namespace UrDatabase.Views
         private readonly bool _firstRun;
         private readonly CancellationTokenSource _cts = new();
         private bool _testing;
+        private bool _saving;
+        private int _locationVersion;
+        public IVolumeSnapshotSource Volumes { get; set; } = VolumeSnapshotSource.Shared;
+        private readonly Dictionary<string, LocationBinding> _selectedFolders = new();
 
         /// <summary>Guards the handlers while the constructor is still filling the controls in.</summary>
         private bool _loading = true;
@@ -50,7 +56,11 @@ namespace UrDatabase.Views
             _choices = SetupChoices.From(_stored);
 
             FolderList.ItemsSource = _choices.Folders;
-            _choices.Folders.CollectionChanged += (_, __) => Sync();
+            _choices.Folders.CollectionChanged += async (_, __) =>
+            {
+                Sync();
+                if (!_loading) await RefreshLocationsAsync();
+            };
 
             LocalCheck.IsChecked = _choices.UseLocalFolders;
             JellyfinCheck.IsChecked = _choices.UseJellyfin;
@@ -94,6 +104,8 @@ namespace UrDatabase.Views
             Sync();
 
             Closed += (_, __) => _cts.Cancel();
+            Closing += (_, e) => e.Cancel = _saving;
+            Opened += async (_, _) => await RefreshLocationsAsync();
         }
 
         /// <summary>
@@ -101,9 +113,9 @@ namespace UrDatabase.Views
         /// backed out. Used by the Settings button; first run shows the window directly, because
         /// at that point there is nothing for it to be modal over.
         /// </summary>
-        public static async Task<AppConfig?> ShowDialogAsync(Window owner)
+        public static async Task<AppConfig?> ShowDialogAsync(Window owner, IVolumeSnapshotSource? volumes = null)
         {
-            var window = new SetupWindow(firstRun: false);
+            var window = new SetupWindow(firstRun: false) { Volumes = volumes ?? VolumeSnapshotSource.Shared };
             await window.ShowDialog(owner);
             return window.SavedConfig;
         }
@@ -140,14 +152,6 @@ namespace UrDatabase.Views
 
             LocalPanel.IsEnabled = _choices.UseLocalFolders;
             JellyfinPanel.IsEnabled = _choices.UseJellyfin;
-
-            var missing = _choices.MissingFolders;
-            FolderNote.Text = missing.Count switch
-            {
-                0 => "",
-                1 => $"{missing[0]} is not there at the moment. That is fine for an external drive; check it for a typo otherwise.",
-                _ => $"{missing.Count} of these folders are not there at the moment."
-            };
 
             ProblemText.Text = _choices.Problem ?? "";
             ProblemText.IsVisible = !string.IsNullOrWhiteSpace(_choices.Problem);
@@ -209,14 +213,75 @@ namespace UrDatabase.Views
                 var path = folder.TryGetLocalPath();
                 if (string.IsNullOrWhiteSpace(path)) continue;
 
-                if (!_choices.Folders.Any(existing => string.Equals(existing, path, StringComparison.OrdinalIgnoreCase)))
-                    _choices.Folders.Add(path);
+                try
+                {
+                    var binding = await Task.Run(async () => FileLocations.Capture(path,
+                        await Volumes.CaptureAsync(new[] { path }, _cts.Token), allowPathOnly: true));
+                    if (binding.Mode == "path" && !await MessageBoxWindow.ConfirmAsync(this, "Path-only folder",
+                            "This location has no supported disk identity. It can be scanned by path, but will not follow a renamed mount automatically.",
+                            "Use path-only folder")) continue;
+                    if (!_choices.Folders.Contains(path)) _choices.Folders.Add(path);
+                    _selectedFolders[path] = binding;
+                }
+                catch (Exception ex)
+                {
+                    AppLog.Write("drives.log", $"Could not verify a chosen folder: {ex.Message}");
+                    await MessageBoxWindow.ShowAsync(this, "Folder not verified", ex.Message);
+                }
             }
 
             // Picking a folder is only ever meant as "yes, use this computer".
             if (picked.Count > 0) LocalCheck.IsChecked = true;
 
             Sync();
+            await RefreshLocationsAsync();
+        }
+
+        private async Task RefreshLocationsAsync()
+        {
+            var version = ++_locationVersion;
+            try
+            {
+                var folders = _choices.CleanFolders.ToArray();
+                var selectedFolders = _selectedFolders.ToDictionary(p => p.Key, p => p.Value);
+                var resolved = AppConfig.Load(_stored.SourcePath);
+                var lines = await Task.Run(async () =>
+                {
+                    using var conn = Database.Open(resolved.DatabasePath);
+                    var scopes = FileLocations.Roots(conn).Where(r => r.Kind == "watch" && folders.Contains(r.Token)).ToList();
+                    var snapshot = await Volumes.CaptureAsync(folders.Select(PlatformPaths.Expand).Concat(scopes.Select(r => r.FilePath)), _cts.Token);
+                    return folders.SelectMany(token =>
+                    {
+                        var binding = FileLocations.Root(conn, "watch", token)?.Binding;
+                        if (binding is null && selectedFolders.TryGetValue(token, out var selected)) binding = selected;
+                        var location = FileLocations.Resolve(binding ?? LocationBinding.Legacy(PlatformPaths.Expand(token)), snapshot, Directory.Exists);
+                        var main = location.Available ? $"{token} -> {location.Path}" : $"{token}: {location.Message}";
+                        return new[] { main }.Concat(scopes.Where(r => r.Token == token && r.ScopePath.Length > 0).Select(scope =>
+                        {
+                            var additional = FileLocations.Resolve(scope.Binding, snapshot, Directory.Exists);
+                            return additional.Available ? $"Additional scan scope: {additional.Path}"
+                                : $"Additional scan scope {scope.FilePath}: {additional.Message}";
+                        }));
+                    }).ToArray();
+                }, _cts.Token);
+                if (!_cts.IsCancellationRequested && version == _locationVersion)
+                    FolderNote.Text = string.Join(Environment.NewLine, lines);
+            }
+            catch (OperationCanceledException) when (_cts.IsCancellationRequested) { }
+            catch (Exception ex)
+            {
+                AppLog.Write("drives.log", $"Could not display configured locations: {ex.Message}");
+                if (version == _locationVersion && !_cts.IsCancellationRequested)
+                    FolderNote.Text = "Locations could not be verified. " + ex.Message;
+            }
+        }
+
+        private async void Relocate_Click(object? sender, RoutedEventArgs e)
+        {
+            var resolved = AppConfig.Load(_stored.SourcePath);
+            if (await DiskRecoveryWindow.ShowAsync(this, resolved.DatabasePath, resolved, Volumes,
+                    oldRoot: FolderList.SelectedItem is string token ? PlatformPaths.Expand(token) : null))
+                await RefreshLocationsAsync();
         }
 
         private void RemoveFolder_Click(object? sender, RoutedEventArgs e)
@@ -376,11 +441,47 @@ namespace UrDatabase.Views
 
         private async Task SaveAsync(AppConfig config)
         {
+            if (_saving) return;
+            _saving = true;
+            IsEnabled = false;
+            var close = false;
             try
             {
-                ConfigStore.Save(config);
+                var path = ConfigStore.Save(config);
                 SavedConfig = config;
-                Close();
+                try
+                {
+                    var resolved = AppConfig.Load(path);
+                    var selections = _selectedFolders.Where(p => config.WatchFolders.Contains(p.Key)).ToArray();
+                    if (selections.Length > 0)
+                    {
+                        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(_cts.Token);
+                        deadline.CancelAfter(DriveMonitor.DefaultTimeout + TimeSpan.FromSeconds(2));
+                        var cancellation = deadline.Token;
+                        var worker = Task.Run(async () =>
+                        {
+                            var snapshot = await Volumes.CaptureAsync(selections.Select(p => p.Key), cancellation);
+                            using var conn = Database.Open(resolved.DatabasePath);
+                            foreach (var (token, selected) in selections)
+                            {
+                                cancellation.ThrowIfCancellationRequested();
+                                var current = FileLocations.Capture(selected.Path, snapshot, selected.Mode == "path");
+                                if (current != selected) throw new IOException("A selected disk changed. Confirm its folder again.");
+                                await FileLocations.ConfirmNewRootAsync(conn, "watch", token, selected.Path, snapshot,
+                                    selected.Mode == "path", cancellation);
+                            }
+                        }, cancellation);
+                        _ = worker.ContinueWith(t => { _ = t.Exception; }, TaskContinuationOptions.OnlyOnFaulted);
+                        await worker.WaitAsync(cancellation);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    AppLog.Write("drives.log", $"Settings saved but a folder was not verified: {ex.Message}");
+                    await MessageBoxWindow.ShowAsync(this, "Settings saved; folder not verified",
+                        ex.Message + "\nUse Confirm / relocate before scanning this folder.");
+                }
+                close = true;
             }
             catch (Exception ex)
             {
@@ -391,6 +492,12 @@ namespace UrDatabase.Views
                     "UrDatabase",
                     $"Could not save your settings:{Environment.NewLine}{ex.Message}");
             }
+            finally
+            {
+                _saving = false;
+                IsEnabled = true;
+            }
+            if (close) Close();
         }
     }
 }

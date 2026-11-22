@@ -136,7 +136,7 @@ namespace UrDatabase.Tests
             using (var conn = Database.Open(_dbPath))
             {
                 var other = conn.ExecuteScalar<long>("INSERT INTO movies (title, year) VALUES ('Heat', 1986) RETURNING id");
-                PlayTargetResolver.LinkFile(conn, other, path);
+                FixtureMedia.LinkFile(conn, other, path);
             }
 
             await ScanAsync();
@@ -368,7 +368,7 @@ namespace UrDatabase.Tests
         private async Task<UrDatabase.Models.ScanResult> ScanAsync(params string[] extraRoots)
         {
             using var conn = Database.Open(_dbPath);
-            return await new ScanService().ScanAsync(conn, new[] { _media }.Concat(extraRoots));
+            return await new FixtureScanner().ScanAsync(conn, new[] { _media }.Concat(extraRoots));
         }
 
         private string Write(params string[] parts)

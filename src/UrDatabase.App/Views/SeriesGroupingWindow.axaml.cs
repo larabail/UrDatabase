@@ -36,12 +36,13 @@ public partial class SeriesGroupingWindow : Window
         StatusText.Text = files.Count == 0 ? "No local files are catalogued. Scan your folders first." : "";
     }
 
-    public static async Task<string?> ShowAsync(Window owner, string dbPath)
+    public static async Task<string?> ShowAsync(Window owner, string dbPath, IVolumeSnapshotSource? volumes = null)
     {
-        var data = await Task.Run(() =>
+        var data = await Task.Run(async () =>
         {
             using var conn = Database.Open(dbPath);
-            return (Files: LocalSeriesGrouping.Files(conn), Targets: LocalSeriesGrouping.Targets(conn));
+            var snapshot = await (volumes ?? VolumeSnapshotSource.Shared).CaptureAsync(FileLocations.Files(conn).Select(f => f.FilePath));
+            return (Files: LocalSeriesGrouping.Files(conn, snapshot), Targets: LocalSeriesGrouping.Targets(conn));
         });
         return await new SeriesGroupingWindow(dbPath, data.Files, data.Targets).ShowDialog<string?>(owner);
     }

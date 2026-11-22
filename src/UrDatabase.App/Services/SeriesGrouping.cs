@@ -208,6 +208,8 @@ namespace UrDatabase.Services
             return new EpisodeRow
             {
                 FilePath = episode.FilePath,
+                FileId = episode.FileId,
+                LocationNotice = episode.Location?.Message,
                 IsAvailable = episode.IsAvailable,
                 Label = EpisodeLabel(episode.SeasonNumber, episode.EpisodeNumber),
                 Title = described.Length > 0
@@ -217,7 +219,7 @@ namespace UrDatabase.Services
                         : $"Episode {episode.EpisodeNumber.ToString(CultureInfo.InvariantCulture)}",
                 Runtime = tmdb ? RuntimeLabel(episode.RuntimeMinutes) : "",
                 Overview = !episode.IsAvailable
-                    ? $"Not found by the last scan — {file}"
+                    ? $"{episode.Location?.Message ?? "Not found by the last scan"} — {file}"
                     : plot.Length > 0 ? plot : file
             };
         }

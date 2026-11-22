@@ -87,6 +87,7 @@
                     Classes="ghost"
                     Content="Check again"
                     Click="Recheck_Click"/>
+            <Button Content="Relocate disk/folder..." Click="Relocate_Click" Classes="ghost"/>
             <Button x:Name="CloseButton"
                     Classes="primary"
                     Content="Close"

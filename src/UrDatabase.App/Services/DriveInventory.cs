@@ -24,11 +24,64 @@ namespace UrDatabase.Services
     /// </summary>
     public static class DriveInventory
     {
+        public static DriveInventoryResult BuildBound(VolumeSnapshot snapshot, IReadOnlyList<LocatedFile> files,
+            IReadOnlyList<LibraryRoot> roots, IReadOnlyList<KnownDrive> known, bool canRemember, DateTime now)
+        {
+            var references = files.Select(f => (Binding: f.Binding, Movie: f.MovieId, Episode: f.EpisodeId, Folder: (string?)null))
+                .Concat(roots.Select(r => (Binding: r.Binding, Movie: (long?)null, Episode: (long?)null, Folder: (string?)r.FilePath))).ToList();
+            string Key(LocationBinding b) => b.Mode == "volume" ? b.VolumeId!
+                : b.Mode + ":" + VolumePaths.Absolute(FileLocations.SavedRoot(b));
+            var usages = references.GroupBy(r => Key(r.Binding)).ToDictionary(g => g.Key, g => g.ToList());
+            var claimed = new HashSet<string>();
+            var reports = new List<DriveReport>();
+            var seen = new List<KnownDrive>();
+            foreach (var mount in snapshot.Mounts)
+            {
+                var duplicate = mount.Id is not null && snapshot.WithIdentity(mount.Id).Count > 1;
+                var id = mount.SupportsIdentity ? mount.Id ?? IdentityOf(mount.Probe.Result) : null;
+                var key = mount.Id ?? "path:" + mount.Root;
+                usages.TryGetValue(key, out var usage);
+                if (duplicate) usage = null;
+                if (usage is not null) claimed.Add(key);
+                var state = duplicate ? DriveState.Ambiguous : mount.Probe.State;
+                var record = known.FirstOrDefault(k => k.Id == id);
+                var remember = canRemember && !duplicate && id is not null && state == DriveState.Connected
+                    && (mount.Kind == DriveKind.Fixed && !DriveEnumeration.LooksVirtual(mount.Probe.Result.Label, mount.Probe.Result.Format)
+                        || mount.Kind == DriveKind.Removable && usage is not null || record is not null);
+                if (remember) seen.Add(new(id!, mount.Probe.Result.Label, mount.Root, mount.Probe.Result.TotalBytes, now));
+                reports.Add(new(mount.Root, state,
+                    usage?.Where(u => u.Folder is not null).Select(u =>
+                        u.Binding.Mode == "volume" ? VolumePaths.Join(mount.Root, u.Binding.RelativePath!) : u.Folder!).ToList()
+                        ?? (IReadOnlyList<string>)Array.Empty<string>(),
+                    usage?.Select(u => u.Movie).OfType<long>().Distinct().Count() ?? 0,
+                    mount.Probe.Result.Label, mount.Probe.Result.TotalBytes, mount.Probe.Result.FreeBytes,
+                    id, mount.Kind, remember || record is not null, record?.LastSeenUtc,
+                    EpisodeCount: usage?.Select(u => u.Episode).OfType<long>().Distinct().Count() ?? 0));
+            }
+            foreach (var (key, usage) in usages.Where(p => !claimed.Contains(p.Key)))
+            {
+                var binding = usage[0].Binding;
+                var id = binding.Mode == "volume" ? binding.VolumeId : null;
+                var record = known.FirstOrDefault(k => k.Id == id);
+                var state = binding.Mode == "legacy" ? DriveState.NeedsConfirmation
+                    : !snapshot.Complete ? DriveState.NotResponding
+                    : id is not null && snapshot.WithIdentity(id).Count > 1 ? DriveState.Ambiguous : DriveState.Disconnected;
+                reports.Add(new(record?.LastRoot ?? FileLocations.SavedRoot(binding), state,
+                    usage.Select(u => u.Folder).OfType<string>().Distinct().ToList(),
+                    usage.Select(u => u.Movie).OfType<long>().Distinct().Count(),
+                    record?.Label, record?.TotalBytes, Id: id, Remembered: record is not null, LastSeenUtc: record?.LastSeenUtc,
+                    EpisodeCount: usage.Select(u => u.Episode).OfType<long>().Distinct().Count()));
+            }
+            foreach (var record in known.Where(k => !reports.Any(r => r.Id == k.Id)))
+                reports.Add(new(record.LastRoot, snapshot.Complete ? DriveState.Disconnected : DriveState.NotResponding,
+                    Array.Empty<string>(), 0, record.Label, record.TotalBytes, Id: record.Id,
+                    Remembered: canRemember, LastSeenUtc: record.LastSeenUtc));
+            return new(reports.OrderBy(r => r.Root, StringComparer.Ordinal).ToList(), seen);
+        }
+
         /// <summary>
-        /// What tells one disk from another regardless of the letter it was given: the volume
-        /// serial number where the operating system has one, otherwise the volume's name together
-        /// with its capacity. Null when there is neither, and such a drive is never remembered —
-        /// identifying it by its letter would mistake whatever is plugged in there next for it.
+        /// A remembered-drive diagnostic key. Name/capacity is only a display hint when a strong
+        /// ID is unavailable; FileLocations never uses it to bind or resolve media.
         /// </summary>
         public static string? IdentityOf(DriveProbeResult? probe)
         {

@@ -138,6 +138,26 @@ namespace UrDatabase.Services
         /// </remarks>
         internal static void Migrate(SqliteConnection conn)
         {
+            AddColumnIfMissing(conn, "files", "location_mode", "TEXT NOT NULL DEFAULT 'legacy'");
+            AddColumnIfMissing(conn, "files", "volume_id", "TEXT");
+            AddColumnIfMissing(conn, "files", "relative_path", "TEXT");
+            AddColumnIfMissing(conn, "files", "relative_key", "TEXT");
+            AddColumnIfMissing(conn, "files", "path_style", "TEXT");
+            AddColumnIfMissing(conn, "files", "location_revision", "INTEGER NOT NULL DEFAULT 0");
+            if (TableExists(conn, "files") &&
+                (!IndexExists(conn, "ux_files_absolute") || !IndexExists(conn, "ux_files_volume") || IndexExists(conn, "ux_files_path")))
+            {
+                using var tx = conn.BeginTransaction();
+                using var locations = conn.CreateCommand();
+                locations.Transaction = tx;
+                locations.CommandText = @"
+CREATE UNIQUE INDEX IF NOT EXISTS ux_files_absolute ON files(file_path) WHERE location_mode <> 'volume';
+CREATE UNIQUE INDEX IF NOT EXISTS ux_files_volume ON files(volume_id, relative_key) WHERE location_mode = 'volume';
+DROP INDEX IF EXISTS ux_files_path;";
+                locations.ExecuteNonQuery();
+                tx.Commit();
+            }
+
             // Cast and crew from a Jellyfin server. Text rather than a table of people: they are
             // only ever read back whole, for one film, to be printed.
             AddColumnIfMissing(conn, "jellyfin_movies", "cast_list", "TEXT");
@@ -400,6 +420,14 @@ CREATE INDEX ix_film_viewings_key ON film_viewings(film_key);");
             return cmd.ExecuteScalar() is not null;
         }
 
+        private static bool IndexExists(SqliteConnection conn, string name)
+        {
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = "SELECT 1 FROM sqlite_master WHERE type='index' AND name=@name";
+            cmd.Parameters.AddWithValue("@name", name);
+            return cmd.ExecuteScalar() is not null;
+        }
+
         internal static bool ColumnExists(SqliteConnection conn, string table, string column)
         {
             using var cmd = conn.CreateCommand();
@@ -464,10 +492,29 @@ CREATE TABLE IF NOT EXISTS files (
     last_seen_scan_id INTEGER,
     missing_since     TEXT,
     episode_id        INTEGER REFERENCES episodes(id) ON DELETE SET NULL,
-    linked_by_hand    INTEGER NOT NULL DEFAULT 0
+    linked_by_hand    INTEGER NOT NULL DEFAULT 0,
+    location_mode     TEXT NOT NULL DEFAULT 'legacy',
+    volume_id         TEXT,
+    relative_path     TEXT,
+    relative_key      TEXT,
+    path_style        TEXT,
+    location_revision INTEGER NOT NULL DEFAULT 0
 );
-CREATE UNIQUE INDEX IF NOT EXISTS ux_files_path ON files(file_path);
 CREATE INDEX IF NOT EXISTS ix_files_movie ON files(movie_id);
+CREATE TABLE IF NOT EXISTS library_roots (
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    kind              TEXT NOT NULL,
+    config_token      TEXT NOT NULL,
+    scope_path        TEXT NOT NULL DEFAULT '',
+    file_path         TEXT NOT NULL,
+    location_mode     TEXT NOT NULL DEFAULT 'legacy',
+    volume_id         TEXT,
+    relative_path     TEXT,
+    relative_key      TEXT,
+    path_style        TEXT,
+    location_revision INTEGER NOT NULL DEFAULT 0,
+    UNIQUE(kind, config_token, scope_path)
+);
 CREATE TABLE IF NOT EXISTS series (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     title           TEXT    NOT NULL,

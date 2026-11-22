@@ -223,7 +223,7 @@ INSERT INTO files (episode_id, file_path) VALUES (4, '/tv/Fargo.S02E01.mkv');", 
             using (var conn = Database.Open(_dbPath))
                 await LocalSeriesLookup.IdentifyAsync(tmdb, conn, 1, downloadPosters: false, CancellationToken.None);
 
-            var loader = new LocalSeriesLoader(_dbPath);
+            var loader = FixtureMedia.Loader(_dbPath);
             var before = handler.CallCount;
 
             var episodes = await loader.RefreshEpisodesAsync(tmdb, 1, force: false, CancellationToken.None);
@@ -261,7 +261,7 @@ INSERT INTO files (episode_id, file_path) VALUES (4, '/tv/Fargo.S02E01.mkv');", 
             using (var conn = Database.Open(_dbPath))
                 await LocalSeriesLookup.IdentifyAsync(tmdb, conn, 1, downloadPosters: false, CancellationToken.None);
 
-            var loader = new LocalSeriesLoader(_dbPath);
+            var loader = FixtureMedia.Loader(_dbPath);
             var episodes = await loader.RefreshEpisodesAsync(tmdb, 1, force: false, CancellationToken.None);
 
             Assert.Null(episodes!.Single(e => e.EpisodeNumber == 3).TmdbTitle);
@@ -278,7 +278,7 @@ INSERT INTO files (episode_id, file_path) VALUES (4, '/tv/Fargo.S02E01.mkv');", 
             using (var conn = Database.Open(_dbPath))
                 await LocalSeriesLookup.IdentifyAsync(tmdb, conn, 1, downloadPosters: false, CancellationToken.None);
 
-            var loader = new LocalSeriesLoader(_dbPath);
+            var loader = FixtureMedia.Loader(_dbPath);
             await loader.RefreshEpisodesAsync(tmdb, 1, force: false, CancellationToken.None);
             var before = handler.CallCount;
 
@@ -293,7 +293,7 @@ INSERT INTO files (episode_id, file_path) VALUES (4, '/tv/Fargo.S02E01.mkv');", 
             using var handler = Tmdb();
             using var tmdb = Service(handler);
 
-            Assert.Null(await new LocalSeriesLoader(_dbPath).RefreshEpisodesAsync(tmdb, 1, force: true, CancellationToken.None));
+            Assert.Null(await FixtureMedia.Loader(_dbPath).RefreshEpisodesAsync(tmdb, 1, force: true, CancellationToken.None));
             Assert.Equal(0, handler.CallCount);
         }
 
@@ -305,8 +305,8 @@ INSERT INTO files (episode_id, file_path) VALUES (4, '/tv/Fargo.S02E01.mkv');", 
             using (var conn = Database.Open(_dbPath))
                 conn.Execute("UPDATE series SET tmdb_id = 60622, tmdb_fetched_at = '2026-01-01' WHERE id = 1");
 
-            Assert.Null(await new LocalSeriesLoader(_dbPath).RefreshEpisodesAsync(1, force: true, CancellationToken.None));
-            Assert.Null(await new LocalSeriesLoader(_dbPath, () => null).RefreshEpisodesAsync(1, force: true, CancellationToken.None));
+            Assert.Null(await FixtureMedia.Loader(_dbPath).RefreshEpisodesAsync(1, force: true, CancellationToken.None));
+            Assert.Null(await FixtureMedia.Loader(_dbPath, () => null).RefreshEpisodesAsync(1, force: true, CancellationToken.None));
         }
 
         /// <summary>
@@ -321,7 +321,7 @@ INSERT INTO files (episode_id, file_path) VALUES (4, '/tv/Fargo.S02E01.mkv');", 
             using var tmdb = Service(handler);
             using var conn = Database.Open(_dbPath);
             await LocalSeriesLookup.IdentifyAsync(tmdb, conn, 1, downloadPosters: false, CancellationToken.None);
-            await new LocalSeriesLoader(_dbPath).RefreshEpisodesAsync(tmdb, 1, force: false, CancellationToken.None);
+            await FixtureMedia.Loader(_dbPath).RefreshEpisodesAsync(tmdb, 1, force: false, CancellationToken.None);
 
             await LocalSeriesLookup.SaveDescriptionAsync(conn, 1, new SeriesDescription(
                 99, null, null, "Another programme.", null, null, null, Array.Empty<string>(), Array.Empty<string>()));
@@ -338,7 +338,7 @@ INSERT INTO files (episode_id, file_path) VALUES (4, '/tv/Fargo.S02E01.mkv');", 
             using var tmdb = Service(handler);
             using var conn = Database.Open(_dbPath);
             await LocalSeriesLookup.IdentifyAsync(tmdb, conn, 1, downloadPosters: false, CancellationToken.None);
-            await new LocalSeriesLoader(_dbPath).RefreshEpisodesAsync(tmdb, 1, force: false, CancellationToken.None);
+            await FixtureMedia.Loader(_dbPath).RefreshEpisodesAsync(tmdb, 1, force: false, CancellationToken.None);
 
             conn.Execute("UPDATE series SET tmdb_fetched_at = NULL WHERE id = 1");
             await LocalSeriesLookup.IdentifyAsync(tmdb, conn, 1, downloadPosters: false, CancellationToken.None);
@@ -451,7 +451,7 @@ INSERT INTO files (episode_id, file_path) VALUES (4, '/tv/Fargo.S02E01.mkv');", 
             using (var conn = Database.Open(_dbPath))
                 await LocalSeriesLookup.IdentifyAsync(tmdb, conn, 1, downloadPosters: false, CancellationToken.None);
 
-            var episodes = await new LocalSeriesLoader(_dbPath).RefreshEpisodesAsync(tmdb, 1, force: false, CancellationToken.None);
+            var episodes = await FixtureMedia.Loader(_dbPath).RefreshEpisodesAsync(tmdb, 1, force: false, CancellationToken.None);
 
             var disagreeing = episodes!.Single(e => e.Id == 2);
             Assert.Null(disagreeing.TmdbTitle);
@@ -480,7 +480,7 @@ INSERT INTO files (episode_id, file_path) VALUES (5, '/tv/Fargo.S00E01.mkv');");
             using (var conn = Database.Open(_dbPath))
                 await LocalSeriesLookup.IdentifyAsync(tmdb, conn, 1, downloadPosters: false, CancellationToken.None);
 
-            await new LocalSeriesLoader(_dbPath).RefreshEpisodesAsync(tmdb, 1, force: true, CancellationToken.None);
+            await FixtureMedia.Loader(_dbPath).RefreshEpisodesAsync(tmdb, 1, force: true, CancellationToken.None);
 
             Assert.Equal(0, Count(handler, "/season/0"));
             Assert.Null(Scalar<string?>("SELECT tmdb_title FROM episodes WHERE id = 5"));
@@ -524,7 +524,7 @@ INSERT INTO files (episode_id, file_path) VALUES (5, '/tv/Fargo.S00E01.mkv');");
             using (var conn = Database.Open(_dbPath))
                 await LocalSeriesLookup.IdentifyAsync(tmdb, conn, 1, downloadPosters: false, CancellationToken.None);
 
-            var details = new LocalSeriesLoader(_dbPath).LoadDetails(1);
+            var details = FixtureMedia.Loader(_dbPath).LoadDetails(1);
             var vm = LocalSeriesPage.Build(Card(), details, tmdbConfigured: true);
 
             Assert.True(vm.IsIdentified);

@@ -26,7 +26,8 @@ namespace UrDatabase.Models
     /// difference between the two: a linked file plays, a guess gets a question first. Collapsing
     /// them into a bare string is what let the app open one film while claiming to open another.
     /// </summary>
-    public sealed record PlayTarget(PlayTargetKind Kind, string? FilePath)
+    public sealed record PlayTarget(PlayTargetKind Kind, string? FilePath,
+        long? FileId = null, Services.LocationResult? Location = null, string? SavedPath = null)
     {
         public static readonly PlayTarget None = new(PlayTargetKind.None, null);
 

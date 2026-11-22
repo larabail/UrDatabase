@@ -5,6 +5,7 @@ using System.Linq;
 using System.Threading.Tasks;
 using Dapper;
 using Microsoft.Data.Sqlite;
+using UrDatabase.Models;
 
 namespace UrDatabase.Services
 {
@@ -26,19 +27,29 @@ namespace UrDatabase.Services
     {
         private readonly Dictionary<string, ScanFileRow> _byPath;
         private readonly Dictionary<string, List<ScanFileRow>> _byIdentity;
+        private readonly Dictionary<(string Volume, string Relative), ScanFileRow> _byLocation = new();
         private readonly HashSet<long> _seen = new();
+        private readonly List<ScanFileRow> _rows;
+        private readonly VolumeSnapshot _volumes;
+        private readonly IReadOnlyList<string> _moveRoots;
 
-        private ScanFileIndex(IEnumerable<ScanFileRow> rows)
+        private ScanFileIndex(IEnumerable<ScanFileRow> rows, VolumeSnapshot volumes, IReadOnlyList<string> moveRoots)
         {
-            _byPath = new Dictionary<string, ScanFileRow>(PathScope.Comparer);
+            _volumes = volumes;
+            _moveRoots = moveRoots;
+            _rows = rows.ToList();
+            _byPath = new Dictionary<string, ScanFileRow>(StringComparer.Ordinal);
             _byIdentity = new Dictionary<string, List<ScanFileRow>>(PathScope.Comparer);
 
-            foreach (var row in rows)
+            foreach (var row in _rows)
             {
-                // Last one wins. Two rows whose paths differ only in case can exist in a database
-                // written before this lookup did, and picking one is better than throwing over a
-                // library somebody already has.
-                _byPath[PathScope.Normalise(row.FilePath)] = row;
+                var location = FileLocations.Project(row.Binding, volumes);
+                if (!location.Available) continue;
+                row.FilePath = location.Path!;
+                row.Resolved = true;
+                if (row.Mode == "volume") _byLocation.Add((row.VolumeId!, row.RelativeKey!), row);
+                if (!_byPath.TryAdd(PathKey(row.FilePath), row))
+                    throw new InvalidOperationException("Two catalogue files resolve to the same path. Relocate them before scanning.");
 
                 var identity = IdentityOf(row.FilePath, row.SizeBytes);
                 if (identity is null) continue;
@@ -51,10 +62,11 @@ namespace UrDatabase.Services
         }
 
         /// <summary>Every row loaded, in id order.</summary>
-        public IReadOnlyCollection<ScanFileRow> Rows => _byPath.Values.OrderBy(r => r.Id).ToList();
+        public IReadOnlyCollection<ScanFileRow> Rows => _rows;
 
         /// <summary>Reads the whole table once. Cheap for a personal library; see the type remarks.</summary>
-        public static async Task<ScanFileIndex> LoadAsync(SqliteConnection conn)
+        public static async Task<ScanFileIndex> LoadAsync(SqliteConnection conn, VolumeSnapshot? volumes = null,
+            IReadOnlyList<string>? moveRoots = null)
         {
             if (conn is null) throw new ArgumentNullException(nameof(conn));
 
@@ -66,11 +78,26 @@ SELECT id            AS Id,
        file_path     AS FilePath,
        size_bytes    AS SizeBytes,
        updated_at    AS UpdatedAt,
-       missing_since AS MissingSince
+       missing_since AS MissingSince,
+       location_mode AS Mode, volume_id AS VolumeId, relative_path AS RelativePath,
+       relative_key AS RelativeKey, path_style AS PathStyle, location_revision AS Revision
 FROM files
 ORDER BY id");
 
-            return new ScanFileIndex(rows);
+            return new ScanFileIndex(rows, volumes ?? VolumeSnapshot.Empty, moveRoots ?? Array.Empty<string>());
+        }
+
+        public LocationBinding BindingFor(string path)
+        {
+            if (_rows.Any(f => f.Mode == "legacy" && PathKey(f.FilePath) == PathKey(path)))
+                throw new LocationChangedException("This path still has an unverified legacy link. Confirm its recovery before scanning.");
+            return FileLocations.Capture(path, _volumes, allowPathOnly: true);
+        }
+
+        private static string PathKey(string path)
+        {
+            var absolute = VolumePaths.Absolute(path);
+            return VolumePaths.IsWindows(absolute) ? absolute.ToUpperInvariant() : absolute;
         }
 
         /// <summary>The row for a path, or null when the scan has found something new.</summary>
@@ -78,7 +105,9 @@ ORDER BY id");
         {
             if (string.IsNullOrWhiteSpace(path)) return null;
 
-            return _byPath.TryGetValue(PathScope.Normalise(path), out var row) ? row : null;
+            if (_byPath.TryGetValue(PathKey(path), out var row)) return row;
+            var binding = BindingFor(path);
+            return binding.Mode == "volume" && _byLocation.TryGetValue((binding.VolumeId!, binding.RelativeKey!), out row) ? row : null;
         }
 
         /// <summary>
@@ -115,12 +144,18 @@ ORDER BY id");
             if (!_byIdentity.TryGetValue(identity, out var bucket)) return null;
 
             var exists = fileExists ?? File.Exists;
+            var incoming = BindingFor(path);
             ScanFileRow? found = null;
 
             foreach (var candidate in bucket)
             {
+                if (!candidate.Resolved || candidate.Mode != incoming.Mode
+                    || candidate.VolumeId != incoming.VolumeId) continue;
+                if (candidate.Mode == "path" &&
+                    !_moveRoots.Any(root => VolumePaths.TryRelative(root, candidate.FilePath, out _)
+                        && VolumePaths.TryRelative(root, path, out _))) continue;
                 if (_seen.Contains(candidate.Id)) continue;
-                if (PathScope.Normalise(candidate.FilePath).Equals(PathScope.Normalise(path), PathScope.Comparison)) continue;
+                if (PathKey(candidate.FilePath) == PathKey(path)) continue;
                 if (exists(candidate.FilePath)) continue;
 
                 if (found is not null) return null;
@@ -148,10 +183,21 @@ ORDER BY id");
         public void Repath(ScanFileRow row, string newPath)
         {
             if (row is null) throw new ArgumentNullException(nameof(row));
+            SetBinding(row, BindingFor(newPath));
+        }
 
-            _byPath.Remove(PathScope.Normalise(row.FilePath));
-            row.FilePath = newPath;
-            _byPath[PathScope.Normalise(newPath)] = row;
+        public void SetBinding(ScanFileRow row, LocationBinding binding)
+        {
+            _byPath.Remove(PathKey(row.FilePath));
+            if (row.Mode == "volume") _byLocation.Remove((row.VolumeId!, row.RelativeKey!));
+            row.FilePath = binding.Path;
+            row.Mode = binding.Mode;
+            row.VolumeId = binding.VolumeId;
+            row.RelativePath = binding.RelativePath;
+            row.RelativeKey = binding.RelativeKey;
+            row.PathStyle = binding.PathStyle;
+            _byPath[PathKey(binding.Path)] = row;
+            if (row.Mode == "volume") _byLocation.Add((row.VolumeId!, row.RelativeKey!), row);
         }
 
         /// <summary>Adds a row this scan has just inserted, so the rest of the scan can see it.</summary>
@@ -159,7 +205,9 @@ ORDER BY id");
         {
             if (row is null) throw new ArgumentNullException(nameof(row));
 
-            _byPath[PathScope.Normalise(row.FilePath)] = row;
+            _byPath[PathKey(row.FilePath)] = row;
+            _rows.Add(row);
+            if (row.Mode == "volume") _byLocation[(row.VolumeId!, row.RelativeKey!)] = row;
             _seen.Add(row.Id);
         }
 
@@ -191,8 +239,8 @@ ORDER BY id");
             return _byPath.Values
                 .Where(row => !_seen.Contains(row.Id))
                 .Where(row => row.MissingSince is null)
-                .Where(row => PathScope.IsUnderAny(walkedRoots, row.FilePath))
-                .Where(row => blocked.Count == 0 || !PathScope.IsUnderAny(blocked, row.FilePath))
+                .Where(row => walkedRoots.Any(root => VolumePaths.TryRelative(root, row.FilePath, out _, row.PathStyle)))
+                .Where(row => !blocked.Any(root => VolumePaths.TryRelative(root, row.FilePath, out _, row.PathStyle)))
                 .OrderBy(row => row.Id)
                 .ToList();
         }
@@ -227,6 +275,14 @@ ORDER BY id");
         public long? SizeBytes { get; set; }
         public string? UpdatedAt { get; set; }
         public string? MissingSince { get; set; }
+        public string Mode { get; set; } = "legacy";
+        public string? VolumeId { get; set; }
+        public string? RelativePath { get; set; }
+        public string? RelativeKey { get; set; }
+        public string? PathStyle { get; set; }
+        public long Revision { get; set; }
+        public bool Resolved { get; set; }
+        public LocationBinding Binding => new(Mode, FilePath, VolumeId, RelativePath, RelativeKey, PathStyle);
 
         /// <summary>
         /// True when the file on disk differs from what the catalogue recorded, or when the row

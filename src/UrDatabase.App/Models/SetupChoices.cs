@@ -79,14 +79,14 @@ namespace UrDatabase.Models
 
         /// <summary>
         /// The folders as they would be saved: trimmed, blanks dropped, duplicates collapsed.
-        /// Two entries differing only in case are the same folder on Windows and macOS alike,
-        /// and scanning one twice would double every film in it.
+        /// Preserve case-distinct tokens: case sensitivity belongs to the mounted volume, not
+        /// to the OS running Settings. The scanner deduplicates aliases by their bound identity.
         /// </summary>
         public IReadOnlyList<string> CleanFolders =>
             Folders
                 .Select(folder => (folder ?? "").Trim())
                 .Where(folder => folder.Length > 0)
-                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .Distinct(StringComparer.Ordinal)
                 .ToList();
 
         /// <summary>

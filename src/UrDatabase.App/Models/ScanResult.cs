@@ -54,6 +54,7 @@ namespace UrDatabase.Models
         int SeriesAdded = 0,
         int Refiled = 0)
     {
+        public IReadOnlyList<string> RootIssues { get; init; } = Array.Empty<string>();
         /// <summary>A scan that never got as far as walking anything.</summary>
         public static ScanResult Nothing { get; } = new(
             0, ScanStatus.Completed, 0, 0, 0, 0, 0, 0, 0, Array.Empty<string>(), Array.Empty<string>());
@@ -98,7 +99,7 @@ namespace UrDatabase.Models
                     // library, and nothing was marked missing on their account.
                     ScanStatus.Cancelled => $"Scan cancelled — {counts}. Nothing was marked missing.",
                     ScanStatus.Failed => $"Scan failed — {counts}.",
-                    _ => $"Scan complete. {counts}.",
+                    _ => $"Scan complete. {counts}." + (RootIssues.Count == 0 ? "" : $" {RootIssues.Count} folders skipped: {string.Join(" ", RootIssues)}"),
                 };
             }
         }

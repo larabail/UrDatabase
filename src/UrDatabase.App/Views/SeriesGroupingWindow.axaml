@@ -51,6 +51,7 @@
                             <TextBlock Text="{Binding FilePath}" FontSize="11"
                                        Foreground="{StaticResource DimBrush}"
                                        TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding FilePath}"/>
+                            <TextBlock Text="{Binding LocationNotice}" FontSize="11" Classes="dim" TextWrapping="Wrap"/>
                         </StackPanel>
                         <TextBox Grid.Column="3" Text="{Binding SeasonText, Mode=TwoWay}"
                                  Watermark="Optional" AutomationProperties.Name="Season number"/>

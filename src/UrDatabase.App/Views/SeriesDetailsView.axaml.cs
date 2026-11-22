@@ -41,6 +41,7 @@ namespace UrDatabase.Views
 
         private SeriesLoader? _loader;
         private LocalSeriesLoader? _localLoader;
+        public Func<long?, Task<bool>>? RecoverFile { get; set; }
         private JellyfinClient? _jellyfin;
         private AppConfig? _config;
         private Func<string?, CancellationToken, Task<double?>>? _loadRating;
@@ -374,7 +375,7 @@ namespace UrDatabase.Views
                 return;
             }
 
-            var episodes = await Task.Run(() => loader.Load(vm.LocalId), ct);
+            var episodes = await loader.LoadAsync(vm.LocalId, ct);
             if (!IsCurrent(session)) return;
             ShowLocalEpisodes(episodes);
 
@@ -722,19 +723,20 @@ namespace UrDatabase.Views
         /// </summary>
         private async Task PlayLocalEpisodeAsync(EpisodeRow episode)
         {
-            var refusal = episode.IsAvailable
-                ? PlayTargetResolver.DescribeLinkRefusal(episode.FilePath)
-                : "The last scan could not find this episode. Is its drive connected?";
-
-            if (refusal is not null)
-            {
-                await MessageBoxWindow.ShowAsync(Owner(), "UrDatabase", refusal);
-                return;
-            }
-
             try
             {
-                FileLauncher.Open(episode.FilePath!);
+                if (_localLoader is null || episode.FileId is not long fileId) return;
+                var location = await _localLoader.ResolveFileAsync(fileId, _session?.Token ?? default);
+                if (!location.Available)
+                {
+                    if (RecoverFile is not null && await MessageBoxWindow.ConfirmAsync(Owner(), "Episode unavailable",
+                            location.Message + "\nLocate a known file to recover this disk or folder?", "Locate file"))
+                        await RecoverFile(fileId);
+                    return;
+                }
+                var refusal = PlayTargetResolver.DescribeLinkRefusal(location.Path, _ => true);
+                if (refusal is not null) throw new IOException(refusal);
+                await Task.Run(() => FileLauncher.Open(location.Path!));
             }
             catch (Exception ex)
             {

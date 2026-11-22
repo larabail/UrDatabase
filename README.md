@@ -565,9 +565,10 @@ It runs on Windows and macOS from one codebase, built with
   mounts at `/Volumes/Films 1` beside a stale `Films` folder, is found where it
   now is rather than reported missing, and a different disk given an old letter
   does not hide that the old one is gone. If the list of drives cannot be read in
-  time, the check does not take that as every disk having gone: each remembered
-  disk is looked for where it was last seen, and only one absent from there is
-  reported. Only disks are remembered: a cloud drive such as Google
+  time, the check reports that verification is unavailable, rather than claiming
+  every disk has disappeared or trusting whatever occupies an old letter.
+  Unverified legacy locations say **Confirm disk / folder**, and cloned volume
+  identities say **Ambiguous identity**. Only disks are remembered: a cloud drive such as Google
   Drive, a network drive, an optical drive, a USB stick holding nothing in the
   library, and on macOS a mounted disk image are listed when they are there but
   never missed, and an empty card reader is not listed at all. The check only
@@ -577,6 +578,52 @@ It runs on Windows and macOS from one codebase, built with
   off (`Services/DriveVolumes`, `Services/DriveEnumerator`,
   `Services/DriveInventory`, `Services/DriveMonitor`,
   `Services/KnownDriveStore`, `Services/DriveStatusText`).
+- **Keep file links when a disk is renamed or remounted.** Confirmed local files
+  and library folders are anchored to the disk's UUID/serial and their path
+  within it. Films, manually linked copies and grouped episodes follow the
+  current mount, as do scans, uploads, downloads and local track inspection.
+  Another disk at the old mount path is not a substitute. Drive counts follow
+  the confirmed identity too; an unplugged disk is not a reason to mark all its
+  files missing.
+
+  **Already broken?** Open **Drives > Relocate disk/folder...**, select one
+  catalogued file you recognise, and use **Locate selected file...** to choose
+  its current copy. When its complete relative path still matches, the app
+  proposes a disk-wide mapping. If the internal folders changed, enter the old
+  folder root and choose the corresponding current folder instead. Preview
+  shows every old-to-new path, film/episode/file/folder counts, present and absent
+  destinations, excluded identities and conflicts. **Confirm and repair links**
+  rechecks the disk and catalogue, then saves the entire mapping together.
+  Cancel changes nothing; a collision or stale preview commits nothing. This
+  repairs references, **not on-disk filenames or directories**. It preserves
+  IDs, manual assignments, Watchlist entries, problems, ratings and viewing
+  history, and does not claim an absent file was found.
+
+  The recovery list includes files already hidden as missing. Local film
+  details also offer **Relocate disk/folder...**; clicking an unavailable local
+  episode offers recovery. Settings shows the configured folder and its
+  effective location, with **Confirm / relocate...** beside the folder controls.
+  The original configuration entries stay unchanged: effective locations live
+  beside the files in SQLite, so a repair neither rewrites credentials nor
+  needs a coordinated update of two storage files.
+  If only a subtree of a larger watch folder moved, its new location becomes an
+  additional scan scope under that same configuration entry. The parent and
+  its other folders keep their locations; preview and Settings show the extra
+  scope. Removing the parent configuration entry disables all of its scopes.
+  Re-relocating a child updates its scope rather than accumulating duplicates,
+  and moving the parent later does not drag a child already moved to another disk.
+
+  **An existing library needs one confirmation per disk/folder**, even if its
+  path has not changed. Older catalogues never recorded which disk owned each
+  file, and neither a remembered label nor an existing filename proves that
+  today. Upgrading keeps cards and history intact but gates unverified file
+  operations until that group confirmation. Newly chosen folders are verified
+  when Settings saves; a failed verification leaves the folder visibly
+  unverified, not silently trusted. Network or unidentified locations can be
+  explicitly accepted as path-only, without automatic remount tracking.
+  Duplicated strong identities must be disambiguated before automatic tracking
+  can work (`Services/FileLocations`, `Services/VolumeSnapshot`,
+  `Services/DiskRecovery`, `Views/DiskRecoveryWindow`).
 - **Play.** The details window opens the file the catalogue links to this film —
   the link the scan wrote, not a guess at the filename — and hands it to whatever
   the operating system uses. A film with no link, or whose only linked copy has
@@ -813,7 +860,7 @@ cp src/UrDatabase.App/appsettings.example.json src/UrDatabase.App/appsettings.js
 | Key | What it does |
 | --- | --- |
 | `DatabasePath` | The SQLite catalogue. Defaults to `UrDatabase/movies.db` under the user's application data directory |
-| `WatchFolders` | Absolute paths the scan button walks, searched recursively. Empty means the platform's film folder, unless `SetupCompleted` is set — somebody who was asked and named none meant none |
+| `WatchFolders` | Requested library folders, searched recursively. Confirmed disk-relative locations are stored in the catalogue, so the original entries survive remounts unchanged. Existing/unverified roots need Confirm / relocate before scanning. Empty means the platform's film folder unless `SetupCompleted` is set |
 | `TmdbApiKey` | Your TMDB v3 API key. Leave it empty to run without metadata |
 | `OmdbApiKey` | Your OMDb API key. Leave it empty to run without the IMDb rating |
 | `UrActorApiKey` | Your UrActor API key. Leave it empty to run without the Academy Award nominations |
@@ -1626,11 +1673,24 @@ under, the `scans` table each scan records itself in, the
 behind the Continue watching row and the `jellyfin_resume_dismissals` that are
 taken back out of it, the `watchlist` behind the Watchlist shelf, the
 `film_problems` you have reported about a copy, the `film_ratings` and
-`film_viewings` that hold your own ratings and watch log, the `known_drives`
+`film_viewings` that hold your own ratings and watch log, `library_roots` holding
+confirmed watch/download-folder locations keyed by their raw config entries, the `known_drives`
 every disk the drive check has seen is remembered in, the
 `movies_fts` and `series_fts` FTS5 indexes and the
 triggers that keep them current — and every statement is `IF NOT EXISTS`, so it
 runs against a library you already have without touching your data.
+
+File location fields are additive: `location_mode`, `volume_id`,
+`relative_path`, `relative_key`, `path_style` and `location_revision`.
+`file_path` remains the last recorded absolute path, not the identity of a
+bound file. Bound rows are unique by volume and canonical relative path;
+legacy/path-only rows retain absolute-path uniqueness. Two disks may therefore
+have the same historical mount path without one stealing the other's links.
+Migration adds this structure without probing disks or assigning old files to
+today's occupant. The external schema and embedded fallback stay in step with
+`Database.Migrate`; installing location indexes is a one-time transaction,
+not a write lock on every library read. Older binaries do not understand these
+bindings: downgrading is not a way to undo a relocation.
 
 Television is cached in three tables of its own rather than as a `kind` column on
 `jellyfin_movies`. A series has no runtime and has two counts a film cannot have,
@@ -2256,16 +2316,18 @@ Stated plainly, so nobody has to find out by using it:
   card. **With problems** uses those same card identities, not a separate list.
 - **A disk is remembered by what the operating system can tell about it.**
   Windows gives every volume a serial number and macOS a volume UUID, and that is
-  what a disk is known by. A volume with neither — when `diskutil` cannot answer,
-  say — falls back to its name and capacity, so renaming it makes it look like a
-  new disk with the old one missing. .NET on macOS has no way to tell a USB stick
+  what automatic file tracking uses. Name/capacity fallback is only a diagnostic
+  hint, never permission to rebind files. If an identified volume cannot supply
+  its ID or the volume list times out, its bound files remain unavailable rather
+  than falling back to an old absolute path. Explicitly accepted path-only
+  locations cannot follow a remount. .NET on macOS has no way to tell a USB stick
   from a disk, so a Mac remembers every volume under `/Volumes` that is not a
   disk image or a network mount, and a USB stick plugged in once is missed after
   it is unplugged. **Forget** in the Drives dialog clears
   either. On Windows, a USB hard disk whose enclosure calls itself removable is
   treated like a stick — listed, but only remembered once the library has films
-  on it — and two disks cloned sector for sector share a serial and are
-  remembered as one.
+  on it. Two disks cloned sector for sector may share a serial; automatic
+  resolution refuses to choose between them until the ambiguity is removed.
 - **One Jellyfin server.** There is no way to add a second. The setup screen
   configures the first one and tests it, but a household with two servers has to
   pick one.
@@ -2280,10 +2342,10 @@ Stated plainly, so nobody has to find out by using it:
   server film if a server has it — but the row itself is never deleted, because
   nothing in the app can tell a film you deleted from one on a drive you
   unplugged. So a library you have churned through accumulates rows you cannot
-  see, there is no screen that lists them or lets you clear them out, and the
-  only way to bring one back is to put its file where a scan will find it or
-  link a copy by hand. Two consequences worth knowing: an unplugged drive hides
-  every film on it until it is plugged back in and rescanned, and a film that
+  see on the wall. The Drives recovery picker can list and repair their locations,
+  but is not a deletion or duplicate-merging tool. Two consequences worth knowing:
+  a file previously marked missing stays hidden until a verified scan or recovery
+  finds it; an unplugged drive by itself does not create that mark. A film that
   degraded to a server film degrades on the strength of the *cached* server
   library, so a server you have never synced on this machine cannot rescue
   anything. The one row that *is* deleted is the empty duplicate a rename can
@@ -2294,22 +2356,18 @@ Stated plainly, so nobody has to find out by using it:
   deliberately narrow — it will not touch a duplicate that has a file, a poster
   or a TMDB id, which is exactly the duplicate you would most want to merge —
   so two rows for one film, arrived at any other way, stay two rows.
-- **A film that has left the library cannot be pointed at a new file from
-  inside the app.** **Link File…** is on the details screen, and a film with no
-  copy here either has no card to open or opens as a server film, which does not
-  offer it. So the way back is a scan: put the file somewhere a watch folder
-  covers and press the scan button. Moving a film permanently outside every
-  watch folder still means adding that folder to the list.
 - **A film renamed in place is a deletion and an addition.** Move detection
   matches on filename and byte count, so a file that keeps its path but changes
   its name is not followed: the old row is marked missing and the new file
   arrives as a new one. If nothing else claims the film, that reads as the film
   leaving the library and a differently named one appearing beside it in the
   same scan.
-- **A moved film is followed by name and size, and only those.** A file that
-  turns up somewhere new is treated as one that moved when exactly one missing
-  row has the same filename and the same byte count, and the old path is really
-  gone. Rename a film as well as moving it and the scan sees a deletion and an
+- **An ordinary move within a disk is still a filename/size heuristic.** Within
+  the same verified online disk (or an explicit path-only scope), a file is
+  treated as moved when exactly one missing row has its name and nonzero byte
+  count, and the old file is really absent. A different or offline identified
+  disk is never a candidate. Cross-disk relocation needs the explicit recovery
+  mapping. Rename a film as well as moving it and the scan sees a deletion and an
   addition instead. Two files that share a name and a size are not guessed
   between at all: both are left as they are, which loses a link rather than
   attaching one to the wrong film.
@@ -2317,12 +2375,14 @@ Stated plainly, so nobody has to find out by using it:
   survive, Play opens the largest, then the most recently written, then the first
   by path. That is a guess at which is the better copy, not a preference you can
   set.
-- **A linked path is trusted to be where you said it was.** A file is only
+- **A disk binding is not a content fingerprint.** A file is only
   accepted, and only opened, when its extension is one the scanner recognises,
   and that is checked again immediately before launching. What is *not* checked
-  is where the path points: nothing confines it to your watch folders or resolves
-  it through symlinks first, so a catalogue you did not write yourself is worth
-  the same suspicion as any other file it hands you.
+  is whether somebody replaced the media at that relative path on the same disk.
+  Bound paths must stay within the verified volume, including symbolic-link
+  targets, and scans skip linked directories instead of traversing other disks
+  or cycles. Manual file links may still live outside watch folders. Path-only
+  locations retain the limitations their confirmation describes.
 - **Settings covers where your films are, and nothing else.** The screen asks
   about watch folders, a Jellyfin server and the three API keys. `DatabasePath`,
   `PosterCacheDir`, `DownloadFolder`, `JellyfinSftp`, `DownloadPosters` and

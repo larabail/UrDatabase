@@ -1,0 +1,47 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="UrDatabase.Views.DiskRecoveryWindow"
+        Title="Relocate disk/folder" Width="850" Height="740" MinWidth="580" MinHeight="480"
+        WindowStartupLocation="CenterOwner" Background="{StaticResource RoomBrush}">
+    <Grid Margin="20" RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto,*,Auto,Auto">
+        <TextBlock Text="Recover links, not media files" Classes="display" FontSize="26"/>
+        <TextBlock Grid.Row="1" Margin="0,8,0,12" Classes="dim" TextWrapping="Wrap"
+                   Text="Choose one known file at its current location, or choose the old and new folder roots. Nothing changes until you preview and confirm. Existing films, episodes and your history keep their identities."/>
+        <Grid Grid.Row="2" ColumnDefinitions="*,12,Auto" Margin="0,0,0,8">
+            <TextBox x:Name="SearchBox" Watermark="Find a catalogued file, including missing files" TextChanged="Search_Changed"/>
+            <Button Grid.Column="2" Content="Locate selected file..." Click="Locate_Click"/>
+        </Grid>
+        <ComboBox Grid.Row="3" x:Name="FileList" MaxDropDownHeight="240" Margin="0,0,0,8"
+                  HorizontalAlignment="Stretch" SelectionChanged="File_Changed">
+            <ComboBox.ItemTemplate>
+                <DataTemplate><TextBlock Text="{Binding FilePath}" TextTrimming="CharacterEllipsis"/></DataTemplate>
+            </ComboBox.ItemTemplate>
+        </ComboBox>
+        <ComboBox Grid.Row="4" x:Name="RootList" HorizontalAlignment="Stretch" Margin="0,0,0,8"
+                  PlaceholderText="Or choose a saved folder/disk" SelectionChanged="Root_Changed"/>
+        <Grid Grid.Row="5" ColumnDefinitions="100,*,12,Auto" Margin="0,0,0,8">
+            <TextBlock Text="Old root" VerticalAlignment="Center"/>
+            <TextBox Grid.Column="1" x:Name="OldRootBox" Watermark="The saved folder, even if it no longer exists" TextChanged="Mapping_Changed"/>
+        </Grid>
+        <Grid Grid.Row="6" ColumnDefinitions="100,*,12,Auto" Margin="0,0,0,8">
+            <TextBlock Text="Current root" VerticalAlignment="Center"/>
+            <TextBox Grid.Column="1" x:Name="NewRootBox" TextChanged="Mapping_Changed"/>
+            <Button Grid.Column="3" Content="Choose folder..." Click="Folder_Click"/>
+        </Grid>
+        <CheckBox Grid.Row="7" x:Name="PathOnlyCheck" Margin="0,0,0,10"
+                  IsCheckedChanged="Mapping_Changed">
+            <TextBlock TextWrapping="Wrap" Text="For unidentified/network locations: I accept path-only access, without automatic disk tracking."/>
+        </CheckBox>
+        <ListBox Grid.Row="8" x:Name="PreviewList" Background="Transparent">
+            <ListBox.ItemTemplate>
+                <DataTemplate><TextBlock Text="{Binding}" TextWrapping="Wrap" FontSize="12" Margin="0,3"/></DataTemplate>
+            </ListBox.ItemTemplate>
+        </ListBox>
+        <TextBlock Grid.Row="9" x:Name="StatusText" TextWrapping="Wrap" Margin="0,12" Classes="dim"/>
+        <StackPanel Grid.Row="10" Orientation="Horizontal" HorizontalAlignment="Right" Spacing="10">
+            <Button Content="Cancel" Click="Cancel_Click"/>
+            <Button x:Name="PreviewButton" Content="Preview mapping" Click="Preview_Click"/>
+            <Button x:Name="ApplyButton" Content="Confirm and repair links" IsEnabled="False" Click="Apply_Click" Classes="primary"/>
+        </StackPanel>
+    </Grid>
+</Window>

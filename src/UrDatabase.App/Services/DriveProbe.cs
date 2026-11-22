@@ -58,20 +58,22 @@ namespace UrDatabase.Services
                 try { format = info.DriveFormat; } catch { }
 
                 var serial = SerialOf(root);
+                bool? caseSensitive = OperatingSystem.IsWindows() ? false : null;
 
                 // The folder macOS mounted a disk at is not its name: a stale "Films" folder left by
                 // an unclean eject puts the disk at "Films 1". diskutil knows the real name and the
                 // volume UUID, which survives either. Skipped for network mounts, which have neither.
                 if (OperatingSystem.IsMacOS() && info.DriveType != DriveType.Network)
                 {
-                    var (name, uuid) = DriveEnumeration.ParseDiskutilInfo(
-                        SystemDriveEnumerator.RunTool("diskutil", new[] { "info", "-plist", root }, DiskutilTimeout));
+                    var plist = SystemDriveEnumerator.RunTool("diskutil", new[] { "info", "-plist", root }, DiskutilTimeout);
+                    var (name, uuid) = DriveEnumeration.ParseDiskutilInfo(plist);
+                    caseSensitive = DriveEnumeration.ParseCaseSensitivity(plist);
                     if (name is not null) label = name;
                     serial ??= uuid;
                 }
 
                 return new DriveProbeResult(
-                    true, label, info.TotalSize, info.AvailableFreeSpace, serial, format);
+                    true, label, info.TotalSize, info.AvailableFreeSpace, serial, format, caseSensitive);
             }
             catch
             {

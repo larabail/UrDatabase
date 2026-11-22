@@ -46,16 +46,19 @@ WHERE e.series_id = @series_id
 
         private readonly string _dbPath;
         private readonly Func<TmdbService?>? _tmdb;
+        private readonly IVolumeSnapshotSource _volumes;
+        public string DatabasePath => _dbPath;
 
         /// <param name="tmdb">
         /// Builds a TMDB client for one refresh, or returns null when no key is configured. Null
         /// itself makes this a catalogue reader and nothing else, which is what it was before
         /// programmes could be identified.
         /// </param>
-        public LocalSeriesLoader(string? dbPath, Func<TmdbService?>? tmdb = null)
+        public LocalSeriesLoader(string? dbPath, Func<TmdbService?>? tmdb = null, IVolumeSnapshotSource? volumes = null)
         {
             _dbPath = dbPath ?? "";
             _tmdb = tmdb;
+            _volumes = volumes ?? VolumeSnapshotSource.Shared;
         }
 
         /// <summary>
@@ -63,13 +66,47 @@ WHERE e.series_id = @series_id
         /// <see cref="SeriesGrouping.GroupLocal"/> decides that. Throws whatever SQLite raises:
         /// the screen says the list could not be read rather than that the programme is empty.
         /// </summary>
-        public IReadOnlyList<LocalEpisode> Load(long seriesId)
+        public IReadOnlyList<LocalEpisode> Load(long seriesId, VolumeSnapshot? volumes = null)
         {
             if (seriesId <= 0 || string.IsNullOrWhiteSpace(_dbPath)) return Array.Empty<LocalEpisode>();
 
             using var conn = Database.Open(_dbPath);
-            return conn.Query<LocalEpisode>(EpisodesSql, new { series_id = seriesId }).ToList();
+            var episodes = conn.Query<LocalEpisode>(EpisodesSql, new { series_id = seriesId }).ToList();
+            var candidates = conn.Query<LocatedFile>($"SELECT {FileLocations.FileColumns} FROM files " +
+                    "WHERE episode_id IN (SELECT id FROM episodes WHERE series_id=@seriesId)", new { seriesId })
+                .OrderByDescending(f => f.SizeBytes ?? 0).ThenByDescending(f => f.UpdatedAt)
+                .ThenBy(f => f.FilePath).ToLookup(f => f.EpisodeId!.Value);
+            foreach (var episode in episodes)
+            {
+                episode.FilePath = null;
+                foreach (var file in candidates[episode.Id])
+                {
+                    var location = FileLocations.Resolve(file.Binding, volumes ?? VolumeSnapshot.Empty);
+                    if (file.MissingSince is not null && location.Available)
+                        location = new(LocationState.Missing, null, "The last scan marked this episode missing. Locate it or scan its verified folder.");
+                    if (episode.FileId is null || location.Available)
+                    {
+                        episode.FileId = file.Id;
+                        episode.Location = location;
+                        episode.FilePath = location.Path;
+                    }
+                    if (location.Available) break;
+                }
+            }
+            return episodes;
         }
+
+        public Task<IReadOnlyList<LocalEpisode>> LoadAsync(long seriesId, CancellationToken ct = default) =>
+            Task.Run(async () =>
+            {
+                using var conn = Database.Open(_dbPath);
+                var paths = conn.Query<string>("SELECT file_path FROM files WHERE episode_id IN (SELECT id FROM episodes WHERE series_id=@seriesId)", new { seriesId });
+                var snapshot = await _volumes.CaptureAsync(paths, ct);
+                return Load(seriesId, snapshot);
+            }, ct).WaitAsync(DriveMonitor.DefaultTimeout + TimeSpan.FromSeconds(2), ct);
+
+        public Task<LocationResult> ResolveFileAsync(long fileId, CancellationToken ct = default) =>
+            FileLocations.ResolveFileAsync(_dbPath, fileId, _volumes, ct);
 
         /// <summary>
         /// What the catalogue knows about the programme itself — TMDB's description of it, when it
@@ -115,7 +152,7 @@ WHERE e.series_id = @series_id
             var asked = await LocalSeriesLookup.RefreshSeasonsAsync(tmdb, conn, seriesId, force, ct).ConfigureAwait(false);
             if (asked == 0) return null;
 
-            return conn.Query<LocalEpisode>(EpisodesSql, new { series_id = seriesId }).ToList();
+            return await LoadAsync(seriesId, ct).ConfigureAwait(false);
         }
 
         /// <summary>

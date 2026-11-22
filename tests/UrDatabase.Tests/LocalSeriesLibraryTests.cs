@@ -166,21 +166,27 @@ namespace UrDatabase.Tests
         }
 
         [Fact]
-        public void The_loader_picks_the_largest_copy_the_last_scan_found()
+        public async System.Threading.Tasks.Task The_loader_picks_the_largest_copy_the_last_scan_found()
         {
+            var small = Path.Combine(_root, "small.mkv");
+            var large = Path.Combine(_root, "large.mkv");
+            var huge = Path.Combine(_root, "huge.mkv");
+            foreach (var path in new[] { small, large, huge }) File.WriteAllText(path, "synthetic video");
             using (var conn = Database.Open(_dbPath))
             {
                 conn.Execute(@"
 INSERT INTO series (id, title) VALUES (1, 'Show');
 INSERT INTO episodes (id, series_id, season_number, episode_number) VALUES (1, 1, 1, 1);
-INSERT INTO files (episode_id, file_path, size_bytes) VALUES (1, '/tv/small.mkv', 10);
-INSERT INTO files (episode_id, file_path, size_bytes) VALUES (1, '/tv/large.mkv', 99);
-INSERT INTO files (episode_id, file_path, size_bytes, missing_since) VALUES (1, '/tv/huge.mkv', 999, '2026-01-01');");
+INSERT INTO files (episode_id, file_path, size_bytes) VALUES (1, @small, 10);
+INSERT INTO files (episode_id, file_path, size_bytes) VALUES (1, @large, 99);
+INSERT INTO files (episode_id, file_path, size_bytes, missing_since) VALUES (1, @huge, 999, '2026-01-01');",
+                    new { small, large, huge });
+                FixtureMedia.BindFixtureFiles(conn);
             }
 
-            var episode = new LocalSeriesLoader(_dbPath).Load(1).Single();
+            var episode = (await FixtureMedia.Loader(_dbPath).LoadAsync(1)).Single();
 
-            Assert.Equal("/tv/large.mkv", episode.FilePath);
+            Assert.Equal(large, episode.FilePath);
             Assert.True(episode.IsAvailable);
         }
 

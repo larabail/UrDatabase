@@ -42,7 +42,7 @@ public class LocalSeriesGroupingTests : IDisposable
 
         var id = LocalSeriesGrouping.Assign(_conn, target.Id, null, files.Select(f => f.Assignment()).ToArray());
         Assert.Equal(target.Id, id);
-        Assert.Equal(3, new LocalSeriesLoader(_db).Load(id).Count);
+        Assert.Equal(3, FixtureMedia.Loader(_db).Load(id).Count);
         Assert.Equal(0, _conn.ExecuteScalar<long>("SELECT COUNT(*) FROM movies"));
         Assert.Equal(3, _conn.ExecuteScalar<long>("SELECT COUNT(*) FROM files WHERE movie_id IS NULL AND linked_by_hand = 1"));
         Assert.All(files, f => Assert.Equal("video " + Path.GetFileName(f.FilePath), File.ReadAllText(f.FilePath)));
@@ -53,7 +53,7 @@ public class LocalSeriesGroupingTests : IDisposable
         var cards = new MovieRepository(_db).Query(null);
         Assert.Equal(id, Assert.Single(cards).Id);
         Assert.True(cards[0].IsSeries);
-        Assert.Equal(3, new LocalSeriesLoader(_db).Load(id).Count);
+        Assert.Equal(3, FixtureMedia.Loader(_db).Load(id).Count);
     }
 
     [Fact]
@@ -66,7 +66,7 @@ public class LocalSeriesGroupingTests : IDisposable
 
         var target = LocalSeriesGrouping.Assign(_conn, null, "Right show", new[] { file.Assignment() });
 
-        var episode = Assert.Single(new LocalSeriesLoader(_db).Load(target));
+        var episode = Assert.Single(await FixtureMedia.Loader(_db).LoadAsync(target));
         Assert.Null(episode.TmdbTitle);
         Assert.Null(episode.Overview);
         Assert.Equal(1, _conn.ExecuteScalar<long>("SELECT COUNT(*) FROM episodes"));
@@ -86,7 +86,7 @@ public class LocalSeriesGroupingTests : IDisposable
 
         Assert.Equal(2, _conn.ExecuteScalar<long>("SELECT COUNT(*) FROM files"));
         Assert.Equal(1, _conn.ExecuteScalar<long>("SELECT COUNT(*) FROM episodes"));
-        Assert.Equal("Correct title", Assert.Single(new LocalSeriesLoader(_db).Load(target.Id)).TmdbTitle);
+        Assert.Equal("Correct title", Assert.Single(FixtureMedia.Loader(_db).Load(target.Id)).TmdbTitle);
     }
 
     [Fact]
@@ -119,7 +119,7 @@ public class LocalSeriesGroupingTests : IDisposable
 
         var target = LocalSeriesGrouping.Assign(_conn, null, "New series", new[] { file.Assignment() });
 
-        Assert.Single(new LocalSeriesLoader(_db).Load(target));
+        Assert.Single(FixtureMedia.Loader(_db).Load(target));
         Assert.Equal(1, _conn.ExecuteScalar<long>("SELECT COUNT(*) FROM movies"));
         Assert.Equal("Keep my notes", FilmJournalStore.GetRating(_conn, identity)!.Review);
         Assert.Null(Assert.Single(FilmJournalStore.LoadViewings(_conn, identity)).WatchedOn);
@@ -137,7 +137,7 @@ public class LocalSeriesGroupingTests : IDisposable
         File.Move(original, Path.Combine(destination, Path.GetFileName(original)));
 
         Assert.Equal(0, (await Scan()).Failed);
-        var episode = Assert.Single(new LocalSeriesLoader(_db).Load(target));
+        var episode = Assert.Single(await FixtureMedia.Loader(_db).LoadAsync(target));
         Assert.Null(episode.SeasonNumber);
         Assert.Equal(42, episode.EpisodeNumber);
         Assert.Equal(Path.Combine(destination, Path.GetFileName(original)), episode.FilePath);
@@ -164,7 +164,7 @@ public class LocalSeriesGroupingTests : IDisposable
         return path;
     }
 
-    private Task<ScanResult> Scan() => new ScanService().ScanAsync(_conn, new[] { _media });
+    private Task<ScanResult> Scan() => new FixtureScanner().ScanAsync(_conn, new[] { _media });
 
     public void Dispose()
     {

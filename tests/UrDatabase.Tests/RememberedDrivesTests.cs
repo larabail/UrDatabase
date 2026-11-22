@@ -507,7 +507,7 @@ namespace UrDatabase.Tests
 
             var reports = await monitor.CheckDrivesAsync(new[] { @"E:\MV" }, _db);
 
-            Assert.Equal(@"E:\ is not connected", DriveStatusText.Headline(reports));
+            Assert.Equal(@"E:\ needs confirmation", DriveStatusText.Headline(reports));
         }
 
         [Fact]
@@ -525,7 +525,7 @@ namespace UrDatabase.Tests
                 var reports = await monitor.CheckDrivesAsync(new[] { @"E:\MV" }, _db);
 
                 Assert.True(DateTime.UtcNow - started < TimeSpan.FromSeconds(30));
-                Assert.Equal(DriveState.Connected, Assert.Single(reports).State);
+                Assert.Equal(DriveState.NeedsConfirmation, Assert.Single(reports).State);
             }
             finally
             {
@@ -566,9 +566,9 @@ namespace UrDatabase.Tests
 
             var reports = await monitor.CheckDrivesAsync(new[] { @"C:\Films" }, _db);
 
-            Assert.Null(DriveStatusText.Headline(reports));
-            Assert.Single(reports, r => r.Root == @"C:\");
-            Assert.All(reports, r => Assert.Equal(DriveState.Connected, r.State));
+            Assert.DoesNotContain(reports, r => r.State == DriveState.Disconnected);
+            Assert.Contains(reports, r => r.State == DriveState.NeedsConfirmation);
+            Assert.All(reports.Where(r => r.Remembered), r => Assert.Equal(DriveState.NotResponding, r.State));
         }
 
         [Fact]
@@ -583,8 +583,8 @@ namespace UrDatabase.Tests
 
                 var reports = await monitor.CheckDrivesAsync(new[] { @"C:\Films" }, _db);
 
-                Assert.Null(DriveStatusText.Headline(reports));
-                Assert.Single(reports, r => r.Root == @"C:\");
+                Assert.DoesNotContain(reports, r => r.State == DriveState.Disconnected);
+                Assert.Contains(reports, r => r.State == DriveState.NotResponding);
             }
             finally
             {
@@ -593,7 +593,7 @@ namespace UrDatabase.Tests
         }
 
         [Fact]
-        public async Task Without_the_list_a_remembered_disk_absent_from_its_own_letter_is_still_missed()
+        public async Task Without_the_list_the_identity_check_is_unavailable_not_proof_of_disconnection()
         {
             RememberTwoDisks();
             var probe = new FakeProbe { [@"C:\"] = Disk(null, "0001-0001"), [@"K:\"] = DriveProbeResult.Unavailable };
@@ -601,7 +601,7 @@ namespace UrDatabase.Tests
 
             var reports = await monitor.CheckDrivesAsync(null, _db);
 
-            Assert.Equal(@"K:\ (K3.0_12TB) is not connected", DriveStatusText.Headline(reports));
+            Assert.All(reports, r => Assert.Equal(DriveState.NotResponding, r.State));
         }
 
         [Fact]
@@ -614,7 +614,7 @@ namespace UrDatabase.Tests
 
             var reports = await monitor.CheckDrivesAsync(null, _db);
 
-            Assert.Null(DriveStatusText.Headline(reports));
+            Assert.DoesNotContain(reports, r => r.State == DriveState.Disconnected);
         }
 
         [Fact]

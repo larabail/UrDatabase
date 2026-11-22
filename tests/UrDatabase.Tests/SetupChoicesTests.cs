@@ -157,10 +157,11 @@ namespace UrDatabase.Tests
             var choices = new SetupChoices { UseLocalFolders = true };
             choices.Folders.Add(_dir);
             choices.Folders.Add("   ");
+            choices.Folders.Add(_dir);
             choices.Folders.Add(_dir.ToUpperInvariant());
 
-            // Scanning the same folder twice would put every film in it on screen twice.
-            Assert.Equal(new[] { _dir }, choices.CleanFolders.ToArray());
+            // These may be different folders on a case-sensitive disk.
+            Assert.Equal(new[] { _dir, _dir.ToUpperInvariant() }, choices.CleanFolders.ToArray());
         }
 
         [Fact]

@@ -71,10 +71,12 @@ namespace UrDatabase.Services
             string? folder,
             string? container = null,
             IProgress<JellyfinDownloadProgress>? progress = null,
-            CancellationToken ct = default)
+            CancellationToken ct = default,
+            Func<CancellationToken, Task>? validateDestination = null)
         {
             if (string.IsNullOrWhiteSpace(itemId))
                 throw new JellyfinException("This film has no id on the server, so it cannot be downloaded.");
+            if (validateDestination is not null) await validateDestination(ct);
 
             // Asked before the request, because a film already on disk should cost nothing at all —
             // not a connection, not a range request the server has to answer. Matched by stem
@@ -89,6 +91,7 @@ namespace UrDatabase.Services
             var resumeFrom = File.Exists(partialOfProvisional) ? SafeLength(partialOfProvisional) : 0L;
 
             using var response = await _client.OpenDownloadAsync(itemId, resumeFrom, ct);
+            if (validateDestination is not null) await validateDestination(ct);
 
             // The server may name the file, and its extension is the only trustworthy statement
             // about the container. That can change the target path, so the "already there" and
@@ -116,6 +119,7 @@ namespace UrDatabase.Services
 
             var total = ResolveTotalBytes(response, startAt);
 
+            if (validateDestination is not null) await validateDestination(ct);
             EnsureFolder(path);
 
             try
@@ -161,6 +165,7 @@ namespace UrDatabase.Services
                     "Starting it again will carry on from where it stopped.");
             }
 
+            if (validateDestination is not null) await validateDestination(ct);
             Promote(partial, path);
             return new JellyfinDownloadResult(path, written, AlreadyExisted: false);
         }

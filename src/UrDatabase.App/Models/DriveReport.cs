@@ -16,7 +16,9 @@ namespace UrDatabase.Models
         /// The drive did not answer in time. Almost always a network share whose server has gone
         /// away, where the operating system can sit on a single existence check for half a minute.
         /// </summary>
-        NotResponding
+        NotResponding,
+        NeedsConfirmation,
+        Ambiguous
     }
 
     /// <summary>
@@ -76,7 +78,8 @@ namespace UrDatabase.Models
         string? Id = null,
         DriveKind? Kind = null,
         bool Remembered = false,
-        DateTime? LastSeenUtc = null)
+        DateTime? LastSeenUtc = null,
+        int EpisodeCount = 0)
     {
         public bool IsDown => State != DriveState.Connected;
 
@@ -110,7 +113,8 @@ namespace UrDatabase.Models
         long? TotalBytes = null,
         long? FreeBytes = null,
         string? Serial = null,
-        string? Format = null)
+        string? Format = null,
+        bool? CaseSensitive = null)
     {
         public static DriveProbeResult Unavailable { get; } = new(false);
     }

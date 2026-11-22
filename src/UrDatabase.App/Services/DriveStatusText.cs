@@ -26,6 +26,8 @@ namespace UrDatabase.Services
             if (down.Count == 1)
             {
                 var drive = down[0];
+                if (drive.State == DriveState.NeedsConfirmation) return $"{Name(drive)} needs confirmation";
+                if (drive.State == DriveState.Ambiguous) return $"{Name(drive)} has an ambiguous disk identity";
                 return drive.State == DriveState.NotResponding
                     ? $"{Name(drive)} is not responding"
                     : $"{Name(drive)} is not connected";
@@ -41,16 +43,21 @@ namespace UrDatabase.Services
         {
             var down = Down(reports);
             if (down.Count == 0) return "";
+            if (down.Any(d => d.State is DriveState.NeedsConfirmation or DriveState.Ambiguous))
+                return "Your catalogue is unchanged. Use Relocate disk/folder in Drives to preview and confirm a mapping. Disconnect duplicate disk identities before automatic tracking.";
 
             var films = down.Sum(d => d.FilmCount);
+            var episodes = down.Sum(d => d.EpisodeCount);
             var names = string.Join(", ", down.Select(Name));
 
             var it = down.Count == 1 ? "it" : "them";
             var itIs = down.Count == 1 ? "it is" : "they are";
             var itHas = down.Count == 1 ? "it has" : "they have";
 
-            var cost = films > 0
-                ? $"{Films(films)} on {it} cannot be played until {itIs} back."
+            var contents = episodes == 0 ? Films(films)
+                : films == 0 ? Episodes(episodes) : $"{Films(films)} and {Episodes(episodes)}";
+            var cost = films > 0 || episodes > 0
+                ? $"{contents} on {it} cannot be played until {itIs} back."
                 : down.Any(d => d.WatchFolders.Count > 0)
                     ? $"A scan will skip the library folders on {it} until {itIs} back."
                     : $"Nothing in your library is on {it}. If {itHas} been retired, forget {it} in Details.";
@@ -116,6 +123,7 @@ namespace UrDatabase.Services
             var lines = new List<string>();
 
             var first = Films(drive.FilmCount);
+            if (drive.EpisodeCount > 0) first += $" · {Episodes(drive.EpisodeCount)}";
             if (drive.State == DriveState.Connected && drive.TotalBytes is long total && drive.FreeBytes is long free)
                 first += $" · {ByteSize.Describe(free)} free of {ByteSize.Describe(total)}";
             else if (drive.IsDown && drive.TotalBytes is long size && size > 0)
@@ -144,6 +152,8 @@ namespace UrDatabase.Services
             DriveState.Connected => "connected",
             DriveState.Disconnected => "NOT CONNECTED",
             DriveState.NotResponding => "NOT RESPONDING",
+            DriveState.NeedsConfirmation => "CONFIRM DISK / FOLDER",
+            DriveState.Ambiguous => "AMBIGUOUS IDENTITY",
             _ => state.ToString()
         };
 
@@ -160,6 +170,8 @@ namespace UrDatabase.Services
 
         private static string Films(int count) =>
             count == 1 ? "1 film" : $"{count.ToString(CultureInfo.InvariantCulture)} films";
+        private static string Episodes(int count) =>
+            count == 1 ? "1 episode" : $"{count.ToString(CultureInfo.InvariantCulture)} episodes";
 
         private static IReadOnlyList<DriveReport> Down(IReadOnlyList<DriveReport>? reports) =>
             reports?.Where(r => r.RaisesAlarm).ToList() ?? (IReadOnlyList<DriveReport>)Array.Empty<DriveReport>();

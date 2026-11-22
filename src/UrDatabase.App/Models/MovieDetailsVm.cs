@@ -31,6 +31,9 @@ namespace UrDatabase.Models
         /// vouches for.
         /// </summary>
         public string? FilePath { get; set; }
+        public long? FileId { get; set; }
+        public Services.LocationResult? FileLocation { get; set; }
+        public string? SavedFilePath { get; set; }
 
         /// <summary>
         /// On what evidence <see cref="FilePath"/> was chosen. A

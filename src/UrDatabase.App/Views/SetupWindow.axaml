@@ -151,6 +151,7 @@
                                      SelectionChanged="FolderList_SelectionChanged"/>
                             <TextBlock x:Name="FolderNote"
                                        Classes="dim"
+                                       TextWrapping="Wrap"
                                        Margin="0,8,0,0"/>
                             <StackPanel Orientation="Horizontal" Spacing="12" Margin="0,12,0,0">
                                 <Button x:Name="AddFolderButton"
@@ -162,6 +163,7 @@
                                         Content="Remove"
                                         IsEnabled="False"
                                         Click="RemoveFolder_Click"/>
+                                <Button Content="Confirm / relocate..." Classes="ghost" Click="Relocate_Click"/>
                             </StackPanel>
                         </StackPanel>
                     </StackPanel>

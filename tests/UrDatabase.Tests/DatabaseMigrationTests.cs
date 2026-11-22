@@ -233,7 +233,7 @@ VALUES (1, '/films/Ran (1985).mkv', 1234, '2020-01-01T00:00:00.0000000', '2020-0
             File.WriteAllText(Path.Combine(films, "Seven Samurai (1954).mkv"), "x");
 
             using var conn = Database.Open(_dbPath);
-            var result = await new ScanService().ScanAsync(conn, new[] { films });
+            var result = await new FixtureScanner().ScanAsync(conn, new[] { films });
 
             Assert.Equal(1, result.Inserted);
             Assert.True(result.ScanId > 0);

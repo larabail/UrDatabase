@@ -183,6 +183,16 @@ namespace UrDatabase.Services
             return (Value(plist, "VolumeName"), Value(plist, "VolumeUUID"));
         }
 
+        public static bool? ParseCaseSensitivity(string? plist)
+        {
+            if (string.IsNullOrEmpty(plist)) return null;
+            var match = Regex.Match(plist, @"<key>FileSystemPersonality</key>\s*<string>(.*?)</string>");
+            if (!match.Success) return null;
+            var personality = WebUtility.HtmlDecode(match.Groups[1].Value);
+            if (personality.Contains("Case-sensitive", StringComparison.OrdinalIgnoreCase)) return true;
+            return personality is "APFS" or "Journaled HFS+" or "HFS+" or "ExFAT" or "MS-DOS FAT32" ? false : null;
+        }
+
         /// <summary><c>/Volumes/Films/</c> and <c>/Volumes/Films</c> are one mount; <c>/</c> stays <c>/</c>.</summary>
         public static string NormaliseUnixMount(string mount)
         {

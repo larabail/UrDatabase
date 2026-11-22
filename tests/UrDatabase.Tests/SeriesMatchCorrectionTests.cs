@@ -503,8 +503,8 @@ INSERT INTO series (id, title) VALUES (2, 'The Office');");
         {
             Seed();
 
-            Assert.Null(await new LocalSeriesLoader(_dbPath).CorrectAsync(1, TheOffice, false, CancellationToken.None));
-            Assert.Null(await new LocalSeriesLoader(_dbPath, () => null).CorrectAsync(1, TheOffice, false, CancellationToken.None));
+            Assert.Null(await FixtureMedia.Loader(_dbPath).CorrectAsync(1, TheOffice, false, CancellationToken.None));
+            Assert.Null(await FixtureMedia.Loader(_dbPath, () => null).CorrectAsync(1, TheOffice, false, CancellationToken.None));
 
             using var conn = Database.Open(_dbPath);
             Assert.Null(conn.ExecuteScalar<long?>("SELECT tmdb_id FROM series WHERE id = 1"));
@@ -515,7 +515,7 @@ INSERT INTO series (id, title) VALUES (2, 'The Office');");
         {
             Seed();
             using var handler = Tmdb();
-            var loader = new LocalSeriesLoader(_dbPath, () => Service(handler));
+            var loader = FixtureMedia.Loader(_dbPath, () => Service(handler));
 
             var result = await loader.CorrectAsync(1, TheOffice, false, CancellationToken.None);
 
@@ -599,7 +599,7 @@ INSERT INTO series (id, title) VALUES (2, 'The Office');");
         {
             Seed();
             using var handler = Tmdb();
-            var loader = new LocalSeriesLoader(_dbPath, () => Service(handler));
+            var loader = FixtureMedia.Loader(_dbPath, () => Service(handler));
 
             var recorded = 0;
             await loader.CorrectAsync(1, TheOffice, false, CancellationToken.None, onRecorded: () => recorded++);
@@ -629,7 +629,7 @@ INSERT INTO series (id, title) VALUES (1, 'Fargo');");
         private async Task ScanAsync()
         {
             using var conn = Database.Open(_dbPath);
-            await new ScanService().ScanAsync(conn, new[] { _media });
+            await new FixtureScanner().ScanAsync(conn, new[] { _media });
         }
 
         private void Write(params string[] parts)
